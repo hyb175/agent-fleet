@@ -151,13 +151,14 @@ cmd_connect() {
 #   --dir <dir>      working dir      (default: target session's path, else $PWD)
 # Prints the new pane id on success.
 cmd_add() {
-  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir=""
+  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --to)  target="$2"; shift 2 ;;
-      --cmd) cmd="$2"; shift 2 ;;
-      --dir) dir="$2"; shift 2 ;;
-      --)    shift; break ;;
+      --to)    target="$2"; shift 2 ;;
+      --cmd)   cmd="$2"; shift 2 ;;
+      --dir)   dir="$2"; shift 2 ;;
+      --focus) focus=1; shift ;;
+      --)      shift; break ;;
       *)     if [[ -z "$name" ]]; then name="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
     esac
   done
@@ -205,6 +206,8 @@ cmd_add() {
   # workspace renames can follow it (per-window). Value = agent kind ("claude").
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$label" 2>/dev/null || true
   tx set-option -w -t "$pane_id" @fleet-agent "$label" 2>/dev/null || true
+  # Quick-add from a keybind wants to land on the new agent.
+  [[ -n "$focus" ]] && tx select-window -t "$pane_id" 2>/dev/null || true
   echo "$pane_id"
 }
 

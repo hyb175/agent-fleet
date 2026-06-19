@@ -62,6 +62,10 @@ _state_capture() {
   # "/clear to save N tokens" and the past-tense "Worked for Ns" done summary.
   if   grep -qE "esc to interrupt|…[[:space:]]*\(|\.\.\.[[:space:]]*\(" <<<"$tail"; then echo working
   elif grep -qE "Do you want to proceed|Continue\?|❯ [0-9]\.|[0-9]\. Yes|to select" <<<"$tail"; then echo wait
+  # Finished a turn and waiting for your next input: Claude's footer shows
+  # "new task?" (only present once a conversation has a completed turn — a fresh
+  # agent never shows it). Distinguishes "done & waiting" from a truly idle pane.
+  elif grep -qF "new task?" <<<"$tail"; then echo done
   else echo idle
   fi
 }

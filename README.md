@@ -63,7 +63,7 @@ Inside the fleet (prefix is `Ctrl-a`):
 
 ```
 Ctrl-a o      open the picker → Tab to the connect view → pick a repo → Enter   (spawns a workspace)
-agent-fleet add               (run in a workspace shell) → adds a claude agent window
+Ctrl-a c      add a claude agent to the current workspace and jump to it
 Ctrl-a b      toggle the sidenav rail
 Ctrl-a o      → Enter on an agent row → jump to it
 Ctrl-a L      bounce to the previous workspace
@@ -81,7 +81,7 @@ Ctrl-a L      bounce to the previous workspace
 | pane | a PTY | an agent owns its window; split (`|` / `-`) for a sidecar shell/log |
 | the fleet | a tmux server on socket `agent-fleet` | isolated from your daily tmux |
 
-**Status** is reported by Claude Code hooks (see below), shown as a glyph: `⠋…⠏` (working, animated), `●` red (needs input), `●` green (done), `○` (idle). For agents not launched through the fleet, status falls back to scraping the pane contents.
+**Status** is shown as a glyph: `⠋…⠏` (working, animated), `●` red (needs input), `●` green (done — finished a turn, waiting for your next prompt), `○` (idle). Hook-launched agents (`agent-fleet add` / `Prefix c`) report it directly; for any other agent, status is scraped from the pane (including `done`, detected from Claude's "new task?" footer), so a finished-and-waiting agent reads `done` rather than `idle` either way.
 
 ---
 
@@ -91,7 +91,7 @@ Ctrl-a L      bounce to the previous workspace
 | --- | --- |
 | `agent-fleet attach [workspace]` | Boot the fleet and attach (or switch, if already inside). The default when run with no subcommand. |
 | `agent-fleet connect <dir\|name>` (alias `c`) | Switch to an existing workspace, or create one (named for a directory's basename, or the name verbatim) and go to it. Defaults to `$PWD`. |
-| `agent-fleet add [name] [--to <ws>] [--cmd <cmd>] [--dir <dir>]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. |
+| `agent-fleet add [name] [--to <ws>] [--cmd <cmd>] [--dir <dir>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. `--focus` jumps to the new agent (used by `Prefix c`). |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (bound to `Prefix Tab`). |
 | `agent-fleet rename-workspace [<old>] <new>` (alias `rename-ws`) | Rename a workspace; agents named after it follow the rename. |
@@ -113,6 +113,9 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | --- | --- |
 | `Prefix o` | Open the picker popup (jump / spaces / connect; `Tab` cycles views) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
+| `Prefix c` | Quick-add a Claude agent (with status hooks) to the current workspace and jump to it |
+| `Prefix C` | New plain shell window in the current directory |
+| `Prefix R` | Force the focused pane to repaint (fixes a stale Claude frame) |
 | `Prefix Tab` | Jump back to the previously focused agent (across windows/workspaces; toggles between the two) |
 | `Prefix L` | Switch to the previous workspace |
 | `Prefix W` | Rename the current workspace |
