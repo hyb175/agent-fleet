@@ -1,4 +1,4 @@
-# tmux-agent-fleet
+# agent-fleet
 
 A tmux-native session manager for running and supervising multiple Claude Code agents. A workspace is a tmux session; an agent is a tmux window running `claude`. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
 
@@ -43,8 +43,8 @@ Two surfaces:
 Clone into a directory that will persist — the clone is the runtime home (`install.sh` only symlinks the CLI onto your `PATH`):
 
 ```sh
-git clone https://github.com/<your-org>/tmux-agent-fleet ~/.local/share/tmux-agent-fleet
-~/.local/share/tmux-agent-fleet/install.sh
+git clone https://github.com/hyb175/agent-fleet ~/.local/share/agent-fleet
+~/.local/share/agent-fleet/install.sh
 ```
 
 `install.sh` symlinks `agent-fleet` into `~/.local/bin`, provisions the status cache under `~/.cache/agent-fleet`, and reports missing dependencies. Override the install prefix with `PREFIX=/usr/local ./install.sh`.
@@ -187,7 +187,7 @@ set -g status-style "bg=#222436,fg=#c8d3f5"
 
 ```sh
 rm ~/.local/bin/agent-fleet              # the symlink
-rm -rf ~/.local/share/tmux-agent-fleet   # the clone
+rm -rf ~/.local/share/agent-fleet   # the clone
 rm -rf ~/.cache/agent-fleet              # runtime state
 ```
 
