@@ -37,7 +37,8 @@ RAIL_WIN="${AGENT_FLEET_RAIL_WIN:-$(tmux -L "$SOCKET" display-message -p -t "${T
 C_OFF=$'\033[0m'; C_BOLD=$'\033[1m'
 FG=$'\033[38;2;192;202;245m'        # names
 C_DIM=$'\033[38;2;86;95;137m'       # subtitles / headers
-HL=$'\033[48;2;41;46;66m'           # selected row bg
+HL=$'\033[48;2;59;66;97m'           # selected row bg (#3b4261, clearly visible)
+ACCENT=$'\033[38;2;122;162;247m'    # selected name + left bar (#7aa2f7)
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 
 home() { printf '\033[H'; }
@@ -74,8 +75,8 @@ glyph_for() {  # $1=state $2=frame
 row() {
   local sel="$1" gl="$2" nm sb; nm="$(trunc "$3" $((WIDTH - 3)))"; sb="$(trunc "$4" $((WIDTH - 3)))"
   if [[ "$sel" == 1 ]]; then
-    printf '%s %s%s %s%s%s%s\033[K%s\n' "$HL" "$gl" "$HL" "$C_BOLD$FG" "$nm" "$C_OFF" "$HL" "$C_OFF"
-    printf '%s   %s%s%s%s\033[K%s\n' "$HL" "$C_DIM" "$sb" "$C_OFF" "$HL" "$C_OFF"
+    printf '%s%s▎%s %s%s %s%s%s%s\033[K%s\n' "$HL" "$ACCENT" "$C_OFF$HL" "$gl" "$HL" "$C_BOLD$ACCENT" "$nm" "$C_OFF" "$HL" "$C_OFF"
+    printf '%s%s▎%s  %s%s%s%s\033[K%s\n' "$HL" "$ACCENT" "$C_OFF$HL" "$C_DIM" "$sb" "$C_OFF" "$HL" "$C_OFF"
   else
     printf ' %s %s%s%s\033[K\n' "$gl" "$C_BOLD$FG" "$nm" "$C_OFF"
     printf '   %s%s%s\033[K\n' "$C_DIM" "$sb" "$C_OFF"
