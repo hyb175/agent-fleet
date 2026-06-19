@@ -93,6 +93,7 @@ Ctrl-a L      bounce to the previous workspace
 | `agent-fleet connect <dir\|name>` (alias `c`) | Switch to an existing workspace, or create one (named for a directory's basename, or the name verbatim) and go to it. Defaults to `$PWD`. |
 | `agent-fleet add [name] [--to <ws>] [--cmd <cmd>] [--dir <dir>]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
+| `agent-fleet back` | Jump to the previously focused pane (bound to `Prefix Tab`). |
 | `agent-fleet rename-workspace [<old>] <new>` (alias `rename-ws`) | Rename a workspace; agents named after it follow the rename. |
 | `agent-fleet rename-tab [<session:window>] <new>` (alias `rename-window`) | Rename a tab (window). |
 | `agent-fleet kill <target>` (alias `rm`) | Kill a workspace (`<name>`), window (`<ws>:<window>`), or pane (`%id`). |
@@ -112,6 +113,7 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | --- | --- |
 | `Prefix o` | Open the picker popup (jump / spaces / connect; `Tab` cycles views) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
+| `Prefix Tab` | Jump back to the previously focused agent (across windows/workspaces; toggles between the two) |
 | `Prefix L` | Switch to the previous workspace |
 | `Prefix W` | Rename the current workspace |
 | `Prefix T` | Rename the current tab |

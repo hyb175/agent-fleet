@@ -227,6 +227,18 @@ cmd_goto() {
   tx select-pane -t "$pane" 2>/dev/null || true
 }
 
+# back — jump to the previously focused pane (Prefix Tab). The focus-in hook
+# keeps focus.prev current, so this just resolves and focuses it; landing there
+# makes it the new "current", so pressing again toggles between the two.
+cmd_back() {
+  local prev_file="$AF_CACHE_DIR/focus.prev" p=""
+  [[ -f "$prev_file" ]] && read -r p < "$prev_file" 2>/dev/null
+  [[ -z "$p" ]] && exit 0
+  # No-op silently if that pane is gone (don't error in a keybind).
+  tx list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$p" || exit 0
+  cmd_goto "$p"
+}
+
 # attach [target] — sesh-style 3-way branch.
 cmd_attach() {
   local target="${1:-}"
@@ -366,6 +378,7 @@ main() {
     attach|a)   cmd_attach "$@" ;;
     add)        cmd_add "$@" ;;
     goto)       cmd_goto "$@" ;;
+    back)       cmd_back "$@" ;;
     rename-workspace|rename-ws) cmd_rename_workspace "$@" ;;
     rename-tab|rename-window)   cmd_rename_tab "$@" ;;
     kill|rm)    cmd_kill "$@" ;;
