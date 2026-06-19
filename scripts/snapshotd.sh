@@ -43,12 +43,16 @@ trap cleanup INT TERM HUP
 build() {
   local now; printf -v now '%(%s)T' -1
   local out="T $now"$'\n'
-  # Active view: query the attached CLIENT (the daemon isn't one, so a bare
-  # display-message reports a stale "current" session and the highlight drifts).
-  local client active
+  # Active view = the attached client's session (#{client_session}) and that
+  # session's active window. NOTE: `display-message -c` only sets the client for
+  # #{client_*} formats; #{session_name}/#{window_id} still resolve to a stale
+  # server "current", so we must read #{client_session} explicitly.
+  local client active asess awin
   client="$(tx list-clients -F '#{client_name}' 2>/dev/null | head -1)"
   if [[ -n "$client" ]]; then
-    active="$(tx display-message -c "$client" -p '#{session_name}|#{window_id}' 2>/dev/null || echo '|')"
+    asess="$(tx display-message -c "$client" -p '#{client_session}' 2>/dev/null)"
+    awin="$(tx display-message -t "$asess" -p '#{window_id}' 2>/dev/null)"
+    active="${asess}|${awin}"
   else
     active="$(tx display-message -p '#{session_name}|#{window_id}' 2>/dev/null || echo '|')"
   fi
