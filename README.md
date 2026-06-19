@@ -63,7 +63,7 @@ Inside the fleet (prefix is `Ctrl-a`):
 
 ```
 Ctrl-a o      open the picker → Tab to the connect view → pick a repo → Enter   (spawns a workspace)
-Ctrl-a c      add a claude agent to the current workspace and jump to it
+Ctrl-a C      add a claude agent to the current workspace and jump to it
 Ctrl-a b      toggle the sidenav rail
 Ctrl-a o      → Enter on an agent row → jump to it
 Ctrl-a L      bounce to the previous workspace
@@ -81,7 +81,7 @@ Ctrl-a L      bounce to the previous workspace
 | pane | a PTY | an agent owns its window; split (`|` / `-`) for a sidecar shell/log |
 | the fleet | a tmux server on socket `agent-fleet` | isolated from your daily tmux |
 
-**Status** is shown as a glyph: `⠋…⠏` (working, animated), `●` red (needs input), `●` green (done — finished a turn, waiting for your next prompt), `○` (idle). Hook-launched agents (`agent-fleet add` / `Prefix c`) report it directly; for any other agent, status is scraped from the pane (including `done`, detected from Claude's "new task?" footer), so a finished-and-waiting agent reads `done` rather than `idle` either way.
+**Status** is shown as a glyph: `⠋…⠏` (working, animated), `●` red (needs input), `●` green (done — finished a turn, waiting for your next prompt), `○` (idle). Hook-launched agents (`agent-fleet add` / `Prefix C`) report it directly; for any other agent, status is scraped from the pane (including `done`, detected from Claude's "new task?" footer), so a finished-and-waiting agent reads `done` rather than `idle` either way.
 
 ---
 
@@ -113,8 +113,8 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | --- | --- |
 | `Prefix o` | Open the picker popup (jump / spaces / connect; `Tab` cycles views) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
-| `Prefix c` | Quick-add a Claude agent (with status hooks) to the current workspace and jump to it |
-| `Prefix C` | New plain shell window in the current directory |
+| `Prefix c` | New plain shell window in the current directory (tmux default) |
+| `Prefix C` | Quick-add a Claude agent (with status hooks) to the current workspace and jump to it |
 | `Prefix R` | Force the focused pane to repaint (fixes a stale Claude frame) |
 | `Prefix Tab` | Jump back to the previously focused agent (across windows/workspaces; toggles between the two) |
 | `Prefix L` | Switch to the previous workspace |
