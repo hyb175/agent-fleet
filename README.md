@@ -118,7 +118,7 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | `Prefix R` | Force the focused pane to repaint (fixes a stale Claude frame) |
 | `Prefix Tab` | Jump back to the previously focused agent (across windows/workspaces; toggles between the two) |
 | `Prefix L` | Switch to the previous workspace |
-| `Prefix &` | Close the current tab (Ctrl-D just respawns a shell beside the rail) |
+| `Prefix &` | Close the current tab in one shot (even with several panes open) |
 | `Prefix W` | Rename the current workspace |
 | `Prefix T` | Rename the current tab |
 | `Prefix r` | Reload the fleet config |
