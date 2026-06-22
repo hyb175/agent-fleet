@@ -8,16 +8,16 @@ Two surfaces:
 - **Sidenav rail** (`Prefix b`, on by default) — a left-edge rail listing workspaces and agents with live status, refreshed in place.
 
 ```
-┌────────────┬───────────────────────────────┐
-│ spaces     │                               │
-│ ● dotfiles │   your agent / shell          │
-│   main ↑2  │   (work pane)                 │
-│ agents     │                               │
-│ ⠹ dotfiles │                               │
-│   working  │                               │
-│ ● api      │                               │
-│   wait     │                               │
-└────────────┴───────────────────────────────┘
+┌──────────────────┬─────────────────────────┐
+│ spaces           │                         │
+│ ● dotfiles       │   your agent / shell    │
+│   main ↑2        │   (work pane)           │
+│ agents           │                         │
+│ ⠹ code-review    │                         │
+│   webapp · work  │                         │
+│ ● api            │                         │
+│   backend · wait │                         │
+└──────────────────┴─────────────────────────┘
 ```
 
 ---
