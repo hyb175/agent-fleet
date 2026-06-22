@@ -44,7 +44,10 @@ cache_bg() {
   # this cache don't each spawn a job (which piled up and hammered tmux). The
   # subshell is fully silenced; the stat (to clear a stuck temp from a killed
   # job) only runs in the rare case the temp already exists.
-  if [[ ! -f "$f.tmp" ]] || (( now - $(stat -f %m "$f.tmp" 2>/dev/null || stat -c %Y "$f.tmp" 2>/dev/null || echo 0) > 15 )); then
+  # mtime: GNU stat first (-c %Y), then BSD (-f %m). GNU-first matters because
+  # BSD's -f means --file-system on GNU and wouldn't fail cleanly; macOS rejects
+  # -c outright, so it falls through to -f. Works on both this way.
+  if [[ ! -f "$f.tmp" ]] || (( now - $(stat -c %Y "$f.tmp" 2>/dev/null || stat -f %m "$f.tmp" 2>/dev/null || echo 0) > 15 )); then
     ( printf '%s %s\n' "$now" "$("$@")" > "$f.tmp" && mv "$f.tmp" "$f"; rm -f "$f.tmp" ) >/dev/null 2>&1 &
   fi
   printf '%s' "$val"

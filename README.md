@@ -36,6 +36,8 @@ Two surfaces:
 
 \* The manager works without `claude`, but `agent-fleet add` with defaults launches it. A truecolor + Unicode-capable terminal is recommended; the Tokyo Night colors and braille spinner degrade (not crash) on lesser terminals.
 
+**Platform:** developed and exercised on macOS. The macOS/Linux differences are handled — desktop notifications fall back from `osascript` to `notify-send`, and `stat`/`ps` use portable invocations — so Linux should work, but it's less battle-tested. Reports welcome.
+
 ---
 
 ## Install
