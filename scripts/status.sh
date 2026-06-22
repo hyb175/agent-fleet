@@ -83,8 +83,22 @@ state_for_pane() {
   echo "${st:-idle}"
 }
 
-_agent_kind_ps() {  # <pane_tty> -> "claude" or empty
-  ps -t "${1#/dev/}" -o comm= 2>/dev/null | sed 's#.*/##' | grep -qix 'claude' && printf 'claude'
+# Foreground commands treated as agents when scraping non-hooked panes.
+# Space-separated; override with AGENT_FLEET_AGENT_CMDS to add other CLIs.
+# (Cursor's CLI binary is literally `agent`.)
+_AGENT_CMDS="${AGENT_FLEET_AGENT_CMDS:-claude codex opencode agent}"
+
+# Some CLIs ship under a generic binary name; show a friendlier kind in the rail.
+_agent_kind_label() { case "$1" in agent) printf 'cursor' ;; *) printf '%s' "$1" ;; esac; }
+
+_agent_kind_ps() {  # <pane_tty> -> agent kind (claude|codex|opencode|cursor|…) or empty
+  local comm k
+  while read -r comm; do
+    comm="${comm##*/}"
+    for k in $_AGENT_CMDS; do
+      [[ "$comm" == "$k" ]] && { _agent_kind_label "$k"; return; }
+    done
+  done < <(ps -t "${1#/dev/}" -o comm= 2>/dev/null)
 }
 
 # pane_agent_kind <pane_kind_tag> <pane_current_command> <pane_tty> <is_sidenav>

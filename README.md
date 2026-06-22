@@ -139,7 +139,7 @@ Agents launched via `agent-fleet add` run as `claude --settings <overlay>`, wher
 
 The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is not modified. Each hook writes the state to a per-pane file the rail and picker read.
 
-Agents started by hand (just running `claude` in a shell) are detected as agents too, but their status comes from scraping the pane (the rail shows them under their workspace name). That fallback matches the current Claude CLI's English prompts and is less precise than the hook path.
+Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Status for hand-started agents is scraped from the pane, and the scrape patterns match the Claude CLI, so non-claude tools are listed correctly but their live state is approximate (they may read `idle` while working). For precise state, launch via `agent-fleet add --cmd <tool>` so the hooks attach.
 
 A single background daemon (`snapshotd.sh`, one per fleet) polls tmux and resolves states/branches once per second, writing `fleet.snapshot`. The rails and the picker read that snapshot instead of each polling tmux, so the number of rails doesn't add tmux load. The daemon starts automatically (on attach, and when rails are created), is single-instance, and exits when the fleet stops.
 
@@ -160,6 +160,7 @@ When an agent changes to **wait** or **done**, a desktop notification fires (`os
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
 | `AGENT_FLEET_CMD` | `claude` | Default command for `add`; status hooks attach to it |
+| `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's CLI binary `agent` is shown as `cursor`. |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created when the fleet first boots |
 | `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
 | `AGENT_FLEET_SIDENAV_WIDTH` | `30` | Rail width in columns |

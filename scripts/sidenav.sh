@@ -3,7 +3,7 @@
 #
 # Two stacked lists rendered from the shared snapshot the daemon writes:
 #   spaces  — one row per workspace (session): name + git-branch subtitle
-#   agents  — one row per agent: tab name + "<workspace> · <state>" subtitle
+#   agents  — one row per agent: tab name + "<workspace> · <kind>" subtitle
 #
 # The rail does NO tmux polling — it only reads fleet.snapshot — so N rails cost
 # the server nothing. The spinner animates at TICK only when this rail's window
@@ -120,9 +120,10 @@ draw() {
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$CUR_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
-      # Subtitle = which workspace it's in + its state, so same-named tabs in
-      # different workspaces are distinguishable (the glyph already shows kind).
-      row "$sel" "$GLYPH" "$wn" "$s · $st"
+      # Subtitle = workspace + agent kind (claude/codex/opencode…) so same-named
+      # tabs are distinguishable and you can tell the tools apart; the glyph
+      # already shows state (working/wait/done/idle).
+      row "$sel" "$GLYPH" "$wn" "$s · $label"
       line=$((line+2))
     done
   fi
