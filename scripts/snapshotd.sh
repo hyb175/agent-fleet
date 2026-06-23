@@ -82,7 +82,8 @@ build() {
   while IFS= read -r sess; do
     [[ -z "$sess" ]] && continue
     dir="$(tx display-message -p -t "$sess" '#{pane_current_path}' 2>/dev/null || echo '')"
-    br="$(git_branch "$dir")"; [[ -z "$br" ]] && br="$dir"
+    # Non-git workspace: show the dir basename, not the whole path.
+    br="$(git_branch "$dir")"; [[ -z "$br" ]] && br="${dir##*/}"
     out+="S $sess|${ROLL[$sess]:-none}|$br"$'\n'
   done < <(tx list-sessions -F '#{session_name}' 2>/dev/null | sort)
 
