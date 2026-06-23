@@ -4,7 +4,7 @@ A tmux-native session manager for running and supervising multiple Claude Code a
 
 Two surfaces:
 
-- **Picker** (`Prefix o`) — an fzf popup to jump to an agent, switch workspaces, or spawn one in a directory.
+- **Picker** (`Prefix o`) — an fzf popup to jump to an agent, switch workspaces, or spawn one in a directory. `Prefix w` opens it straight to the workspace switcher.
 - **Sidenav rail** (`Prefix b`, on by default) — a left-edge rail listing workspaces and agents with live status, refreshed in place.
 
 ```
@@ -118,7 +118,8 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 
 | Key | Action |
 | --- | --- |
-| `Prefix o` | Open the picker popup (jump / spaces / connect; `Tab` cycles views) |
+| `Prefix o` | Open the picker popup (fleet / spaces / connect; `Tab` cycles, `^a`/`^s`/`^z` jump) |
+| `Prefix w` | Quick workspace switch — picker opened straight to the spaces view (every workspace, shell-only included) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
 | `Prefix c` | New plain shell window in the current directory (tmux default) |
 | `Prefix C` | Quick-add a Claude agent (with status hooks) to the current workspace and jump to it |
