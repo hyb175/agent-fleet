@@ -235,9 +235,11 @@ cmd_add() {
     local env_pfx=""
     [[ -n "$cs_dir" ]] && env_pfx="AGENT_FLEET_CS_DIR='$cs_dir' "
     cmd="${env_pfx}'$ROOT_DIR/scripts/cs-connect.sh' '$cs' $cmd"
-  elif [[ "$cmd" == "$DEFAULT_AGENT_CMD" || "$cmd" == "claude" ]]; then
-    # Local claude agent: overlay the fleet status hooks. A custom --cmd is run
-    # verbatim (no hooks, e.g. a plain shell).
+  elif [[ "$label" == "claude" ]]; then
+    # Local claude agent: overlay the fleet status hooks. Gate on the command
+    # BASENAME being claude — the hooks (and the --settings flag itself) are
+    # claude-specific, so a non-claude AGENT_FLEET_CMD (codex, opencode, …)
+    # must not get the overlay. Any other command runs verbatim (no hooks).
     local hooks_file
     hooks_file="$(ensure_hook_settings)"
     cmd="$cmd --settings '$hooks_file'"
