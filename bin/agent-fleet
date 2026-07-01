@@ -52,7 +52,9 @@ ensure_server_env() {
   tx set-environment -g AGENT_FLEET_SOCKET "$SOCKET" 2>/dev/null || true
 }
 
-sanitize_name() { echo "$1" | tr ':. /' '____'; }
+# '|' is also mapped: it's the fleet.snapshot field delimiter, so letting it
+# into session names would shift every consumer's parse.
+sanitize_name() { printf '%s' "$1" | tr ':. /|' '_____'; }
 
 AF_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 
@@ -111,16 +113,19 @@ current_window()  { [[ -n "${TMUX_PANE:-}" ]] && tx display-message -p -t "$TMUX
 
 # Switch the fleet client to a target, or attach if we're in a bare shell.
 # Refuses to hijack a foreign tmux server.
+# All session-name targets below use tmux's '=' exact-match prefix: without
+# it tmux prefix-matches, so `connect api` with only api-v2 running would
+# silently switch to (or kill, or add into) api-v2.
 go_to_session() {
   local target="$1"
   if in_fleet_tmux; then
-    tx switch-client -t "$target"
+    tx switch-client -t "=$target"
   elif [[ -n "${TMUX:-}" ]]; then
     echo "error: you're inside a different tmux server" >&2
     echo "       detach (Prefix-d) and run \`agent-fleet attach $target\` from a plain shell" >&2
     exit 1
   else
-    exec "$TMUX_BIN" -L "$SOCKET" -f "$CONF" attach-session -t "$target"
+    exec "$TMUX_BIN" -L "$SOCKET" -f "$CONF" attach-session -t "=$target"
   fi
 }
 
@@ -134,7 +139,7 @@ cmd_connect() {
   local arg="${1:-$PWD}" custom="${2:-}"
 
   # Existing session by that name → just switch (skip when forcing a new name).
-  if [[ -z "$custom" ]] && server_up && tx has-session -t "$arg" 2>/dev/null; then
+  if [[ -z "$custom" ]] && server_up && tx has-session -t "=$arg" 2>/dev/null; then
     ensure_server_env
     go_to_session "$arg"
     return 0
@@ -150,7 +155,7 @@ cmd_connect() {
   fi
 
   # new-session auto-starts the server if needed; no stray home session.
-  if ! tx has-session -t "$name" 2>/dev/null; then
+  if ! tx has-session -t "=$name" 2>/dev/null; then
     tx new-session -d -s "$name" -c "$dir"
   fi
   ensure_server_env
@@ -194,8 +199,17 @@ cmd_add() {
   if [[ -n "$new_ws" ]]; then
     new_ws="$(sanitize_name "$new_ws")"
     local wsdir="$dir"
-    [[ -z "$wsdir" ]] && wsdir="$(tx display-message -p '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
-    if ! tx has-session -t "$new_ws" 2>/dev/null; then
+    if [[ -z "$wsdir" ]]; then
+      # From inside the fleet, the CALLING pane's cwd; a targetless
+      # display-message resolves against some arbitrary recently-active pane.
+      # From a bare shell, the caller's $PWD.
+      if in_fleet_tmux && [[ -n "${TMUX_PANE:-}" ]]; then
+        wsdir="$(tx display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+      else
+        wsdir="$PWD"
+      fi
+    fi
+    if ! tx has-session -t "=$new_ws" 2>/dev/null; then
       # Fresh session: its placeholder window is removed after the agent lands
       # (below), so the agent becomes the workspace's first tab — no stray shell.
       ph_win="$(tx new-session -d -P -F '#{window_id}' -s "$new_ws" -c "$wsdir" 2>/dev/null)"
@@ -211,13 +225,13 @@ cmd_add() {
       target="$(tx list-sessions -F '#{session_name}' 2>/dev/null | head -1)"
     fi
   fi
-  if [[ -z "$target" ]] || ! tx has-session -t "$target" 2>/dev/null; then
+  if [[ -z "$target" ]] || ! tx has-session -t "=$target" 2>/dev/null; then
     echo "error: no such workspace: ${target:-<none>}" >&2
     exit 1
   fi
 
   if [[ -z "$dir" ]]; then
-    dir="$(tx display-message -p -t "$target" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+    dir="$(tx display-message -p -t "=$target" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
   fi
   # Default the agent name to its workspace, so it reads "<workspace> · claude"
   # and follows the workspace on rename. Multiple agents per workspace is fine.
@@ -246,7 +260,7 @@ cmd_add() {
   fi
 
   local pane_id
-  pane_id="$(tx new-window -P -F '#{pane_id}' -t "$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
+  pane_id="$(tx new-window -P -F '#{pane_id}' -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
   # Mark the agent so the sidenav lists it (per-pane, focus-independent) and so
   # workspace renames can follow it (per-window). Value = agent kind ("claude").
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$label" 2>/dev/null || true
@@ -258,9 +272,13 @@ cmd_add() {
   # agent is the workspace's first tab.
   [[ -n "$ph_win" ]] && tx kill-window -t "$ph_win" 2>/dev/null || true
   # Quick-add from a keybind wants to land on the new agent (switching workspace
-  # first when the agent went into a new one).
+  # first when the agent went into a new one). NOT go_to_session: that execs
+  # attach from a bare shell and exits from a foreign tmux, either way eating
+  # the pane id we still owe the caller.
   if [[ -n "$focus" ]]; then
-    [[ -n "$new_ws" ]] && go_to_session "$new_ws" 2>/dev/null || true
+    if [[ -n "$new_ws" ]] && in_fleet_tmux; then
+      tx switch-client -t "=$new_ws" 2>/dev/null || true
+    fi
     tx select-window -t "$pane_id" 2>/dev/null || true
   fi
   echo "$pane_id"
@@ -290,7 +308,9 @@ cmd_goto() {
 # makes it the new "current", so pressing again toggles between the two.
 cmd_back() {
   local prev_file="$AF_CACHE_DIR/focus.prev" p=""
-  [[ -f "$prev_file" ]] && read -r p < "$prev_file" 2>/dev/null
+  # || true: an empty/truncating prev file fails the read, and under set -e
+  # that silently kills the whole keybind.
+  { [[ -f "$prev_file" ]] && read -r p < "$prev_file" 2>/dev/null; } || true
   [[ -z "$p" ]] && exit 0
   # No-op silently if that pane is gone (don't error in a keybind).
   tx list-panes -a -F '#{pane_id}' 2>/dev/null | grep -qx "$p" || exit 0
@@ -301,12 +321,12 @@ cmd_back() {
 cmd_attach() {
   local target="${1:-}"
   ensure_server
-  if [[ -n "$target" ]] && ! tx has-session -t "$target" 2>/dev/null; then
+  if [[ -n "$target" ]] && ! tx has-session -t "=$target" 2>/dev/null; then
     echo "error: no such workspace: $target" >&2
     exit 1
   fi
   if in_fleet_tmux; then
-    [[ -n "$target" ]] && tx switch-client -t "$target"
+    [[ -n "$target" ]] && tx switch-client -t "=$target"
     return 0
   fi
   if [[ -n "${TMUX:-}" ]]; then
@@ -314,7 +334,7 @@ cmd_attach() {
     exit 1
   fi
   if [[ -n "$target" ]]; then
-    exec "$TMUX_BIN" -L "$SOCKET" -f "$CONF" attach-session -t "$target"
+    exec "$TMUX_BIN" -L "$SOCKET" -f "$CONF" attach-session -t "=$target"
   else
     exec "$TMUX_BIN" -L "$SOCKET" -f "$CONF" attach-session
   fi
@@ -325,9 +345,9 @@ cmd_kill() {
   if [[ "$target" == %* ]]; then
     tx kill-pane -t "$target" && echo "killed pane $target"
   elif [[ "$target" == *:* ]]; then
-    tx kill-window -t "$target" && echo "killed window $target"
+    tx kill-window -t "=$target" && echo "killed window $target"
   else
-    tx kill-session -t "$target" && echo "killed workspace $target"
+    tx kill-session -t "=$target" && echo "killed workspace $target"
   fi
 }
 
@@ -352,12 +372,12 @@ cmd_rename_workspace() {
   [[ -n "$old" ]] || { echo "error: no current workspace — run inside the fleet or pass <old>" >&2; exit 1; }
   new="$(sanitize_name "$new")"
   [[ "$old" == "$new" ]] && return 0
-  tx rename-session -t "$old" "$new" || return 1
+  tx rename-session -t "=$old" "$new" || return 1
   # Agents named after the old workspace follow the rename.
   local wid wname tag
   while IFS='|' read -r wid wname tag; do
     [[ -n "$tag" && "$wname" == "$old" ]] && tx rename-window -t "$wid" "$new"
-  done < <(tx list-windows -t "$new" -F '#{window_id}|#{window_name}|#{@fleet-agent}' 2>/dev/null)
+  done < <(tx list-windows -t "=$new" -F '#{window_id}|#{window_name}|#{@fleet-agent}' 2>/dev/null)
   echo "workspace '$old' → '$new'"
 }
 
@@ -387,7 +407,9 @@ cmd_stop() {
   # Save the layout first so `agent-fleet attach` can rebuild it later.
   "$ROOT_DIR/scripts/persist-save.sh" 2>/dev/null || true
   local pf="$AF_CACHE_DIR/snapshotd.lock/pid"
-  [[ -f "$pf" ]] && kill "$(cat "$pf" 2>/dev/null)" 2>/dev/null
+  # `|| true`: a stale pidfile makes kill fail, and under set -e that would
+  # abort BEFORE kill-server — stop reporting nothing and leaving the fleet up.
+  [[ -f "$pf" ]] && kill "$(cat "$pf" 2>/dev/null)" 2>/dev/null || true
   tx kill-server
   echo "fleet stopped"
 }
@@ -402,7 +424,7 @@ cmd_save() {
 # restore — rebuild the saved layout on a stopped fleet (attach does this
 # automatically on a cold boot; this is the manual equivalent).
 cmd_restore() {
-  if server_up && tx list-sessions >/dev/null 2>&1; then
+  if server_up; then
     echo "error: fleet already running — stop it first (agent-fleet stop)" >&2
     exit 1
   fi
@@ -439,7 +461,7 @@ cmd_cs() {
       local cs="${1:?usage: agent-fleet cs connect <codespace-name> [workspace-name]}"
       local ws; ws="$(sanitize_name "${2:-$cs}")"
       ensure_server
-      if tx has-session -t "$ws" 2>/dev/null; then ensure_server_env; go_to_session "$ws"; return 0; fi
+      if tx has-session -t "=$ws" 2>/dev/null; then ensure_server_env; go_to_session "$ws"; return 0; fi
       ensure_server_env
       # Lean-thin: the codespace IS the workspace — its first window is a shell
       # over SSH (not a proxied agent in the rail). Run a multiplexer inside for
