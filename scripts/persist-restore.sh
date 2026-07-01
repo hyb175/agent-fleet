@@ -51,6 +51,9 @@ rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session 
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt
 #     windows stay under our control; it's removed at the end. --------------
 tmux -L "$SOCK" -f "$CONF" new-session -d -s "__af_restore__" -x 220 -y 50 2>/dev/null || exit 1
+# Remember the user's effective auto-rail setting (conf + local.conf just
+# loaded) so we can put it back afterwards instead of clobbering an opt-out.
+prev_auto="$(tx show-option -gqv @fleet-sidenav-auto 2>/dev/null)"
 tx set-option -g @fleet-sidenav-auto off 2>/dev/null || true
 tx set-environment -g AGENT_FLEET_ROOT "$ROOT" 2>/dev/null || true
 tx set-environment -g AGENT_FLEET_SOCKET "$SOCK" 2>/dev/null || true
@@ -80,7 +83,13 @@ for s in "${sess_order[@]}"; do
 
     # create the window with pane 1, then split to the saved pane count
     if (( first )); then
-      win_id="$(tx new-session -d -P -F '#{window_id}' -s "$s" -n "$wname" -c "${cwds[0]}" 2>/dev/null)"
+      # Size the detached session from the saved layout ("csum,WxH,…"): at the
+      # default 80x24, repeated splits run out of rows and ~6+-pane windows
+      # silently lose panes before select-layout can reproduce the geometry.
+      dims="${layout#*,}"; dims="${dims%%,*}"
+      dim_w="${dims%x*}"; dim_h="${dims#*x}"
+      [[ "$dim_w" =~ ^[0-9]+$ && "$dim_h" =~ ^[0-9]+$ ]] || { dim_w=220; dim_h=50; }
+      win_id="$(tx new-session -d -P -F '#{window_id}' -s "$s" -n "$wname" -c "${cwds[0]}" -x "$dim_w" -y "$dim_h" 2>/dev/null)"
       first=0
     else
       win_id="$(tx new-window -d -P -F '#{window_id}' -t "$s:" -n "$wname" -c "${cwds[0]}" 2>/dev/null)"
@@ -89,6 +98,10 @@ for s in "${sess_order[@]}"; do
     i=1
     while (( i < ${#cwds[@]} )); do
       tx split-window -d -t "$win_id" -c "${cwds[$i]}" 2>/dev/null || true
+      # Rebalance after every split: repeatedly splitting the same active pane
+      # halves it into oblivion (50 rows → 5 splits max); tiled keeps capacity
+      # proportional to the window area. The exact saved layout is applied below.
+      tx select-layout -t "$win_id" tiled 2>/dev/null || true
       i=$(( i + 1 ))
     done
 
@@ -155,9 +168,9 @@ for s in "${sess_order[@]}"; do
   [[ -n "$active_win" ]] && tx select-window -t "$active_win" 2>/dev/null || true
 done
 
-# tidy up: drop the scratch session, restore the auto-rail default
+# tidy up: drop the scratch session, put the user's auto-rail setting back
 tx kill-session -t "__af_restore__" 2>/dev/null || true
-tx set-option -g @fleet-sidenav-auto on 2>/dev/null || true
+tx set-option -g @fleet-sidenav-auto "${prev_auto:-on}" 2>/dev/null || true
 
 # best-effort: make the previously-attached session most-recent so a bare
 # `attach-session` lands there.
