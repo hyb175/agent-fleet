@@ -83,7 +83,17 @@ state_for_pane() {
   esac
   # Non-hooked agent: capture-pane is slow, so cache it (2s) + refresh in bg.
   st="$(cache_bg "st_$pane" 2 _state_capture "$pane")"
-  echo "${st:-idle}"
+  st="${st:-idle}"
+  # "done" acknowledgement — the scraped twin of the hooked clear-done flow.
+  # Visiting a finished agent drops a .ackdone marker (see clear_done); while it's
+  # present a scraped 'done' reads 'idle' (you've seen it). Any non-done state
+  # means new activity, so the marker is cleared and the next finished turn
+  # surfaces again. This is what keeps the triage queue (Prefix Space) draining.
+  local ack="$AF_CACHE/$pane.ackdone"
+  if [[ -e "$ack" ]]; then
+    if [[ "$st" == "done" ]]; then st="idle"; else rm -f "$ack" 2>/dev/null; fi
+  fi
+  echo "$st"
 }
 
 # Foreground commands treated as agents when scraping non-hooked panes.
@@ -160,9 +170,9 @@ gc() {
   local live f base
   live="$(tmux -L "$AF_SOCKET" list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   [[ -z "$live" ]] && return 0
-  for f in "$AF_CACHE"/*.status; do
+  for f in "$AF_CACHE"/*.status "$AF_CACHE"/*.ackdone; do
     [[ -e "$f" ]] || continue
-    base="$(basename "$f" .status)"
+    base="$(basename "$f")"; base="${base%.*}"   # strip .status / .ackdone
     grep -qx "$base" <<<"$live" || rm -f "$f"
   done
 }
@@ -177,9 +187,18 @@ count_wait() {
   echo "$n"
 }
 
+# clear_done <pane> — acknowledge a finished agent (called when you visit it via
+# goto / a rail click). Hooked agents store state in a file, so flip done→idle
+# there. Scraped agents have no file; if the pane is currently 'done', drop a
+# .ackdone marker that state_for_pane honors until the agent shows activity again.
 clear_done() {
   local f="$AF_CACHE/$1.status"
-  [[ -f "$f" && "$(cat "$f" 2>/dev/null || true)" == "done" ]] && printf 'idle' > "$f"
+  if [[ -f "$f" ]]; then
+    [[ "$(cat "$f" 2>/dev/null || true)" == "done" ]] && printf 'idle' > "$f"
+  elif [[ "$(_state_capture "$1")" == "done" ]]; then
+    mkdir -p "$AF_CACHE" 2>/dev/null || true
+    : > "$AF_CACHE/$1.ackdone" 2>/dev/null || true
+  fi
   return 0
 }
 
