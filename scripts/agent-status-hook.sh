@@ -26,7 +26,9 @@ f="$cache/${pane}.status"
 
 prev=""
 [[ -f "$f" ]] && prev="$(cat "$f" 2>/dev/null || true)"
-printf '%s' "$state" > "$f"
+# Trailing newline matters: status.sh reads this with `read`, which returns
+# nonzero at EOF-without-newline even after assigning the value.
+printf '%s\n' "$state" > "$f"
 
 # Capture Claude's session id once, from the event JSON on stdin, so a restored
 # fleet can `claude --resume <id>`. Gated on a per-pane file so we only read stdin
@@ -36,7 +38,7 @@ sf="$cache/${pane}.session"
 if [[ ! -f "$sf" ]]; then
   sid="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
   if [[ -n "$sid" ]]; then
-    printf '%s' "$sid" > "$sf" 2>/dev/null || true
+    printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
     command -v tmux >/dev/null 2>&1 && tmux -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
   fi
 fi

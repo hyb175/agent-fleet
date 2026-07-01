@@ -76,7 +76,10 @@ _state_capture() {
 # state_for_pane <pane_id> [current_command]
 state_for_pane() {
   local pane="$1" cmd="${2:-}" f="$AF_CACHE/$1.status" st=""
-  [[ -f "$f" ]] && { read -r st < "$f" 2>/dev/null || st=""; }
+  # `|| true`, NOT `|| st=""`: on a file without a trailing newline, read
+  # assigns the value and THEN returns 1 (EOF) — clobbering st here silently
+  # disabled the entire hooked tier.
+  [[ -f "$f" ]] && { read -r st < "$f" 2>/dev/null || true; }
   [[ -n "$st" ]] && { echo "$st"; return; }    # hooked agent: instant + accurate
   case "$cmd" in
     fish|zsh|bash|sh|tmux|"") echo "idle"; return ;;   # plain shell
@@ -194,7 +197,7 @@ count_wait() {
 clear_done() {
   local f="$AF_CACHE/$1.status"
   if [[ -f "$f" ]]; then
-    [[ "$(cat "$f" 2>/dev/null || true)" == "done" ]] && printf 'idle' > "$f"
+    [[ "$(cat "$f" 2>/dev/null || true)" == "done" ]] && printf 'idle\n' > "$f"
   elif [[ "$(_state_capture "$1")" == "done" ]]; then
     mkdir -p "$AF_CACHE" 2>/dev/null || true
     : > "$AF_CACHE/$1.ackdone" 2>/dev/null || true
