@@ -47,13 +47,24 @@ glyph_of() { case "$1" in
   done) printf '%s' "$G_done";; idle) printf '%s' "$G_idle";; *) printf '%s' "$G_none";;
 esac; }
 
+# stale_row <snapshot_T_epoch> — emit a warning row when the daemon stopped
+# writing (crash/kill -9 leaves the file behind); states shown are frozen.
+stale_row() {
+  local now
+  printf -v now '%(%s)T' -1
+  [[ "$1" =~ ^[0-9]+$ ]] && (( now - $1 > 10 )) && \
+    printf 'NONE\t\033[38;2;247;118;142m⚠ snapshot stale — daemon down?\033[0m\n'
+  return 0
+}
+
 # The fleet: every jump target — agents (one row per agent PANE, showing the tab
 # name so same-workspace agents differ) then agentless workspaces.
 list_fleet() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane label st roll br glyph agents="" spaces="" idx=0
+  local line s wid widx wn pane label st roll br glyph agents="" spaces="" idx=0 snap_ts=""
   while IFS= read -r line; do
     case "$line" in
+      T\ *) snap_ts="${line#T }" ;;
       A\ *)
         IFS='|' read -r s wid widx wn pane label st <<<"${line#A }"
         glyph="$(glyph_of "$st")"
@@ -76,6 +87,7 @@ list_fleet() {
   if [[ -n "$agents" ]]; then
     agents="$(printf '%s' "$agents" | sort -t$'\t' -k1,1n -k2,2n | cut -f3-)"$'\n'
   fi
+  stale_row "$snap_ts"
   printf '%s%s' "$agents" "$spaces"
 }
 
@@ -84,14 +96,16 @@ list_fleet() {
 # Subtitle = git branch + agent count, or "shell" when it has no agents.
 list_spaces() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane label st roll br order=""
+  local line s wid widx wn pane label st roll br order="" snap_ts=""
   declare -A NAG ROLL BR
   while IFS= read -r line; do
     case "$line" in
+      T\ *) snap_ts="${line#T }" ;;
       A\ *) IFS='|' read -r s wid widx wn pane label st <<<"${line#A }"; NAG[$s]=$(( ${NAG[$s]:-0} + 1 )) ;;
       S\ *) IFS='|' read -r s roll br <<<"${line#S }"; ROLL[$s]="$roll"; BR[$s]="$br"; order+="$s"$'\n' ;;
     esac
   done < "$SNAP"
+  stale_row "$snap_ts"
   local g cnt sub
   while IFS= read -r s; do
     [[ -z "$s" ]] && continue
@@ -141,11 +155,19 @@ list_connect() {
   # Branch map: read fork-free from a 60s cache; refresh in the background when
   # stale (one bg job does all the git calls, instead of one per row on open).
   declare -A BR
-  local f="$AF_CACHE2/connect_branches" now ts=0 d
+  local f="$AF_CACHE2/connect_branches" now ts=0 d tmp_m
   printf -v now '%(%s)T' -1
   [[ -f "$f" ]] && { read -r ts; while IFS=$'\t' read -r d b; do [[ -n "$d" ]] && BR[$d]="$b"; done; } < "$f"
-  if (( now - ts >= 60 )) && [[ ! -f "$f.tmp" ]]; then
-    ( { printf '%s\n' "$now"; _connect_branch_map; } > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f"; rm -f "$f.tmp" ) >/dev/null 2>&1 &
+  if (( now - ts >= 60 )); then
+    # Stuck-temp recovery (mirrors cache_bg): a refresher killed mid-run — e.g.
+    # the popup closing takes its process group with it — would otherwise leave
+    # $f.tmp behind and wedge the cache permanently. Claim the temp first so
+    # concurrent popups don't each spawn the multi-second git sweep.
+    tmp_m="$(stat -c %Y "$f.tmp" 2>/dev/null || stat -f %m "$f.tmp" 2>/dev/null || echo 0)"
+    if [[ ! -f "$f.tmp" ]] || (( now - tmp_m > 30 )); then
+      : > "$f.tmp" 2>/dev/null || true   # claim synchronously (see cache_bg)
+      ( { printf '%s\n' "$now"; _connect_branch_map; } > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f"; rm -f "$f.tmp" ) >/dev/null 2>&1 &
+    fi
   fi
 
   while IFS= read -r dir; do

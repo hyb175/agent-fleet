@@ -30,8 +30,11 @@ tx() { tmux -L "$SOCKET" "$@"; }
 # Cheap pid check on the common path; only launch when absent.
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 ensure_daemon() {
-  local pf="$CACHE/snapshotd.lock/pid"
-  [[ -f "$pf" ]] && kill -0 "$(cat "$pf" 2>/dev/null)" 2>/dev/null && return 0
+  local pf="$CACHE/snapshotd.lock/pid" p
+  p="$(cat "$pf" 2>/dev/null || true)"
+  # Comm check: a recycled pid (unclean shutdown) must not pass for the daemon.
+  [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null \
+    && ps -p "$p" -o command= 2>/dev/null | grep -q snapshotd && return 0
   AGENT_FLEET_SOCKET="$SOCKET" AGENT_FLEET_ROOT="$ROOT" \
     nohup "$ROOT/scripts/snapshotd.sh" >/dev/null 2>&1 &
 }

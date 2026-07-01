@@ -39,12 +39,19 @@ SSH_USER="${AGENT_FLEET_CS_USER:-dev}"
 red='\033[38;2;247;118;142m'; blue='\033[38;2;122;162;247m'
 dim='\033[2m'; bold='\033[1m'; rst='\033[0m'
 
-fwd_pid=""; fwd_log=""
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+
+fwd_pid=""; fwd_log=""; port_lock=""
 cleanup() {
   [[ -n "$fwd_pid" ]] && kill "$fwd_pid" 2>/dev/null
   [[ -n "$fwd_log" ]] && rm -f "$fwd_log" 2>/dev/null
+  [[ -n "$port_lock" ]] && rm -rf "$port_lock" 2>/dev/null
 }
 trap cleanup EXIT
+# Signals skip the EXIT trap by default; release the port lock and forward on
+# an ordinary kill too. (kill -9 can't be caught — the dead-holder takeover in
+# the port scan reclaims those locks.)
+trap 'cleanup; trap - EXIT; exit 129' INT TERM HUP
 
 drop_to_shell() {
   cleanup; trap - EXIT          # exec replaces us, so release the forward first
@@ -60,12 +67,26 @@ port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null && { exec 3>&- 2>/de
 command -v gh  >/dev/null 2>&1 || drop_to_shell "cs-connect: 'gh' (GitHub CLI) not found on PATH"
 command -v ssh >/dev/null 2>&1 || drop_to_shell "cs-connect: 'ssh' not found on PATH"
 
-# A local port with no current listener, so the forward can bind it. Scanning up
-# from the remote port keeps multiple codespace agents from colliding on one port.
-local_port="$REMOTE_PORT"
+# A free local port, RESERVED via an atomic per-port lock. The listener check
+# alone races: the forward binds seconds after the scan, so two connects
+# launched back-to-back would pick the same port — and the loser's readiness
+# poll would see the winner's listener and SSH into the wrong codespace.
+mkdir -p "$CACHE_DIR/ports" 2>/dev/null || true
+local_port=""
 for (( p = REMOTE_PORT; p < REMOTE_PORT + 64; p++ )); do
-  port_open "$p" || { local_port="$p"; break; }
+  port_open "$p" && continue
+  lk="$CACHE_DIR/ports/$p.lock"
+  if mkdir "$lk" 2>/dev/null; then
+    echo $$ > "$lk/pid"
+  elif kill -0 "$(cat "$lk/pid" 2>/dev/null)" 2>/dev/null; then
+    continue                       # live holder — try the next port
+  else
+    rm -rf "$lk" 2>/dev/null; mkdir "$lk" 2>/dev/null || continue
+    echo $$ > "$lk/pid"            # stale lock from a crashed run — take over
+  fi
+  port_lock="$lk"; local_port="$p"; break
 done
+[[ -n "$local_port" ]] || drop_to_shell "cs-connect: no free local port in ${REMOTE_PORT}–$(( REMOTE_PORT + 63 ))"
 
 # Default remote dir: the codespace's own repo checkout under /workspaces. The
 # /workspaces root often holds several repos, so a glob is wrong — resolve the
@@ -82,7 +103,10 @@ fi
 # is on PATH — codespaces commonly install CLIs under ~/.local/bin, which a
 # non-login ssh shell does not pick up. exec so the agent is the foreground
 # process (a clean exit closes the window, like a local agent).
-cmd_str="${cmd[*]}"
+# %q per argument: the remote login shell re-parses the string, so a flat
+# "${cmd[*]}" would word-split quoted arguments (e.g. --append-system-prompt
+# "be terse" arriving as two words).
+printf -v cmd_str '%q ' "${cmd[@]}"
 if [[ -n "$remote_dir" ]]; then
   inner="cd ${remote_dir} 2>/dev/null || cd /workspaces 2>/dev/null || true; exec ${cmd_str}"
 else

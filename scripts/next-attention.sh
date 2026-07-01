@@ -26,9 +26,13 @@ note() { tx display-message "$1" 2>/dev/null || true; }
 
 # Attention queue: all wait panes first, then all done panes (snapshot order
 # within each tier). Each entry: "<pane_id>|<session>|<window_name>".
-waits=(); dones=()
+waits=(); dones=(); snap_ts=""
 while IFS= read -r line; do
-  [[ "$line" == A\ * ]] || continue
+  case "$line" in
+    T\ *) snap_ts="${line#T }"; continue ;;
+    A\ *) ;;
+    *) continue ;;
+  esac
   IFS='|' read -r s wid widx wn pane label st <<<"${line#A }"
   [[ -z "$pane" ]] && continue
   case "$st" in
@@ -36,6 +40,14 @@ while IFS= read -r line; do
     done) dones+=("$pane|$s|$wn") ;;
   esac
 done < "$SNAP"
+
+# Don't jump on frozen data: a crashed daemon leaves the snapshot behind, and
+# the states in it stop meaning anything.
+printf -v now_ts '%(%s)T' -1
+if [[ "$snap_ts" =~ ^[0-9]+$ ]] && (( now_ts - snap_ts > 10 )); then
+  note "fleet: snapshot stale (daemon down?) — not jumping"
+  exit 0
+fi
 
 # Concatenate guardedly — empty "${arr[@]}" trips set -u on older bash.
 queue=()

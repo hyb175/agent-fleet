@@ -28,11 +28,16 @@ mkdir -p "$CACHE" 2>/dev/null || exit 0
 
 tx() { tmux -L "$SOCK" "$@"; }
 
-# Single instance: atomic mkdir lock; take over only if the holder is dead.
+# Single instance: atomic mkdir lock; take over unless the holder is a LIVE
+# snapshotd. kill -0 alone isn't enough — after an unclean shutdown the pid can
+# be recycled by an unrelated process, locking every writer out forever.
+holder_is_snapshotd() {
+  local hp; hp="$(cat "$LOCK/pid" 2>/dev/null)"
+  [[ -n "$hp" ]] && kill -0 "$hp" 2>/dev/null \
+    && ps -p "$hp" -o command= 2>/dev/null | grep -q snapshotd
+}
 if ! mkdir "$LOCK" 2>/dev/null; then
-  if [[ -f "$LOCK/pid" ]] && kill -0 "$(cat "$LOCK/pid" 2>/dev/null)" 2>/dev/null; then
-    exit 0
-  fi
+  holder_is_snapshotd && exit 0
   rm -rf "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || exit 0
 fi
 echo $$ > "$LOCK/pid"
@@ -71,6 +76,10 @@ build() {
     label="$(pane_agent_kind "$kind" "$cmd" "$tty" "$sid")"
     [[ -n "$label" ]] || continue
     st="$(state_for_pane "$pane" "$cmd")"
+    # '|' is this file's field delimiter; window names are user-controlled
+    # (rename-window), so swap it for a lookalike in display fields. Session
+    # names are already sanitized at creation by the CLI.
+    wn="${wn//|/¦}"
     agents+="A $s|$wid|$widx|$wn|$pane|$label|$st"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
@@ -84,6 +93,7 @@ build() {
     dir="$(tx display-message -p -t "$sess" '#{pane_current_path}' 2>/dev/null || echo '')"
     # Non-git workspace: show the dir basename, not the whole path.
     br="$(git_branch "$dir")"; [[ -z "$br" ]] && br="${dir##*/}"
+    br="${br//|/¦}"   # display field; '|' is the record delimiter
     out+="S $sess|${ROLL[$sess]:-none}|$br"$'\n'
   done < <(tx list-sessions -F '#{session_name}' 2>/dev/null | sort)
 

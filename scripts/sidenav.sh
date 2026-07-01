@@ -45,14 +45,15 @@ home() { printf '\033[H'; }
 trunc() { local s="$1" n="$2"; (( n < 1 )) && { printf ''; return; }; if (( ${#s} > n )); then printf '%s…' "${s:0:n-1}"; else printf '%s' "$s"; fi; }
 
 # --- snapshot (re-read every DATA_EVERY ticks) ---
-CUR_SESS=""; CUR_WIN=""; ANIMATE=0
+CUR_SESS=""; CUR_WIN=""; ANIMATE=0; SNAP_TS=""
 SPACES=(); AGENTS=()
 read_snapshot() {
-  SPACES=(); AGENTS=(); ANIMATE=0; CUR_SESS=""; CUR_WIN=""
+  SPACES=(); AGENTS=(); ANIMATE=0; CUR_SESS=""; CUR_WIN=""; SNAP_TS=""
   [[ -f "$SNAP" ]] || return 0
   local line
   while IFS= read -r line; do
     case "$line" in
+      T\ *) SNAP_TS="${line#T }" ;;
       C\ *) IFS='|' read -r CUR_SESS CUR_WIN <<<"${line#C }" ;;
       S\ *) SPACES+=("${line#S }") ;;
       A\ *) AGENTS+=("${line#A }"); [[ "$line" == *'|working' ]] && ANIMATE=1 ;;
@@ -95,6 +96,14 @@ draw() {
   local rec s roll br wid widx wn pane label st GLYPH sel
 
   header "spaces" "";                                        line=$((line+1))
+  # A crashed daemon (kill -9 skips its cleanup trap) leaves the snapshot on
+  # disk; without this check the rail renders frozen states as live forever.
+  local now_ts
+  printf -v now_ts '%(%s)T' -1
+  if [[ "$SNAP_TS" =~ ^[0-9]+$ ]] && (( now_ts - SNAP_TS > 10 )); then
+    printf ' %s⚠ stale — daemon down?%s\033[K\n' $'\033[38;2;247;118;142m' "$C_OFF"
+    line=$((line+1))
+  fi
   blank;                                                     line=$((line+1))
   if (( ${#SPACES[@]} == 0 )); then
     printf ' %s(no workspaces)%s\033[K\n' "$C_DIM" "$C_OFF"; line=$((line+1))

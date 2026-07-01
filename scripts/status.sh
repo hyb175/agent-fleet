@@ -48,6 +48,12 @@ cache_bg() {
   # BSD's -f means --file-system on GNU and wouldn't fail cleanly; macOS rejects
   # -c outright, so it falls through to -f. Works on both this way.
   if [[ ! -f "$f.tmp" ]] || (( now - $(stat -c %Y "$f.tmp" 2>/dev/null || stat -f %m "$f.tmp" 2>/dev/null || echo 0) > 15 )); then
+    # Claim the temp SYNCHRONOUSLY, before backgrounding: the command
+    # substitution in the subshell runs before its redirection, so a claim
+    # made inside the subshell doesn't exist during exactly the window the
+    # dedup guard is for — every caller across the slow command's runtime
+    # would spawn its own refresher. One redirect, no fork, on the hot path.
+    : > "$f.tmp" 2>/dev/null || true
     ( printf '%s %s\n' "$now" "$("$@")" > "$f.tmp" && mv "$f.tmp" "$f"; rm -f "$f.tmp" ) >/dev/null 2>&1 &
   fi
   printf '%s' "$val"

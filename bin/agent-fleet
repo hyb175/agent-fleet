@@ -61,8 +61,12 @@ AF_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 # Start the snapshot daemon (single writer the rails/picker read) if not already
 # running. Self-deduping, so a stray extra launch just exits.
 ensure_snapshotd() {
-  local pf="$AF_CACHE_DIR/snapshotd.lock/pid"
-  [[ -f "$pf" ]] && kill -0 "$(cat "$pf" 2>/dev/null)" 2>/dev/null && return 0
+  local pf="$AF_CACHE_DIR/snapshotd.lock/pid" p
+  p="$(cat "$pf" 2>/dev/null || true)"
+  # Verify the pid is actually a snapshotd — after an unclean shutdown the pid
+  # can be recycled by an unrelated process, and no writer would ever start.
+  [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null \
+    && ps -p "$p" -o command= 2>/dev/null | grep -q snapshotd && return 0
   AGENT_FLEET_SOCKET="$SOCKET" AGENT_FLEET_ROOT="$ROOT_DIR" \
     nohup "$ROOT_DIR/scripts/snapshotd.sh" >/dev/null 2>&1 &
 }
