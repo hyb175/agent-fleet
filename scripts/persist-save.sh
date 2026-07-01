@@ -22,7 +22,7 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 STATE="$CACHE/fleet.state"
 US=$'\t'
 
-tx() { tmux -L "$SOCK" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 tx list-sessions >/dev/null 2>&1 || exit 0
 mkdir -p "$CACHE" 2>/dev/null || exit 0
 

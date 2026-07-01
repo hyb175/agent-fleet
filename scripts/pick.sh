@@ -19,7 +19,7 @@ AF="$ROOT/bin/agent-fleet"
 # shellcheck source=status.sh
 source "$ROOT/scripts/status.sh"
 
-tx() { tmux -L "$SOCKET" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 if ! command -v fzf >/dev/null 2>&1; then
   echo "agent-fleet picker requires 'fzf' on PATH" >&2

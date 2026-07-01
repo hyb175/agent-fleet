@@ -5,7 +5,7 @@
 #   status.sh state <pane_id>     -> wait|working|done|idle
 #   status.sh glyph <pane_id>     -> colored glyph
 #   status.sh gc                  -> prune status files for dead panes
-#   status.sh count-wait          -> number of agents needing input
+#   status.sh summary             -> status-bar wait/working/done counts
 #   status.sh clear-done <pane>   -> demote a 'done' agent to idle
 #
 # Status comes from two tiers:
@@ -18,6 +18,7 @@ set -uo pipefail
 AF_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/panes"
 AF_CACHE2="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/cache"
 AF_SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
+AF_TMUX="${TMUX_BIN:-tmux}"
 
 mkdir -p "$AF_CACHE2" 2>/dev/null || true
 
@@ -64,7 +65,7 @@ cache_bg() {
 # also appear in the idle footer and misclassified idle agents as working.
 _state_capture() {
   local tail
-  tail="$(tmux -L "$AF_SOCKET" capture-pane -t "$1" -p 2>/dev/null | tail -12)"
+  tail="$("$AF_TMUX" -L "$AF_SOCKET" capture-pane -t "$1" -p 2>/dev/null | tail -12)"
   # Working: Claude's live spinner is "<glyph> <Gerund>… (Ns · …)" — a gerund
   # ending in "…" followed by a parenthesised live timer. (In auto mode there's
   # no "esc to interrupt".) Matching the "…(" timer avoids the idle footer's
@@ -177,23 +178,13 @@ state_glyph() {
 gc() {
   [[ -d "$AF_CACHE" ]] || return 0
   local live f base
-  live="$(tmux -L "$AF_SOCKET" list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+  live="$("$AF_TMUX" -L "$AF_SOCKET" list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   [[ -z "$live" ]] && return 0
   for f in "$AF_CACHE"/*.status "$AF_CACHE"/*.ackdone "$AF_CACHE"/*.session; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"; base="${base%.*}"   # strip .status / .ackdone / .session
     grep -qx "$base" <<<"$live" || rm -f "$f"
   done
-}
-
-count_wait() {
-  [[ -d "$AF_CACHE" ]] || { echo 0; return; }
-  local n=0 f
-  for f in "$AF_CACHE"/*.status; do
-    [[ -e "$f" ]] || continue
-    [[ "$(cat "$f" 2>/dev/null || true)" == "wait" ]] && n=$((n + 1))
-  done
-  echo "$n"
 }
 
 # clear_done <pane> — acknowledge a finished agent (called when you visit it via
@@ -245,7 +236,7 @@ summary() {
       working) g=$((g + 1)) ;;
       done)    d=$((d + 1)) ;;
     esac
-  done < <(tmux -L "$AF_SOCKET" list-panes -a \
+  done < <("$AF_TMUX" -L "$AF_SOCKET" list-panes -a \
             -F '#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}' 2>/dev/null)
   # Match the rail/picker glyphs: ● red wait, braille working, ● green done.
   # The working frame advances each status refresh (a slow spin).
@@ -256,30 +247,14 @@ summary() {
   [[ -n "$out" ]] && printf '%s#[default]' "$out"
 }
 
-# session_rollup <session> — most-urgent agent state in the session, else "none".
-session_rollup() {
-  local sess="$1" best=9 r st label pane cmd tty kind sidenav
-  while IFS='|' read -r pane cmd tty kind sidenav; do
-    [[ -z "$pane" ]] && continue
-    label="$(pane_agent_kind "$kind" "$cmd" "$tty" "$sidenav")"
-    [[ -n "$label" ]] || continue
-    st="$(state_for_pane "$pane" "$cmd")"
-    r="$(state_rank "$st")"
-    (( r < best )) && best=$r
-  done < <(tmux -L "$AF_SOCKET" list-panes -t "$sess" \
-            -F '#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}' 2>/dev/null)
-  case "$best" in 0) echo wait;; 1) echo working;; 2) echo done;; 3) echo idle;; *) echo none;; esac
-}
-
 if [[ "${BASH_SOURCE[0]:-}" == "${0}" ]]; then
   cmd="${1:-}"; shift || true
   case "$cmd" in
     state)      state_for_pane "$@" ;;
     glyph)      state_glyph "$(state_for_pane "$@")" ;;
     gc)         gc ;;
-    count-wait) count_wait ;;
     summary)    summary ;;
     clear-done) clear_done "$@" ;;
-    *) echo "usage: status.sh {state|glyph|gc|count-wait|clear-done} [pane]" >&2; exit 2 ;;
+    *) echo "usage: status.sh {state|glyph|gc|summary|clear-done} [pane]" >&2; exit 2 ;;
   esac
 fi

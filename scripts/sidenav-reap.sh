@@ -13,7 +13,7 @@
 set -uo pipefail
 
 SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
-tx() { tmux -L "$SOCKET" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 # Let tmux finish tearing the exited pane down so it's gone from the listing
 # below. The pane-exited hook runs us with run-shell -b, so this doesn't block.

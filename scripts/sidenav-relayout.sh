@@ -18,12 +18,14 @@ ROOT="${AGENT_FLEET_ROOT:?AGENT_FLEET_ROOT not set}"
 win="${1:?usage: sidenav-relayout.sh <window_id> <pane_id>}"
 cur="${2:-}"
 
-tx() { tmux -L "$SOCKET" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 # Positions of the work (non-rail) panes, sampled before any change.
 tops="$(tx list-panes -t "$win" -F '#{@fleet-sidenav}|#{pane_top}'  2>/dev/null | awk -F'|' '$1!="1"{print $2}')"
 lefts="$(tx list-panes -t "$win" -F '#{@fleet-sidenav}|#{pane_left}' 2>/dev/null | awk -F'|' '$1!="1"{print $2}')"
-n="$(grep -c . <<<"$tops" 2>/dev/null || echo 0)"
+# NOT `|| echo 0`: grep -c prints the 0 itself and exits 1, so the fallback
+# would append a second line and break the arithmetic below.
+n="$(grep -c . <<<"$tops" 2>/dev/null || true)"; n="${n:-0}"
 
 layout=""
 if (( n >= 2 )); then

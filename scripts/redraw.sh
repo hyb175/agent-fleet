@@ -17,7 +17,7 @@ set -u
 SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
 pane="${1:-}"; is_rail="${2:-}"
 [[ "$is_rail" == "1" || -z "$pane" ]] && exit 0
-tx() { tmux -L "$SOCK" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 
 w="$(tx display-message -p -t "$pane" '#{pane_width}' 2>/dev/null || echo 0)"
 [[ "${w:-0}" -gt 2 ]] || exit 0

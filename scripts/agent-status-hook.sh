@@ -39,7 +39,7 @@ if [[ ! -f "$sf" ]]; then
   sid="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
-    command -v tmux >/dev/null 2>&1 && tmux -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
+    command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
   fi
 fi
 
@@ -49,8 +49,8 @@ if [[ "${AGENT_FLEET_NOTIFY:-1}" == "1" && "$state" != "$prev" ]]; then
   case "$state" in
     wait|done)
       label="$pane"
-      if command -v tmux >/dev/null 2>&1; then
-        l="$(tmux -L "$socket" display-message -p -t "$pane" '#S/#W' 2>/dev/null || true)"
+      if command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
+        l="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#S/#W' 2>/dev/null || true)"
         [[ -n "$l" ]] && label="$l"
       fi
       if [[ "$state" == "wait" ]]; then msg="needs your input"; else msg="finished"; fi

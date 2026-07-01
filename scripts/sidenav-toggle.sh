@@ -24,7 +24,7 @@ win="${1:?usage: sidenav-toggle.sh <window_id> <pane_id> [toggle|ensure]}"
 cur="${2:-}"
 mode="${3:-toggle}"
 
-tx() { tmux -L "$SOCKET" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 # Ensure the snapshot daemon (single writer the rail/picker read) is running.
 # Cheap pid check on the common path; only launch when absent.
@@ -84,7 +84,11 @@ fi
 
 if [[ "$mode" == "show" ]]; then
   # Forced: remove any (stale) rails and create exactly one. Used by relayout.
-  for p in "${existing[@]}"; do tx kill-pane -t "$p" 2>/dev/null || true; done
+  # Length guard: bash 3.2 + set -u errors on expanding an empty array, and
+  # this script is meant to run on 3.2 (the bash-4 gate lives in the rail).
+  if (( ${#existing[@]} > 0 )); then
+    for p in "${existing[@]}"; do tx kill-pane -t "$p" 2>/dev/null || true; done
+  fi
   create_rail
   exit 0
 fi

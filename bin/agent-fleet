@@ -36,6 +36,9 @@ HOME_SESSION="${AGENT_FLEET_HOME_SESSION:-home}"
 TMUX_BIN="${TMUX_BIN:-tmux}"
 export AGENT_FLEET_ROOT="$ROOT_DIR"
 export AGENT_FLEET_SOCKET="$SOCKET"
+# The conf's `bind r source-file "$AGENT_FLEET_CONF"` expands this at server
+# parse time, so reload keeps honoring a custom-conf override.
+export AGENT_FLEET_CONF="$CONF"
 tx() { "$TMUX_BIN" -L "$SOCKET" -f "$CONF" "$@"; }
 
 server_up() { tx list-sessions >/dev/null 2>&1; }
@@ -269,8 +272,8 @@ cmd_add() {
   # workspace renames can follow it (per-window). Value = agent kind ("claude").
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$label" 2>/dev/null || true
   tx set-option -w -t "$pane_id" @fleet-agent "$label" 2>/dev/null || true
-  # Mark codespace agents as remote so the rail/daemon can treat them differently
-  # (e.g. label the branch cell from `gh cs` rather than a local git checkout).
+  # Mark codespace agents as remote. Read by persist-save (recorded in
+  # fleet.state) and available to any UI that wants to badge remote panes.
   [[ -n "$cs" ]] && tx set-option -p -t "$pane_id" @fleet-codespace "$cs" 2>/dev/null || true
   # Drop the placeholder window if we created the workspace for this agent, so the
   # agent is the workspace's first tab.
@@ -491,13 +494,18 @@ Verbs:
                                    Resolve-or-create a workspace, then go to it. Optional name
                                    overrides the default (the directory's basename).
   agent-fleet attach [workspace]   Attach to the fleet (sesh-style 3-way branch).
-  agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>]
-                                   Add an agent window (default cmd: claude). --new-workspace puts it
-                                   in its own workspace instead of a tab. --codespace runs it inside a
-                                   GitHub Codespace over SSH (defaults to a shell). Prints its pane id.
+  agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>]
+                  [--codespace|--cs <name>] [--focus]
+                                   Add an agent window (default cmd: claude; hooks attach when the
+                                   command is claude). --new-workspace puts it in its own workspace
+                                   instead of a tab. --codespace runs it inside a GitHub Codespace
+                                   over SSH (defaults to a shell). --focus jumps to it (Prefix C).
+                                   Prints its pane id.
   agent-fleet cs <list | stop <name> | connect <name> [workspace-name]>
                                    Codespaces: list / stop / connect (opens a shell workspace).
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
+  agent-fleet back                 Jump to the previously focused pane (bound to Prefix Tab).
+  agent-fleet hooks-file           Print (and regenerate) the claude status-hooks overlay path.
   agent-fleet rename-workspace [<old>] <new>   Rename a workspace (session).
   agent-fleet rename-tab [<target>] <new>      Rename a tab (window).
   agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).

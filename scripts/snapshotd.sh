@@ -26,7 +26,7 @@ SNAP="$CACHE/fleet.snapshot"
 LOCK="$CACHE/snapshotd.lock"
 mkdir -p "$CACHE" 2>/dev/null || exit 0
 
-tx() { tmux -L "$SOCK" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 
 # Single instance: atomic mkdir lock; take over unless the holder is a LIVE
 # snapshotd. kill -0 alone isn't enough — after an unclean shutdown the pid can

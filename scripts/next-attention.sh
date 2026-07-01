@@ -19,7 +19,7 @@ AF="$ROOT/bin/agent-fleet"
 
 cur="${1:-}"
 
-tx() { tmux -L "$SOCK" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 note() { tx display-message "$1" 2>/dev/null || true; }
 
 [[ -f "$SNAP" ]] || { note "fleet: no snapshot yet"; exit 0; }

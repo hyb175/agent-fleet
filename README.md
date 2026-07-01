@@ -34,7 +34,7 @@ Two surfaces:
 | `tmux` ≥ 3.2 | yes | `display-popup` (picker), `split-window -f` (full-height rail), per-pane options |
 | `bash` ≥ 4 | yes | the rail uses associative arrays. macOS ships `/bin/bash` 3.2 — install a newer bash (`brew install bash`) and ensure it precedes `/bin/bash` on `PATH` |
 | `fzf` | yes | powers the picker popup |
-| `claude` (Claude Code CLI) | optional* | the default agent command; status hooks attach to it |
+| `claude` (Claude Code CLI) | optional* | the default agent command; the status hooks attach to claude launches |
 | `git` | optional | branch / ahead-count labels in the rail and picker |
 | `zoxide` | optional | frecent directories in the picker's connect view (falls back to `$PWD`) |
 | `osascript` (macOS) / `notify-send` (Linux) | optional | desktop notifications on agent state changes |
@@ -97,9 +97,9 @@ Ctrl-a L      bounce to the previous workspace
 | Command | Description |
 | --- | --- |
 | `agent-fleet attach [workspace]` | Boot the fleet and attach (or switch, if already inside). The default when run with no subcommand. |
-| `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Switch to an existing workspace, or create one (named for a directory's basename, or the name verbatim) and go to it. Defaults to `$PWD`. An optional final argument sets the workspace name. |
+| `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Switch to an existing workspace, or create one (named for a directory's basename, or the given name) and go to it. Defaults to `$PWD`. An optional final argument sets the workspace name. Names are sanitized: `:`, `.`, space, `/`, `\|` become `_`. |
 | `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. `--new-workspace <name>` puts the agent in its own workspace (created or reused) instead of a tab. `--codespace` (alias `--cs`) runs the agent inside a GitHub Codespace over SSH instead (no hooks — see [Codespaces](#codespaces)). `--focus` jumps to the new agent (used by `Prefix C`). |
-| `agent-fleet cs <list\|stop\|connect> [name]` | GitHub Codespaces helpers. `list` (alias `ls`) lists your codespaces; `stop <name>` stops one; `connect <name>` creates-or-switches a workspace named for the codespace and adds a `claude` agent into it over SSH. |
+| `agent-fleet cs <list\|stop\|connect> [name]` | GitHub Codespaces helpers. `list` (alias `ls`) lists your codespaces; `stop <name>` stops one; `connect <name> [workspace-name]` opens a **shell workspace** in the codespace over SSH (see [Codespaces](#codespaces)). |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (bound to `Prefix Tab`). |
 | `agent-fleet rename-workspace [<old>] <new>` (alias `rename-ws`) | Rename a workspace; agents named after it follow the rename. |
@@ -153,7 +153,7 @@ Agents launched via `agent-fleet add` run as `claude --settings <overlay>`, wher
 
 The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is not modified. Each hook writes the state to a per-pane file the rail and picker read.
 
-Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Status for hand-started agents is scraped from the pane, and the scrape patterns match the Claude CLI, so non-claude tools are listed correctly but their live state is approximate (they may read `idle` while working). For precise state, launch via `agent-fleet add --cmd <tool>` so the hooks attach.
+Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Status for hand-started agents is scraped from the pane, and the scrape patterns match the Claude CLI, so non-claude tools are listed correctly but their live state is approximate (they may read `idle` while working). The hooks are claude-specific: `agent-fleet add` attaches them when the command is `claude`; any other tool runs on the scrape tier regardless of how it's launched.
 
 **`done` clears when you visit it.** Opening a `done` agent — via the picker, `Prefix Space`, `Prefix Tab`, or a rail click — marks it seen: it drops to `idle` and leaves the attention queue, and returns to `done` only when the agent produces new output. Hooked agents track this in their state file; scraped/codespace agents use a `.ackdone` marker. (Raw `Prefix 1`–`9` window jumps don't count as a visit.)
 
@@ -205,7 +205,7 @@ A codespace agent runs through `scripts/cs-connect.sh`: it forwards the containe
 
 ## Notifications
 
-When an agent changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
+When a **hooked** agent changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). Notifications come from the status hook, so scrape-tier agents (hand-started, non-claude, codespace) don't produce them. On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
 
 ---
 
@@ -224,8 +224,9 @@ layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach:
   comes back as a local shell (reconnect with `Prefix g`). A resume that fails
   (deleted/expired session) also falls back to a shell. Set
   `AGENT_FLEET_RESTORE_AGENTS=0` to restore everything as plain shells.
-- **When it saves** — every `AGENT_FLEET_SAVE_INTERVAL` seconds (default 15) by
-  the daemon, on `agent-fleet stop`, and on `agent-fleet save`.
+- **When it saves** — every `AGENT_FLEET_SAVE_INTERVAL` daemon poll ticks
+  (default 15, ≈15s at the default poll interval), on `agent-fleet stop`, and
+  on `agent-fleet save`.
 - **When it restores** — automatically the next time you `agent-fleet attach`
   with the fleet stopped (e.g. after a reboot); manually via `agent-fleet restore`.
 
@@ -243,7 +244,7 @@ starts a fresh `home` workspace if there's nothing saved.
 | --- | --- | --- |
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
-| `AGENT_FLEET_CMD` | `claude` | Default command for `add`; status hooks attach to it |
+| `AGENT_FLEET_CMD` | `claude` | Default command for `add`; the status hooks attach only when the command is `claude` |
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's CLI binary `agent` is shown as `cursor`. |
 | `AGENT_FLEET_CS_CMD` | `bash` | Command a codespace connection runs by default (picker + `add --codespace`); set to `claude`, `fish`, etc. `--cmd` overrides per launch |
 | `AGENT_FLEET_CS_USER` | `dev` | SSH login user for codespace agents (`--codespace`) |
@@ -255,10 +256,10 @@ starts a fresh `home` workspace if there's nothing saved.
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |
 | `AGENT_FLEET_SIDENAV_TICK` | `0.1` | Rail spinner frame interval (seconds) |
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
-| `AGENT_FLEET_SAVE_INTERVAL` | `15` | How often the daemon saves the layout for reboot restore (seconds) |
+| `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon poll ticks (≈ seconds at the default 1s `AGENT_FLEET_SNAP_INTERVAL`) |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked Claude agents with `claude --resume` on restore (`0` = restore everything as shells) |
 | `AGENT_FLEET_GIT_TTL` | `30` | How long a cached git branch stays fresh (seconds) |
-| `TMUX_BIN` | `tmux` | tmux binary to invoke |
+| `TMUX_BIN` | `tmux` | tmux binary used by the CLI and every runtime script |
 
 Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet` (the hooks overlay, per-pane status, and rail row maps). There is no separate override for the cache location.
 

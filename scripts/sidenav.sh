@@ -32,7 +32,7 @@ MAPFILE="$ROWS_DIR/${TMUX_PANE:-unknown}.map"
 
 # This rail's own window id (resolved once; used to decide visibility). No tmux
 # calls happen in the render loop after this.
-RAIL_WIN="${AGENT_FLEET_RAIL_WIN:-$(tmux -L "$SOCKET" display-message -p -t "${TMUX_PANE:-}" '#{window_id}' 2>/dev/null || true)}"
+RAIL_WIN="${AGENT_FLEET_RAIL_WIN:-$("${TMUX_BIN:-tmux}" -L "$SOCKET" display-message -p -t "${TMUX_PANE:-}" '#{window_id}' 2>/dev/null || true)}"
 
 C_OFF=$'\033[0m'; C_BOLD=$'\033[1m'
 FG=$'\033[38;2;192;202;245m'        # names

@@ -1,21 +1,25 @@
 #!/usr/bin/env bash
 # persist-restore.sh — rebuild the fleet from a restore file (see persist-save.sh).
 #
-# Recreates sessions, windows (name + exact split layout) and panes as SHELLS in
-# their saved cwds, then re-renders the left rail per window. The sidenav auto-hook
+# Recreates sessions, windows (name + exact split layout) and panes in their
+# saved cwds, then re-renders the left rail per window. The sidenav auto-hook
 # is suppressed during the rebuild (via a throwaway scratch session that absorbs
-# the first-window race) so it can't add duplicate rails. Programs are not
-# relaunched — an agent window returns as a shell in its dir.
+# the first-window race) so it can't add duplicate rails. Hooked claude agents
+# are relaunched with `claude --resume <saved session id>` (shell fallback);
+# every other pane returns as a shell in its dir.
 #
 # Called by ensure_server on a cold boot and by `agent-fleet restore`. Exits
-# non-zero (leaving the caller to create a fresh session) when there's nothing to
-# restore. Fields use US (\x1f) so empty fields survive parsing (see persist-save).
+# non-zero (leaving the caller to create a fresh session) when there's nothing
+# to restore. Fields are TAB-separated with every field forced non-empty — see
+# persist-save.sh for why (tmux escapes control-char delimiters in -F output;
+# read collapses runs of whitespace IFS).
 
 set -uo pipefail
 
 SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
 ROOT="${AGENT_FLEET_ROOT:?AGENT_FLEET_ROOT not set}"
 CONF="${AGENT_FLEET_CONF:-$ROOT/conf/agent-fleet.conf}"
+export AGENT_FLEET_CONF="$CONF"   # the conf's Prefix r reload expands this at parse time
 WIDTH="${AGENT_FLEET_SIDENAV_WIDTH:-30}"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 STATE="$CACHE/fleet.state"
@@ -24,7 +28,7 @@ RESTORE_AGENTS="${AGENT_FLEET_RESTORE_AGENTS:-1}"   # relaunch claude with --res
 OVERLAY="$CACHE/hooks-settings.json"                # status-hooks settings overlay
 
 [[ -f "$STATE" ]] || exit 1
-tx() { tmux -L "$SOCK" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 
 # --- parse the state file ---------------------------------------------------
 declare -A WLAYOUT WNAME WACTIVE   # key: session US widx
@@ -50,7 +54,7 @@ rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session 
 # --- start the server (loads conf: hooks + rail-auto), then suppress the auto
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt
 #     windows stay under our control; it's removed at the end. --------------
-tmux -L "$SOCK" -f "$CONF" new-session -d -s "__af_restore__" -x 220 -y 50 2>/dev/null || exit 1
+"${TMUX_BIN:-tmux}" -L "$SOCK" -f "$CONF" new-session -d -s "__af_restore__" -x 220 -y 50 2>/dev/null || exit 1
 # Remember the user's effective auto-rail setting (conf + local.conf just
 # loaded) so we can put it back afterwards instead of clobbering an opt-out.
 prev_auto="$(tx show-option -gqv @fleet-sidenav-auto 2>/dev/null)"
@@ -61,7 +65,9 @@ tx set-environment -g AGENT_FLEET_SOCKET "$SOCK" 2>/dev/null || true
 rail_cmd="exec env AGENT_FLEET_SOCKET='$SOCK' AGENT_FLEET_ROOT='$ROOT' '$ROOT/scripts/sidenav.sh'"
 
 for s in "${sess_order[@]}"; do
-  [[ "$s" == "__af_restore__" ]] && continue
+  # The scratch name is reserved; a real session that somehow carries it can't
+  # be rebuilt — say so instead of silently dropping it.
+  [[ "$s" == "__af_restore__" ]] && { echo "persist-restore: skipping reserved session name __af_restore__" >&2; continue; }
 
   # window indexes for this session, sorted numerically
   widxs=()

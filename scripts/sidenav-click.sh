@@ -12,7 +12,7 @@ SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
 rail="${1:?usage: sidenav-click.sh <rail_pane> <mouse_y>}"
 y="${2:-}"
 
-tx() { tmux -L "$SOCKET" "$@"; }
+tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 map="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/rows/${rail}.map"
 [[ -f "$map" && -n "$y" ]] || { tx select-pane -t "$rail"; exit 0; }
