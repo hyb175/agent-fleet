@@ -98,7 +98,7 @@ Ctrl-a L      bounce to the previous workspace
 | --- | --- |
 | `agent-fleet attach [workspace]` | Boot the fleet and attach (or switch, if already inside). The default when run with no subcommand. |
 | `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Switch to an existing workspace, or create one (named for a directory's basename, or the name verbatim) and go to it. Defaults to `$PWD`. An optional final argument sets the workspace name. |
-| `agent-fleet add [name] [--to <ws>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. `--codespace` (alias `--cs`) runs the agent inside a GitHub Codespace over SSH instead (no hooks — see [Codespaces](#codespaces)). `--focus` jumps to the new agent (used by `Prefix C`). |
+| `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. `--new-workspace <name>` puts the agent in its own workspace (created or reused) instead of a tab. `--codespace` (alias `--cs`) runs the agent inside a GitHub Codespace over SSH instead (no hooks — see [Codespaces](#codespaces)). `--focus` jumps to the new agent (used by `Prefix C`). |
 | `agent-fleet cs <list\|stop\|connect> [name]` | GitHub Codespaces helpers. `list` (alias `ls`) lists your codespaces; `stop <name>` stops one; `connect <name>` creates-or-switches a workspace named for the codespace and adds a `claude` agent into it over SSH. |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (bound to `Prefix Tab`). |
@@ -108,7 +108,9 @@ Ctrl-a L      bounce to the previous workspace
 | `agent-fleet list` (alias `ls`) | List workspaces and their windows. |
 | `agent-fleet pick` | Open the picker popup (or attach, from a bare shell). |
 | `agent-fleet hooks-file` | Print the path to the generated Claude settings overlay (hooks only). |
-| `agent-fleet stop` | Kill the entire fleet server. |
+| `agent-fleet save` | Snapshot the layout to disk (also auto-saved on a timer and on `stop`). |
+| `agent-fleet restore` | Rebuild the saved layout on a stopped fleet (attach does this automatically on a cold boot). |
+| `agent-fleet stop` | Save the layout, then kill the fleet server. |
 | `agent-fleet --version` | Print the version. |
 
 ---
@@ -125,7 +127,7 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | `Prefix f` | Open the picker straight to the connect view — search recent folders (git repos first, with branch) to spawn a workspace (`Alt-⏎` to name it) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
 | `Prefix c` | New plain shell window in the current directory (tmux default) |
-| `Prefix C` | Quick-add a Claude agent (with status hooks) to the current workspace and jump to it |
+| `Prefix C` | Add a Claude agent (with status hooks) — a menu picks a new tab in this workspace or a brand-new workspace (prompts a name); starts in the current dir and jumps to it |
 | `Prefix R` | Force the focused pane to repaint (fixes a stale Claude frame) |
 | `Prefix Tab` | Jump back to the previously focused agent (across windows/workspaces; toggles between the two) |
 | `Prefix Space` | Triage jump — go to the next agent that needs you (`wait`, then `done`), cycling the queue. Most urgent first if you're not already on one |
@@ -207,6 +209,32 @@ When an agent changes to **wait** or **done**, a desktop notification fires (`os
 
 ---
 
+## Persistence (survives reboot)
+
+tmux is in-memory, so a reboot ends the fleet server. agent-fleet saves the
+layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach:
+
+- **What's restored** — sessions, tabs (names + order), each window's **exact
+  split layout**, and every pane's **working directory**. Hooked Claude agents
+  (`agent-fleet add` / `Prefix C`) come back **resumed**: the fleet records each
+  agent's Claude session id and relaunches it with `claude --resume`, so the
+  conversation continues. The rail is re-rendered per window.
+- **What's not** — other running programs, and hand-started Claude (no hook, so
+  no session id) come back as shells in the right dir. A codespace workspace
+  comes back as a local shell (reconnect with `Prefix g`). A resume that fails
+  (deleted/expired session) also falls back to a shell. Set
+  `AGENT_FLEET_RESTORE_AGENTS=0` to restore everything as plain shells.
+- **When it saves** — every `AGENT_FLEET_SAVE_INTERVAL` seconds (default 15) by
+  the daemon, on `agent-fleet stop`, and on `agent-fleet save`.
+- **When it restores** — automatically the next time you `agent-fleet attach`
+  with the fleet stopped (e.g. after a reboot); manually via `agent-fleet restore`.
+
+To boot the fleet automatically at login, run `agent-fleet attach` from your
+shell profile or a launchd/systemd unit — it rebuilds the saved layout, or
+starts a fresh `home` workspace if there's nothing saved.
+
+---
+
 ## Customization
 
 ### Environment variables
@@ -227,6 +255,8 @@ When an agent changes to **wait** or **done**, a desktop notification fires (`os
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |
 | `AGENT_FLEET_SIDENAV_TICK` | `0.1` | Rail spinner frame interval (seconds) |
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
+| `AGENT_FLEET_SAVE_INTERVAL` | `15` | How often the daemon saves the layout for reboot restore (seconds) |
+| `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked Claude agents with `claude --resume` on restore (`0` = restore everything as shells) |
 | `AGENT_FLEET_GIT_TTL` | `30` | How long a cached git branch stays fresh (seconds) |
 | `TMUX_BIN` | `tmux` | tmux binary to invoke |
 

@@ -68,7 +68,13 @@ ensure_snapshotd() {
 # Guarantee a server exists with at least one session to attach to.
 ensure_server() {
   if ! server_up; then
-    tx new-session -d -s "$HOME_SESSION" -c "$HOME"
+    # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
+    # we have one; otherwise start a fresh home workspace.
+    if [[ -f "$AF_CACHE_DIR/fleet.state" ]] && "$ROOT_DIR/scripts/persist-restore.sh" 2>/dev/null; then
+      :
+    else
+      tx new-session -d -s "$HOME_SESSION" -c "$HOME"
+    fi
   fi
   ensure_server_env
   ensure_snapshotd
@@ -147,18 +153,20 @@ cmd_connect() {
 }
 
 # add [name] — add an agent window to a workspace.
-#   --to <session>   target workspace (default: current fleet session, else first)
-#   --cmd <command>  what to run     (default: $AGENT_FLEET_CMD = claude)
-#   --dir <dir>      working dir      (default: target session's path, else $PWD)
+#   --to <session>          target workspace (default: current fleet session, else first)
+#   --new-workspace <name>  put the agent in its own workspace <name> (create or reuse)
+#   --cmd <command>         what to run     (default: $AGENT_FLEET_CMD = claude)
+#   --dir <dir>             working dir      (default: target session's path, else $PWD)
 # Prints the new pane id on success.
 cmd_add() {
-  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" cs="" cs_dir="" cmd_explicit=""
+  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" cs="" cs_dir="" cmd_explicit="" new_ws=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --to)             target="$2"; shift 2 ;;
       --cmd)            cmd="$2"; cmd_explicit=1; shift 2 ;;
       --dir)            dir="$2"; cs_dir="$2"; shift 2 ;;
       --codespace|--cs) cs="$2"; shift 2 ;;
+      --new-workspace)  new_ws="$2"; shift 2 ;;
       --focus)          focus=1; shift ;;
       --)               shift; break ;;
       *)     if [[ -z "$name" ]]; then name="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
@@ -174,6 +182,22 @@ cmd_add() {
     exit 1
   fi
   ensure_server_env
+
+  # --new-workspace: put the agent in its own workspace (a new session of that
+  # name, or an existing one) rather than a tab in the current one.
+  local ph_win=""
+  if [[ -n "$new_ws" ]]; then
+    new_ws="$(sanitize_name "$new_ws")"
+    local wsdir="$dir"
+    [[ -z "$wsdir" ]] && wsdir="$(tx display-message -p '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+    if ! tx has-session -t "$new_ws" 2>/dev/null; then
+      # Fresh session: its placeholder window is removed after the agent lands
+      # (below), so the agent becomes the workspace's first tab — no stray shell.
+      ph_win="$(tx new-session -d -P -F '#{window_id}' -s "$new_ws" -c "$wsdir" 2>/dev/null)"
+    fi
+    target="$new_ws"
+    [[ -z "$dir" ]] && dir="$wsdir"
+  fi
 
   if [[ -z "$target" ]]; then
     if in_fleet_tmux; then
@@ -223,8 +247,15 @@ cmd_add() {
   # Mark codespace agents as remote so the rail/daemon can treat them differently
   # (e.g. label the branch cell from `gh cs` rather than a local git checkout).
   [[ -n "$cs" ]] && tx set-option -p -t "$pane_id" @fleet-codespace "$cs" 2>/dev/null || true
-  # Quick-add from a keybind wants to land on the new agent.
-  [[ -n "$focus" ]] && tx select-window -t "$pane_id" 2>/dev/null || true
+  # Drop the placeholder window if we created the workspace for this agent, so the
+  # agent is the workspace's first tab.
+  [[ -n "$ph_win" ]] && tx kill-window -t "$ph_win" 2>/dev/null || true
+  # Quick-add from a keybind wants to land on the new agent (switching workspace
+  # first when the agent went into a new one).
+  if [[ -n "$focus" ]]; then
+    [[ -n "$new_ws" ]] && go_to_session "$new_ws" 2>/dev/null || true
+    tx select-window -t "$pane_id" 2>/dev/null || true
+  fi
   echo "$pane_id"
 }
 
@@ -346,10 +377,34 @@ cmd_stop() {
     echo "fleet already stopped"
     return 0
   fi
+  # Save the layout first so `agent-fleet attach` can rebuild it later.
+  "$ROOT_DIR/scripts/persist-save.sh" 2>/dev/null || true
   local pf="$AF_CACHE_DIR/snapshotd.lock/pid"
   [[ -f "$pf" ]] && kill "$(cat "$pf" 2>/dev/null)" 2>/dev/null
   tx kill-server
   echo "fleet stopped"
+}
+
+# save — snapshot the current layout to the restore file (also done on a timer
+# by the daemon and on `stop`).
+cmd_save() {
+  if ! server_up; then echo "fleet not running" >&2; exit 1; fi
+  "$ROOT_DIR/scripts/persist-save.sh" && echo "layout saved"
+}
+
+# restore — rebuild the saved layout on a stopped fleet (attach does this
+# automatically on a cold boot; this is the manual equivalent).
+cmd_restore() {
+  if server_up && tx list-sessions >/dev/null 2>&1; then
+    echo "error: fleet already running — stop it first (agent-fleet stop)" >&2
+    exit 1
+  fi
+  if "$ROOT_DIR/scripts/persist-restore.sh"; then
+    ensure_server_env; ensure_snapshotd
+    echo "layout restored — attach with: agent-fleet attach"
+  else
+    echo "nothing to restore" >&2; exit 1
+  fi
 }
 
 # pick — open the fzf popup (when called from inside the fleet), else attach.
@@ -403,10 +458,10 @@ Verbs:
                                    Resolve-or-create a workspace, then go to it. Optional name
                                    overrides the default (the directory's basename).
   agent-fleet attach [workspace]   Attach to the fleet (sesh-style 3-way branch).
-  agent-fleet add [name] [--to <ws>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>]
-                                   Add an agent window (default cmd: claude). --codespace runs it
-                                   inside a GitHub Codespace over SSH and defaults to a shell
-                                   (AGENT_FLEET_CS_CMD; --cmd claude for an agent). Prints its pane id.
+  agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>]
+                                   Add an agent window (default cmd: claude). --new-workspace puts it
+                                   in its own workspace instead of a tab. --codespace runs it inside a
+                                   GitHub Codespace over SSH (defaults to a shell). Prints its pane id.
   agent-fleet cs <list | stop <name> | connect <name> [workspace-name]>
                                    Codespaces: list / stop / connect (opens a shell workspace).
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
@@ -415,7 +470,9 @@ Verbs:
   agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).
   agent-fleet list                 List workspaces and their agents.
   agent-fleet pick                 Open the fzf picker popup (or attach from a bare shell).
-  agent-fleet stop                 Kill the entire fleet server.
+  agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
+  agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
+  agent-fleet stop                 Save the layout, then kill the fleet server.
 
 Env:
   AGENT_FLEET_CONF     Base tmux config (default: <repo>/conf/agent-fleet.conf)
@@ -442,6 +499,8 @@ main() {
     pick)       cmd_pick "$@" ;;
     cs)         cmd_cs "$@" ;;
     hooks-file) cmd_hooks_file "$@" ;;
+    save)       cmd_save "$@" ;;
+    restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;
     -V|--version|version) echo "agent-fleet $AGENT_FLEET_VERSION" ;;
     -h|--help|help) usage ;;

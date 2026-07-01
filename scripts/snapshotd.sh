@@ -91,8 +91,17 @@ build() {
   printf '%s' "$out" > "$SNAP.tmp.$$" 2>/dev/null && mv "$SNAP.tmp.$$" "$SNAP" 2>/dev/null
 }
 
+# Persist the session/window/pane layout to disk every SAVE_EVERY ticks, so a
+# reboot can be rebuilt by `agent-fleet attach`. Cheap (one fork per interval).
+SAVE_EVERY="${AGENT_FLEET_SAVE_INTERVAL:-15}"
+ticks=0
 while true; do
   tx list-sessions >/dev/null 2>&1 || cleanup   # server gone → exit
   build
+  ticks=$(( ticks + 1 ))
+  if (( ticks >= SAVE_EVERY )); then
+    ticks=0
+    AGENT_FLEET_SOCKET="$SOCK" "$ROOT/scripts/persist-save.sh" 2>/dev/null || true
+  fi
   sleep "$INTERVAL"
 done

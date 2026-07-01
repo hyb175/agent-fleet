@@ -28,6 +28,19 @@ prev=""
 [[ -f "$f" ]] && prev="$(cat "$f" 2>/dev/null || true)"
 printf '%s' "$state" > "$f"
 
+# Capture Claude's session id once, from the event JSON on stdin, so a restored
+# fleet can `claude --resume <id>`. Gated on a per-pane file so we only read stdin
+# on the first event (session id is stable for the pane's lifetime). Stored as a
+# pane option too, so persist-save can read it via a format string.
+sf="$cache/${pane}.session"
+if [[ ! -f "$sf" ]]; then
+  sid="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
+  if [[ -n "$sid" ]]; then
+    printf '%s' "$sid" > "$sf" 2>/dev/null || true
+    command -v tmux >/dev/null 2>&1 && tmux -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
+  fi
+fi
+
 # Edge-triggered macOS notification on entering an attention state.
 # On by default; set AGENT_FLEET_NOTIFY=0 to silence.
 if [[ "${AGENT_FLEET_NOTIFY:-1}" == "1" && "$state" != "$prev" ]]; then
