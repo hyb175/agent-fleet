@@ -41,6 +41,12 @@ while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9; do
 done < "$STATE"
 (( ${#sess_order[@]} )) || exit 1
 
+# A fresh server reuses pane ids from %0, so every per-pane state file from the
+# previous boot is stale — and a stale .session gate file would permanently
+# block the hook from capturing the new claude session id (gc only prunes files
+# for DEAD panes; recycled ids look live). Purge before any id is reused.
+rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session 2>/dev/null || true
+
 # --- start the server (loads conf: hooks + rail-auto), then suppress the auto
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt
 #     windows stay under our control; it's removed at the end. --------------
@@ -128,6 +134,13 @@ for s in "${sess_order[@]}"; do
         [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY"
         tx set-option -p -t "$chosen" @fleet-agent-kind claude 2>/dev/null || true
         tx set-option -w -t "$chosen" @fleet-agent claude 2>/dev/null || true
+        # Re-arm persistence for the NEXT reboot: without these, the next
+        # auto-save (~15s away) records '-' for this pane and the resumed
+        # session id is lost. --resume keeps the same session id, so the gate
+        # file is correct, not stale.
+        tx set-option -p -t "$chosen" @fleet-session "$sid" 2>/dev/null || true
+        mkdir -p "$CACHE/panes" 2>/dev/null || true
+        printf '%s\n' "$sid" > "$CACHE/panes/$chosen.session" 2>/dev/null || true
         tx respawn-pane -k -t "$chosen" "bash -lc '$rc || exec bash -i'" 2>/dev/null || true
       done
     fi

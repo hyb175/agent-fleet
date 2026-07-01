@@ -68,6 +68,11 @@ ensure_snapshotd() {
 # Guarantee a server exists with at least one session to attach to.
 ensure_server() {
   if ! server_up; then
+    # Fresh server: pane ids restart at %0, so per-pane state files from the
+    # previous boot are stale (a leftover .session gate file would block the
+    # hook from capturing new session ids). persist-restore purges too, but
+    # this also covers the no-state fresh-boot path.
+    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session 2>/dev/null || true
     # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
     # we have one; otherwise start a fresh home workspace.
     if [[ -f "$AF_CACHE_DIR/fleet.state" ]] && "$ROOT_DIR/scripts/persist-restore.sh" 2>/dev/null; then
