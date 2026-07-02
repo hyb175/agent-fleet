@@ -42,9 +42,12 @@ while IFS= read -r line; do
 done < "$SNAP"
 
 # Don't jump on frozen data: a crashed daemon leaves the snapshot behind, and
-# the states in it stop meaning anything.
+# the states in it stop meaning anything. Threshold scales with the daemon's
+# poll interval (T's second field) so a slow-but-healthy daemon doesn't trip it.
+read -r snap_ts snap_iv <<<"$snap_ts"
+[[ "$snap_iv" =~ ^[0-9]+$ ]] || snap_iv=1
 printf -v now_ts '%(%s)T' -1
-if [[ "$snap_ts" =~ ^[0-9]+$ ]] && (( now_ts - snap_ts > 10 )); then
+if [[ "$snap_ts" =~ ^[0-9]+$ ]] && (( now_ts - snap_ts > snap_iv * 3 + 7 )); then
   note "fleet: snapshot stale (daemon down?) — not jumping"
   exit 0
 fi

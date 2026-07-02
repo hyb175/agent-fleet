@@ -238,7 +238,10 @@ cmd_add() {
   fi
 
   if [[ -z "$dir" ]]; then
-    dir="$(tx display-message -p -t "=$target" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+    # "=$target:" (with colon): display-message needs a pane-typed target, and
+    # a bare "=name" doesn't coerce — it expands to empty instead of erroring.
+    dir="$(tx display-message -p -t "=$target:" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+    [[ -z "$dir" ]] && dir="$PWD"
   fi
   # Default the agent name to its workspace, so it reads "<workspace> · claude"
   # and follows the workspace on rename. Multiple agents per workspace is fine.
@@ -413,10 +416,13 @@ cmd_stop() {
   fi
   # Save the layout first so `agent-fleet attach` can rebuild it later.
   "$ROOT_DIR/scripts/persist-save.sh" 2>/dev/null || true
-  local pf="$AF_CACHE_DIR/snapshotd.lock/pid"
-  # `|| true`: a stale pidfile makes kill fail, and under set -e that would
-  # abort BEFORE kill-server — stop reporting nothing and leaving the fleet up.
-  [[ -f "$pf" ]] && kill "$(cat "$pf" 2>/dev/null)" 2>/dev/null || true
+  local pf="$AF_CACHE_DIR/snapshotd.lock/pid" dpid
+  # Comm-check before killing (same as the launchers): after an unclean
+  # shutdown the pidfile can name a recycled, unrelated process. `|| true`
+  # keeps set -e from aborting before kill-server on any failure here.
+  dpid="$(cat "$pf" 2>/dev/null || true)"
+  { [[ -n "$dpid" ]] && ps -p "$dpid" -o command= 2>/dev/null | grep -q snapshotd \
+      && kill "$dpid" 2>/dev/null; } || true
   tx kill-server
   echo "fleet stopped"
 }
@@ -543,6 +549,9 @@ main() {
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;
+    # Internal: echo the last command-prompt input, parked in a tmux option by
+    # the conf's prompt bindings (typed text never touches sh — see the conf).
+    _prompt)    tx show-option -gqv @fleet-prompt 2>/dev/null ;;
     -V|--version|version) echo "agent-fleet $AGENT_FLEET_VERSION" ;;
     -h|--help|help) usage ;;
     "")         cmd_attach ;;

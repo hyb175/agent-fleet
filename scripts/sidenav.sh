@@ -45,15 +45,15 @@ home() { printf '\033[H'; }
 trunc() { local s="$1" n="$2"; (( n < 1 )) && { printf ''; return; }; if (( ${#s} > n )); then printf '%s…' "${s:0:n-1}"; else printf '%s' "$s"; fi; }
 
 # --- snapshot (re-read every DATA_EVERY ticks) ---
-CUR_SESS=""; CUR_WIN=""; ANIMATE=0; SNAP_TS=""
+CUR_SESS=""; CUR_WIN=""; ANIMATE=0; SNAP_TS=""; SNAP_IV=""
 SPACES=(); AGENTS=()
 read_snapshot() {
-  SPACES=(); AGENTS=(); ANIMATE=0; CUR_SESS=""; CUR_WIN=""; SNAP_TS=""
+  SPACES=(); AGENTS=(); ANIMATE=0; CUR_SESS=""; CUR_WIN=""; SNAP_TS=""; SNAP_IV=""
   [[ -f "$SNAP" ]] || return 0
   local line
   while IFS= read -r line; do
     case "$line" in
-      T\ *) SNAP_TS="${line#T }" ;;
+      T\ *) read -r SNAP_TS SNAP_IV <<<"${line#T }" ;;
       C\ *) IFS='|' read -r CUR_SESS CUR_WIN <<<"${line#C }" ;;
       S\ *) SPACES+=("${line#S }") ;;
       A\ *) AGENTS+=("${line#A }"); [[ "$line" == *'|working' ]] && ANIMATE=1 ;;
@@ -98,9 +98,10 @@ draw() {
   header "spaces" "";                                        line=$((line+1))
   # A crashed daemon (kill -9 skips its cleanup trap) leaves the snapshot on
   # disk; without this check the rail renders frozen states as live forever.
-  local now_ts
+  local now_ts iv
   printf -v now_ts '%(%s)T' -1
-  if [[ "$SNAP_TS" =~ ^[0-9]+$ ]] && (( now_ts - SNAP_TS > 10 )); then
+  iv="$SNAP_IV"; [[ "$iv" =~ ^[0-9]+$ ]] || iv=1   # scale with the daemon's poll interval
+  if [[ "$SNAP_TS" =~ ^[0-9]+$ ]] && (( now_ts - SNAP_TS > iv * 3 + 7 )); then
     printf ' %s⚠ stale — daemon down?%s\033[K\n' $'\033[38;2;247;118;142m' "$C_OFF"
     line=$((line+1))
   fi

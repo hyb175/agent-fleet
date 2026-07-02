@@ -47,12 +47,17 @@ glyph_of() { case "$1" in
   done) printf '%s' "$G_done";; idle) printf '%s' "$G_idle";; *) printf '%s' "$G_none";;
 esac; }
 
-# stale_row <snapshot_T_epoch> — emit a warning row when the daemon stopped
-# writing (crash/kill -9 leaves the file behind); states shown are frozen.
+# stale_row "<epoch> [interval]" (the snapshot's T record) — emit a warning row
+# when the daemon stopped writing (crash/kill -9 leaves the file behind).
+# Threshold scales with the daemon's own poll interval so a slow-but-healthy
+# daemon doesn't false-alarm.
 stale_row() {
-  local now
+  local now ts iv
+  read -r ts iv <<<"$1"
   printf -v now '%(%s)T' -1
-  [[ "$1" =~ ^[0-9]+$ ]] && (( now - $1 > 10 )) && \
+  [[ "$ts" =~ ^[0-9]+$ ]] || return 0
+  [[ "$iv" =~ ^[0-9]+$ ]] || iv=1
+  (( now - ts > iv * 3 + 7 )) && \
     printf 'NONE\t\033[38;2;247;118;142m⚠ snapshot stale — daemon down?\033[0m\n'
   return 0
 }

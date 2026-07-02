@@ -31,7 +31,10 @@ set -uo pipefail
 cs="${1:-}"
 shift || true
 cmd=( "$@" )
-[[ ${#cmd[@]} -eq 0 ]] && cmd=( "${AGENT_FLEET_CMD:-claude}" )
+# read -ra, not a one-element array: AGENT_FLEET_CMD may be multi-word
+# ("claude --verbose"), and %q-encoding a single element would ship it to the
+# remote as one binary named "claude --verbose".
+[[ ${#cmd[@]} -eq 0 ]] && read -ra cmd <<< "${AGENT_FLEET_CMD:-claude}"
 
 REMOTE_PORT="${AGENT_FLEET_CS_SSH_PORT:-2222}"
 SSH_USER="${AGENT_FLEET_CS_USER:-dev}"
@@ -45,7 +48,11 @@ fwd_pid=""; fwd_log=""; port_lock=""
 cleanup() {
   [[ -n "$fwd_pid" ]] && kill "$fwd_pid" 2>/dev/null
   [[ -n "$fwd_log" ]] && rm -f "$fwd_log" 2>/dev/null
-  [[ -n "$port_lock" ]] && rm -rf "$port_lock" 2>/dev/null
+  # Only remove the lock if it is still OURS — after a takeover race another
+  # connect may own a lock dir of the same name, and blindly removing it would
+  # cascade the collision to a third connect.
+  [[ -n "$port_lock" && "$(cat "$port_lock/pid" 2>/dev/null)" == "$$" ]] \
+    && rm -rf "$port_lock" 2>/dev/null
 }
 trap cleanup EXIT
 # Signals skip the EXIT trap by default; release the port lock and forward on
@@ -78,11 +85,25 @@ for (( p = REMOTE_PORT; p < REMOTE_PORT + 64; p++ )); do
   lk="$CACHE_DIR/ports/$p.lock"
   if mkdir "$lk" 2>/dev/null; then
     echo $$ > "$lk/pid"
-  elif kill -0 "$(cat "$lk/pid" 2>/dev/null)" 2>/dev/null; then
-    continue                       # live holder — try the next port
   else
-    rm -rf "$lk" 2>/dev/null; mkdir "$lk" 2>/dev/null || continue
-    echo $$ > "$lk/pid"            # stale lock from a crashed run — take over
+    hp="$(cat "$lk/pid" 2>/dev/null)"
+    if [[ -n "$hp" ]] && kill -0 "$hp" 2>/dev/null; then
+      continue                     # live holder — try the next port
+    fi
+    if [[ -z "$hp" ]]; then
+      # No pid yet: the holder may be between its mkdir and pid write. Give a
+      # fresh dir grace instead of treating it as dead (that misread was a
+      # takeover hole that let two connects share a port).
+      lk_m="$(stat -c %Y "$lk" 2>/dev/null || stat -f %m "$lk" 2>/dev/null || echo 0)"
+      printf -v now_s '%(%s)T' -1
+      (( now_s - lk_m < 5 )) && continue
+    fi
+    # Dead/orphaned lock: take over via atomic rename — of N racers exactly one
+    # wins the mv; rm+re-mkdir raced (B's rm could delete A's fresh lock).
+    mv "$lk" "$lk.reap.$$" 2>/dev/null || continue
+    rm -rf "$lk.reap.$$" 2>/dev/null
+    mkdir "$lk" 2>/dev/null || continue
+    echo $$ > "$lk/pid"
   fi
   port_lock="$lk"; local_port="$p"; break
 done

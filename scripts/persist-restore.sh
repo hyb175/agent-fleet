@@ -160,7 +160,12 @@ for s in "${sess_order[@]}"; do
         tx set-option -p -t "$chosen" @fleet-session "$sid" 2>/dev/null || true
         mkdir -p "$CACHE/panes" 2>/dev/null || true
         printf '%s\n' "$sid" > "$CACHE/panes/$chosen.session" 2>/dev/null || true
-        tx respawn-pane -k -t "$chosen" "bash -lc '$rc || exec bash -i'" 2>/dev/null || true
+        # The shell fallback DISARMS the re-armed session state: if the resume
+        # fails (deleted/expired session), a stale gate file would permanently
+        # block the hook from capturing a manually-started claude's new id, and
+        # every future save would retry the dead sid.
+        fb="rm -f $(printf '%q' "$CACHE/panes/$chosen.session") 2>/dev/null; $(printf '%q' "${TMUX_BIN:-tmux}") -L $(printf '%q' "$SOCK") set-option -p -u @fleet-session 2>/dev/null; exec bash -i"
+        tx respawn-pane -k -t "$chosen" "bash -lc '$rc || { $fb; }'" 2>/dev/null || true
       done
     fi
 

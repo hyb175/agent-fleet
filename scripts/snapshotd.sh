@@ -47,7 +47,9 @@ trap cleanup INT TERM HUP
 
 build() {
   local now; printf -v now '%(%s)T' -1
-  local out="T $now"$'\n'
+  # T carries the poll interval so consumers can scale their staleness
+  # threshold — a hardcoded cutoff false-alarms when the interval is raised.
+  local out="T $now $INTERVAL"$'\n'
   # Active view = the attached client's session (#{client_session}) and that
   # session's active window. NOTE: `display-message -c` only sets the client for
   # #{client_*} formats; #{session_name}/#{window_id} still resolve to a stale

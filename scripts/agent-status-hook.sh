@@ -54,6 +54,9 @@ if [[ "${AGENT_FLEET_NOTIFY:-1}" == "1" && "$state" != "$prev" ]]; then
         [[ -n "$l" ]] && label="$l"
       fi
       if [[ "$state" == "wait" ]]; then msg="needs your input"; else msg="finished"; fi
+      # The label lands inside a double-quoted AppleScript literal: strip the
+      # two characters that can break out of it (window names are user-typed).
+      label="${label//\\/}"; label="${label//\"/}"
       if command -v osascript >/dev/null 2>&1; then          # macOS
         osascript -e "display notification \"${label} ${msg}\" with title \"agent-fleet\"" >/dev/null 2>&1 || true
       elif command -v notify-send >/dev/null 2>&1; then       # Linux
