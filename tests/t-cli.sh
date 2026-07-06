@@ -27,6 +27,15 @@ check "add --to api lands in api" "[[ \"\$(tx display-message -p -t \"$p\" '#S')
 cwd="$(tx display-message -p -t "$p" '#{pane_current_path}')"
 check "add dir default = target session cwd (got $cwd)" "[[ '$cwd' == */apidir ]]"
 
+# add --new-workspace (the picker's Alt-a 'spawn with agent' path): fresh
+# session named for the repo, agent as its FIRST tab (placeholder removed),
+# right cwd
+p="$("$AF" add --new-workspace repo-x --cmd bash --dir "$WORK/apidir" 2>/dev/null)"
+sleep 0.3
+check "new-workspace session created" "tx has-session -t '=repo-x' 2>/dev/null"
+check "agent is the only tab" "[[ \"\$(tx list-windows -t repo-x | wc -l | tr -d ' ')\" == 1 ]]"
+check "agent cwd is the repo" "[[ \"\$(tx display-message -p -t \"$p\" '#{pane_current_path}')\" == */apidir ]]"
+
 # back with empty prev
 mkdir -p "$XDG_CACHE_HOME/agent-fleet"; : > "$XDG_CACHE_HOME/agent-fleet/focus.prev"
 "$AF" back; check "back with empty prev is a clean no-op" "[[ $? -eq 0 ]]"

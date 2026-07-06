@@ -124,7 +124,7 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | `Prefix o` | Open the picker popup (fleet / spaces / connect / cloud; `Tab` cycles, `^a`/`^s`/`^z`/`^x` jump). The fleet view lists agents most-urgent-first |
 | `Prefix w` | Quick workspace switch — picker opened straight to the spaces view (every workspace, shell-only included) |
 | `Prefix g` | Open the picker straight to the cloud view (your GitHub Codespaces) |
-| `Prefix f` | Open the picker straight to the connect view — search recent folders **and unvisited project siblings** (git repos first, with branch) to spawn a workspace (`Alt-⏎` to name it) |
+| `Prefix f` | Open the picker straight to the connect view — search recent folders **and unvisited project siblings** (git repos first, with branch). `⏎` spawns a shell workspace, `Alt-a` spawns it **with a claude agent**, `Alt-⏎` names it |
 | `Prefix b` | Toggle the sidenav rail in the current window |
 | `Prefix c` | New plain shell window in the current directory (tmux default) |
 | `Prefix C` | Add a Claude agent (with status hooks) — a menu picks a new tab in this workspace or a brand-new workspace (prompts a name); starts in the current dir and jumps to it |

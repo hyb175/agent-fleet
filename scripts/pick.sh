@@ -6,8 +6,9 @@
 #            workspaces. ⏎ jumps.
 #   spaces   EVERY workspace (session): state glyph + branch + agent count.
 #            ⏎ switches. The quick workspace switch (Prefix w opens here).
-#   connect  recent folders (zoxide), git repos first w/ branch, noise filtered.
-#            ⏎ spawns/attaches a workspace there. (Prefix f opens here.)
+#   connect  recent folders (zoxide + project-root discovery), git repos first
+#            w/ branch, noise filtered. ⏎ spawns/attaches a shell workspace;
+#            M-a spawns it with a claude agent. (Prefix f opens here.)
 #   cloud    GitHub Codespaces (gh cs list). ⏎ connects a workspace + agent over SSH.
 
 set -uo pipefail
@@ -283,7 +284,7 @@ run_view() {
       ;;
     connect)
       entries="$(list_connect)"
-      header='fleet spaces [connect] cloud  ·  Tab  ·  ⏎ spawn · M-⏎ name  ·  / filter'
+      header='fleet spaces [connect] cloud  ·  Tab  ·  ⏎ shell · M-a +agent · M-⏎ name'
       prompt='⌕ '
       ;;
     cloud)
@@ -303,6 +304,7 @@ run_view() {
     --bind="ctrl-z:become(echo VIEW:connect)" \
     --bind="ctrl-x:become(echo VIEW:cloud)" \
     --bind="alt-enter:become(printf 'NAME\t%s\n' {1})" \
+    --bind="alt-a:become(printf 'AGENT\t%s\n' {1})" \
     --color="fg+:green,bg+:-1"
 }
 
@@ -329,6 +331,22 @@ main() {
       SESS:*)       "$AF" connect "${key#SESS:}"; exit 0 ;;
       CONNECT:*)    "$AF" connect "${key#CONNECT:}"; exit 0 ;;
       CLOUD:*)      "$AF" cs connect "${key#CLOUD:}"; exit 0 ;;
+      AGENT)
+        # Alt-a on a connect row: spawn the workspace WITH a claude agent as
+        # its first tab (add --new-workspace creates-or-reuses the session).
+        # On any other row, behave like plain ⏎.
+        local target d
+        target="$(printf '%s' "$selection" | cut -f2)"
+        case "$target" in
+          CONNECT:*)
+            d="${target#CONNECT:}"
+            "$AF" add --new-workspace "${d##*/}" --dir "$d" --focus >/dev/null
+            exit 0 ;;
+          PANE:*)  "$AF" goto "${target#PANE:}"; exit 0 ;;
+          SESS:*)  "$AF" connect "${target#SESS:}"; exit 0 ;;
+          CLOUD:*) "$AF" cs connect "${target#CLOUD:}"; exit 0 ;;
+          *)       continue ;;
+        esac ;;
       NAME)
         # Alt-⏎ on a connect/cloud row: prompt for a workspace name (pre-filled
         # with the default), then create. On any other row, behave like ⏎.
