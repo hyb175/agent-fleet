@@ -300,6 +300,16 @@ rm -rf ~/.cache/agent-fleet              # runtime state
 
 ---
 
+## Testing
+
+```sh
+tests/run-all.sh
+```
+
+Runs the integration suite: status tiers and the done-acknowledgement flow, layout persistence round-trips, multi-reboot claude resume, CLI target matching, prompt-input safety, snapshot staleness, and the codespace port-lock protocol. Every test runs on a throwaway tmux socket with a private cache — nothing touches a running fleet. Each `tests/t-*.sh` is standalone.
+
+---
+
 ## License
 
 MIT. See [LICENSE](./LICENSE).
