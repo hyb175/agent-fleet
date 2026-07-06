@@ -30,7 +30,8 @@ printf 'stale-sid\n' > "$CACHE/panes/%1.session"
 "$REPO/scripts/persist-restore.sh"
 sleep 0.6
 check "stale decoys purged on boot" "[[ ! -f '$CACHE/panes/%0.status' && ! -f '$CACHE/panes/%1.session' ]]"
-check "respawned with claude --resume" "tx list-panes -t work -F '#{pane_start_command}' | grep -q 'claude --resume $UUID'"
+starts="$(tx list-panes -t work -F '#{pane_start_command}')"   # buffered: see t-staleness pipefail note
+check "respawned with claude --resume" "grep -q 'claude --resume $UUID' <<<\"\$starts\""
 rp="$(tx list-panes -t work -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 != "1" {print $1; exit}')"
 check "@fleet-session re-tagged" "[[ \"\$(tx display-message -p -t $rp '#{@fleet-session}')\" == '$UUID' ]]"
 check "gate file re-armed" "grep -qx '$UUID' '$CACHE/panes/$rp.session'"
@@ -43,5 +44,6 @@ check "save#2 still records the session id" "grep -q '$UUID' '$CACHE/fleet.state
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"
 sleep 0.6
-check "reboot #2 STILL resumes" "tx list-panes -t work -F '#{pane_start_command}' | grep -q 'claude --resume $UUID'"
+starts="$(tx list-panes -t work -F '#{pane_start_command}')"
+check "reboot #2 STILL resumes" "grep -q 'claude --resume $UUID' <<<\"\$starts\""
 exit $FAIL
