@@ -161,6 +161,11 @@ cmd_connect() {
     dir="$HOME"
   fi
 
+  # Opening a workspace here counts as visiting the dir: without this, a dir
+  # only entered through the fleet (never a manual cd) stays invisible to
+  # zoxide and thus to the picker's frecency ranking.
+  [[ "$dir" != "$HOME" ]] && command -v zoxide >/dev/null 2>&1 && zoxide add "$dir" 2>/dev/null || true
+
   # new-session auto-starts the server if needed; no stray home session.
   if ! tx has-session -t "=$name" 2>/dev/null; then
     tx new-session -d -s "$name" -c "$dir"
@@ -246,6 +251,9 @@ cmd_add() {
   # Default the agent name to its workspace, so it reads "<workspace> · claude"
   # and follows the workspace on rename. Multiple agents per workspace is fine.
   [[ -z "$name" ]] && name="$target"
+
+  # Fleet usage feeds zoxide frecency (see cmd_connect).
+  [[ -n "$dir" && "$dir" != "$HOME" ]] && command -v zoxide >/dev/null 2>&1 && zoxide add "$dir" 2>/dev/null || true
 
   # Label for the sidenav's agents list (first word of the command). Computed
   # from the *inner* command, before any codespace/hook wrapping.

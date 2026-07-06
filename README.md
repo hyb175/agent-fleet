@@ -36,7 +36,7 @@ Two surfaces:
 | `fzf` | yes | powers the picker popup |
 | `claude` (Claude Code CLI) | optional* | the default agent command; the status hooks attach to claude launches |
 | `git` | optional | branch / ahead-count labels in the rail and picker |
-| `zoxide` | optional | frecent directories in the picker's connect view (falls back to `$PWD`) |
+| `zoxide` | optional | frecent directories in the picker's connect view (project-root discovery and `$PWD` work without it) |
 | `osascript` (macOS) / `notify-send` (Linux) | optional | desktop notifications on agent state changes |
 
 \* The manager works without `claude`, but `agent-fleet add` with defaults launches it. A truecolor + Unicode-capable terminal is recommended; the Tokyo Night colors and braille spinner degrade (not crash) on lesser terminals.
@@ -124,7 +124,7 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 | `Prefix o` | Open the picker popup (fleet / spaces / connect / cloud; `Tab` cycles, `^a`/`^s`/`^z`/`^x` jump). The fleet view lists agents most-urgent-first |
 | `Prefix w` | Quick workspace switch — picker opened straight to the spaces view (every workspace, shell-only included) |
 | `Prefix g` | Open the picker straight to the cloud view (your GitHub Codespaces) |
-| `Prefix f` | Open the picker straight to the connect view — search recent folders (git repos first, with branch) to spawn a workspace (`Alt-⏎` to name it) |
+| `Prefix f` | Open the picker straight to the connect view — search recent folders **and unvisited project siblings** (git repos first, with branch) to spawn a workspace (`Alt-⏎` to name it) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
 | `Prefix c` | New plain shell window in the current directory (tmux default) |
 | `Prefix C` | Add a Claude agent (with status hooks) — a menu picks a new tab in this workspace or a brand-new workspace (prompts a name); starts in the current dir and jumps to it |
@@ -252,6 +252,7 @@ starts a fresh `home` workspace if there's nothing saved.
 | `AGENT_FLEET_CS_DIR` | `/workspaces/<repo>` | Remote dir a codespace agent cds into before running (set by `add --dir`); defaults to the codespace's repo checkout |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created when the fleet first boots |
 | `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
+| `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists even if zoxide has never seen them. Default: derived — the parent of every known git repo (unless the parent is itself a repo) |
 | `AGENT_FLEET_SIDENAV_WIDTH` | `30` | Rail width in columns |
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |
 | `AGENT_FLEET_SIDENAV_TICK` | `0.1` | Rail spinner frame interval (seconds) |

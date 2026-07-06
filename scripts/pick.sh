@@ -123,16 +123,53 @@ list_spaces() {
   done <<<"$order"
 }
 
-# dir<TAB>branch for every recent git repo. Computed in one shot (used only by
-# the cached refresher below), so the connect view never forks per-repo.
+# Every connect candidate, one per line: zoxide entries first (frecency order),
+# then DISCOVERED dirs — children of the project roots that zoxide has never
+# seen. zoxide only records dirs you've cd'd into, so a fresh clone or an
+# untouched sibling repo is otherwise invisible until its first manual visit.
+# Roots come from AGENT_FLEET_PROJECT_ROOTS (colon-separated) or are derived:
+# the parent of every known git repo, provided the parent isn't itself a repo
+# (a repo's own subdirs are source trees, not projects).
+_connect_dirs() {
+  local -A seen rseen
+  local d root
+  while IFS= read -r d; do
+    case "$d" in ""|*/.*) continue ;; esac
+    [[ -d "$d" && -z "${seen[$d]:-}" ]] || continue
+    seen[$d]=1; printf '%s\n' "$d"
+  done < <(zoxide query -l 2>/dev/null)
+
+  local roots=()
+  if [[ -n "${AGENT_FLEET_PROJECT_ROOTS:-}" ]]; then
+    IFS=':' read -ra roots <<< "$AGENT_FLEET_PROJECT_ROOTS"
+  else
+    for d in "${!seen[@]}"; do
+      [[ -e "$d/.git" ]] || continue
+      root="${d%/*}"
+      [[ -n "$root" && -d "$root" && -z "${rseen[$root]:-}" && ! -e "$root/.git" ]] || continue
+      rseen[$root]=1; roots+=("$root")
+    done
+  fi
+  for root in ${roots[@]+"${roots[@]}"}; do
+    [[ -d "$root" ]] || continue
+    for d in "$root"/*/; do
+      d="${d%/}"
+      case "$d" in */.*) continue ;; esac
+      [[ -d "$d" && -z "${seen[$d]:-}" ]] || continue
+      seen[$d]=1; printf '%s\n' "$d"
+    done
+  done
+}
+
+# dir<TAB>branch for every candidate git repo. Computed in one shot (used only
+# by the cached refresher below), so the connect view never forks per-repo.
 _connect_branch_map() {
   local d b
   while IFS= read -r d; do
-    case "$d" in */.*) continue ;; esac
-    [[ -d "$d" && -e "$d/.git" ]] || continue
+    [[ -e "$d/.git" ]] || continue
     b="$(git -C "$d" symbolic-ref --quiet --short HEAD 2>/dev/null)" || b=""
     [[ -n "$b" ]] && printf '%s\t%s\n' "$d" "$b"
-  done < <(zoxide query -l 2>/dev/null)
+  done < <(_connect_dirs)
 }
 
 # A single connect row. Used for cwd and the no-zoxide fallback (one git call,
@@ -149,13 +186,13 @@ _conn_emit() {  # <dir> [is_cwd]
   fi
 }
 
-# Connect: recent folders to spawn a workspace in (zoxide frecency). Hidden-
-# component paths (…/.ai-workspace/…, caches) and stale dirs are dropped; git
-# repos are marked (◆ + branch) and floated above plain dirs; cwd is always
-# offered. ⏎ spawns/attaches a workspace there.
+# Connect: folders to spawn a workspace in — zoxide recents (frecency order)
+# plus unvisited project-root children (see _connect_dirs). Hidden-component
+# paths (…/.ai-workspace/…, caches) and stale dirs are dropped; git repos are
+# marked (◆ + branch) and floated above plain dirs; cwd is always offered.
+# ⏎ spawns/attaches a workspace there.
 list_connect() {
   local cwd="$PWD" dir repos="" dirs="" line b sub
-  command -v zoxide >/dev/null 2>&1 || { _conn_emit "$cwd" 1; return; }
 
   # Branch map: read fork-free from a 60s cache; refresh in the background when
   # stale (one bg job does all the git calls, instead of one per row on open).
@@ -177,8 +214,6 @@ list_connect() {
 
   while IFS= read -r dir; do
     [[ -z "$dir" || "$dir" == "$cwd" ]] && continue
-    case "$dir" in */.*) continue ;; esac          # drop hidden-component paths
-    [[ -d "$dir" ]] || continue                      # drop stale zoxide entries
     if [[ -e "$dir/.git" ]]; then
       sub="$dir"; b="${BR[$dir]:-}"; [[ -n "$b" ]] && sub="$b  ·  $dir"
       printf -v line 'CONNECT:%s\t\033[32m◆\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m' "$dir" "${dir##*/}" "$sub"
@@ -187,7 +222,7 @@ list_connect() {
       printf -v line 'CONNECT:%s\t\033[2m+\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m' "$dir" "${dir##*/}" "$dir"
       dirs+="$line"$'\n'
     fi
-  done < <(zoxide query -l 2>/dev/null)
+  done < <(_connect_dirs)
 
   _conn_emit "$cwd" 1                                 # cwd always offered, first
   printf '%s%s' "$repos" "$dirs"                      # repos before plain dirs
