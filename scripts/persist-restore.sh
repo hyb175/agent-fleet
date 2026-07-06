@@ -179,6 +179,9 @@ for s in "${sess_order[@]}"; do
   [[ -n "$active_win" ]] && tx select-window -t "$active_win" 2>/dev/null || true
 done
 
+# restored split windows need their active-pane indicators tuned
+"$ROOT/scripts/border-tune.sh" 2>/dev/null || true
+
 # tidy up: drop the scratch session, put the user's auto-rail setting back
 tx kill-session -t "__af_restore__" 2>/dev/null || true
 tx set-option -g @fleet-sidenav-auto "${prev_auto:-on}" 2>/dev/null || true

@@ -13,11 +13,16 @@
 set -uo pipefail
 
 SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
+ROOT="${AGENT_FLEET_ROOT:-}"
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 # Let tmux finish tearing the exited pane down so it's gone from the listing
 # below. The pane-exited hook runs us with run-shell -b, so this doesn't block.
 sleep 0.1
+
+# A pane exit may have un-split any window — retune the active-pane indicators
+# (must run before the early exit below; reaping is usually a no-op).
+[[ -n "$ROOT" ]] && "$ROOT/scripts/border-tune.sh" 2>/dev/null || true
 
 # Tally work panes per window with a stable "rail"/"work" token (an empty
 # per-pane value would be stripped by $() and hide a survivor). Any window with
