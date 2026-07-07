@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # pick.sh — the fleet's single fzf picker.
 #
-# Views (Tab cycles; ^a/^s/^z jump directly):
+# Views (Tab cycles; ^f/^s/^z/^x jump directly — Ctrl chords, since window
+# managers like AeroSpace commonly swallow Alt):
 #   fleet    (default) live agents (per-pane), most-urgent first, + agentless
 #            workspaces. ⏎ jumps.
 #   spaces   EVERY workspace (session): state glyph + branch + agent count.
 #            ⏎ switches. The quick workspace switch (Prefix w opens here).
 #   connect  recent folders (zoxide + project-root discovery), git repos first
 #            w/ branch, noise filtered. ⏎ spawns/attaches a shell workspace;
-#            M-a spawns it with a claude agent. (Prefix f opens here.)
+#            ^a (or M-a) spawns it with a claude agent. (Prefix f opens here.)
 #   cloud    GitHub Codespaces (gh cs list). ⏎ connects a workspace + agent over SSH.
 
 set -uo pipefail
@@ -284,12 +285,12 @@ run_view() {
       ;;
     connect)
       entries="$(list_connect)"
-      header='fleet spaces [connect] cloud  ·  Tab  ·  ⏎ shell · M-a +agent · M-⏎ name'
+      header='fleet spaces [connect] cloud  ·  Tab  ·  ⏎ shell · ^a +agent · ^r name'
       prompt='⌕ '
       ;;
     cloud)
       entries="$(list_cloud)"
-      header='fleet spaces connect [cloud]  ·  Tab  ·  ⏎ connect · M-⏎ name  ·  / filter'
+      header='fleet spaces connect [cloud]  ·  Tab  ·  ⏎ connect · ^r name'
       prompt='☁ '
       ;;
   esac
@@ -299,10 +300,12 @@ run_view() {
     --delimiter=$'\t' --with-nth=2.. \
     --header="$header" --prompt="$prompt" \
     --bind="tab:become(echo VIEW:next)" \
-    --bind="ctrl-a:become(echo VIEW:fleet)" \
+    --bind="ctrl-f:become(echo VIEW:fleet)" \
     --bind="ctrl-s:become(echo VIEW:spaces)" \
     --bind="ctrl-z:become(echo VIEW:connect)" \
     --bind="ctrl-x:become(echo VIEW:cloud)" \
+    --bind="ctrl-r:become(printf 'NAME\t%s\n' {1})" \
+    --bind="ctrl-a:become(printf 'AGENT\t%s\n' {1})" \
     --bind="alt-enter:become(printf 'NAME\t%s\n' {1})" \
     --bind="alt-a:become(printf 'AGENT\t%s\n' {1})" \
     --color="fg+:green,bg+:-1"
@@ -332,9 +335,9 @@ main() {
       CONNECT:*)    "$AF" connect "${key#CONNECT:}"; exit 0 ;;
       CLOUD:*)      "$AF" cs connect "${key#CLOUD:}"; exit 0 ;;
       AGENT)
-        # Alt-a on a connect row: spawn the workspace WITH a claude agent as
-        # its first tab (add --new-workspace creates-or-reuses the session).
-        # On any other row, behave like plain ⏎.
+        # ^a (or Alt-a) on a connect row: spawn the workspace WITH a claude
+        # agent as its first tab (add --new-workspace creates-or-reuses the
+        # session). On any other row, behave like plain ⏎.
         local target d
         target="$(printf '%s' "$selection" | cut -f2)"
         case "$target" in
@@ -348,7 +351,7 @@ main() {
           *)       continue ;;
         esac ;;
       NAME)
-        # Alt-⏎ on a connect/cloud row: prompt for a workspace name (pre-filled
+        # ^r (or Alt-⏎) on a connect/cloud row: prompt for a workspace name (pre-filled
         # with the default), then create. On any other row, behave like ⏎.
         local target nm def
         target="$(printf '%s' "$selection" | cut -f2)"

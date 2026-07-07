@@ -121,10 +121,10 @@ Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with 
 
 | Key | Action |
 | --- | --- |
-| `Prefix o` | Open the picker popup (fleet / spaces / connect / cloud; `Tab` cycles, `^a`/`^s`/`^z`/`^x` jump). The fleet view lists agents most-urgent-first |
+| `Prefix o` | Open the picker popup (fleet / spaces / connect / cloud; `Tab` cycles, `^f`/`^s`/`^z`/`^x` jump). The fleet view lists agents most-urgent-first |
 | `Prefix w` | Quick workspace switch — picker opened straight to the spaces view (every workspace, shell-only included) |
 | `Prefix g` | Open the picker straight to the cloud view (your GitHub Codespaces) |
-| `Prefix f` | Open the picker straight to the connect view — search recent folders **and unvisited project siblings** (git repos first, with branch). `⏎` spawns a shell workspace, `Alt-a` spawns it **with a claude agent**, `Alt-⏎` names it |
+| `Prefix f` | Open the picker straight to the connect view — search recent folders **and unvisited project siblings** (git repos first, with branch). `⏎` spawns a shell workspace, `^a` spawns it **with a claude agent**, `^r` names it (`Alt-a`/`Alt-⏎` also work where the terminal passes Alt through) |
 | `Prefix b` | Toggle the sidenav rail in the current window |
 | `Prefix c` | New plain shell window in the current directory (tmux default) |
 | `Prefix C` | Add a Claude agent (with status hooks) — a menu picks a new tab in this workspace or a brand-new workspace (prompts a name); starts in the current dir and jumps to it |
@@ -187,7 +187,7 @@ The login user depends on the image (often `dev` or `vscode`); set `AGENT_FLEET_
 
 Two ways to start one:
 
-- **Picker** — `Prefix g` opens the **cloud** view (or `Prefix o` then `Tab`/`^x`). It lists your codespaces (repo · ref · state); `Enter` opens a **shell workspace** in the codespace (named for it; `Alt-⏎` to name it yourself).
+- **Picker** — `Prefix g` opens the **cloud** view (or `Prefix o` then `Tab`/`^x`). It lists your codespaces (repo · ref · state); `Enter` opens a **shell workspace** in the codespace (named for it; `^r` to name it yourself).
 - **CLI** — `agent-fleet cs connect <name> [workspace-name]` opens that shell workspace. `agent-fleet add --codespace <name> [--cmd claude]` instead adds a codespace agent into the current workspace (tracked in the rail — see the status note below).
 
 A codespace connection is a **remote-shell workspace**, not a proxied agent: the fleet doesn't mirror remote agents into the local rail (that would mean one SSH per agent and scrape-only status). To run several agents in one codespace, start a multiplexer — `tmux`, or agent-fleet itself — **inside** the codespace. The shell is `AGENT_FLEET_CS_CMD` (default `bash`).
