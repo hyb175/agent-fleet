@@ -207,7 +207,7 @@ A codespace agent runs through `scripts/cs-connect.sh`: it forwards the containe
 
 When a **hooked** agent changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). Notifications come from the status hook, so scrape-tier agents (hand-started, non-claude, codespace) don't produce them. On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
 
-Hooked agents also drive a **terminal progress bar** (OSC 9;4 — rendered by Ghostty 1.2+, iTerm2, WezTerm at the top of the window/split): an indeterminate bar while the agent works, a red bar when it needs your input, cleared when it finishes. Claude Code doesn't emit these under tmux, so the fleet synthesizes them from the same hook states; the fleet conf enables the tmux passthrough they need. tmux forwards only from visible panes, so the bar tracks the agent you're looking at. Set `AGENT_FLEET_PROGRESS=0` to disable.
+The fleet also drives a **terminal progress bar** (OSC 9;4 — rendered by Ghostty 1.2+, iTerm2, WezTerm at the top of the window/split): an indeterminate bar while the window's agent works, a red bar when it needs your input, cleared when it's done. Claude Code doesn't emit these under tmux, so the snapshot daemon synthesizes them — re-asserted every poll tick from the **active window's** most-urgent agent state, which makes it reliable across window switches and covers scrape-tier agents (hand-started, codespace) too. The fleet conf enables the tmux passthrough this needs. Set `AGENT_FLEET_PROGRESS=0` (daemon restart to change) to disable.
 
 ---
 
@@ -254,7 +254,7 @@ starts a fresh `home` workspace if there's nothing saved.
 | `AGENT_FLEET_CS_DIR` | `/workspaces/<repo>` | Remote dir a codespace agent cds into before running (set by `add --dir`); defaults to the codespace's repo checkout |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created when the fleet first boots |
 | `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
-| `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (OSC 9;4) driven by hooked-agent states (`0` disables) |
+| `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (OSC 9;4) driven by the active window's agent state (`0` disables; read at daemon start) |
 | `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists even if zoxide has never seen them. Default: derived — the parent of every known git repo (unless the parent is itself a repo) |
 | `AGENT_FLEET_SIDENAV_WIDTH` | `30` | Rail width in columns |
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |

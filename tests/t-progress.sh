@@ -1,44 +1,55 @@
 #!/usr/bin/env bash
-# t-progress.sh — the hook synthesizes terminal progress (OSC 9;4).
-#   - working -> DCS-wrapped indeterminate bar written to the pane tty
-#   - wait    -> red/error bar; done -> clear
+# t-progress.sh — snapshotd drives the terminal progress bar (OSC 9;4).
+#   - the ACTIVE window's most-urgent agent state is emitted continuously,
+#     DCS-wrapped, via the window's rail tty: working -> indeterminate,
+#     wait -> red, idle -> clear
+#   - transitions that happen between ticks are picked up (no edge dependency)
 #   - AGENT_FLEET_PROGRESS=0 disables emission
-#   - no emission when the state didn't change (edge-triggered)
-# Verified by tapping the pane's raw output stream with pipe-pane.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-progress:"
 boot_server t "$WORK"
 wp="$(tx list-panes -t t -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 != "1" {print $1; exit}')"
+rp="$(tx list-panes -t t -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 == "1" {print $1; exit}')"
+tx set-option -p -t "$wp" @fleet-agent-kind claude     # make the work pane an agent
+PANES="$XDG_CACHE_HOME/agent-fleet/panes"; mkdir -p "$PANES"
+
 RAW="$WORK/raw.log"
-tx pipe-pane -t "$wp" -o "cat > $RAW"
+tx pipe-pane -t "$rp" -o "cat > $RAW"                  # tap the rail tty (emission target)
+
+# daemon (fast ticks for the test)
+AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
+  AGENT_FLEET_SNAP_INTERVAL=1 nohup "$REPO/scripts/snapshotd.sh" >/dev/null 2>&1 &
+dpid=$!
+
+wait_for() {  # <pattern> — up to ~5s
+  for _ in $(seq 1 25); do grep -aq "$1" "$RAW" 2>/dev/null && return 0; sleep 0.2; done
+  return 1
+}
+
+printf 'working\n' > "$PANES/$wp.status"
+check "working -> indeterminate bar (9;4;3)" "wait_for $'\x1bPtmux;\x1b\x1b]9;4;3'"
+printf 'wait\n' > "$PANES/$wp.status"
+check "wait -> red bar (9;4;2;100)" "wait_for $'\x1b\x1b]9;4;2;100'"
+printf 'idle\n' > "$PANES/$wp.status"
+check "idle -> cleared (9;4;0)" "wait_for $'\x1b\x1b]9;4;0'"
+
+kill "$(cat "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
+# The daemon's cleanup emits a parting clear and releases its lock — wait for
+# the release so phase 2's fresh daemon can start and the tap can be truncated
+# AFTER the parting sequence has landed.
+for _ in $(seq 1 30); do [[ -d "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock" ]] || break; sleep 0.2; done
 sleep 0.3
 
-hook() {  # <state> [VAR=VAL ...]
-  local st="$1"; shift
-  env AGENT_FLEET_NOTIFY=0 "$@" TMUX_PANE="$wp" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
-    bash "$REPO/scripts/agent-status-hook.sh" "$st" "$SOCK" </dev/null
-}
-# `|| true`, not `|| echo 0`: grep -c prints the 0 itself and exits 1.
-seq_count() { grep -ac $'\x1bPtmux;\x1b\x1b]9;4' "$RAW" 2>/dev/null || true; }
-
-hook working; sleep 0.4
-check "working emits a wrapped 9;4 sequence" "[[ \$(seq_count) -ge 1 ]]"
-check "working = indeterminate (9;4;3)" "grep -aq $'\x1b\x1b]9;4;3' '$RAW'"
-
-hook working; sleep 0.4
-n_before="$(seq_count)"
-check "repeat state does NOT re-emit (edge-triggered)" "[[ \$(seq_count) -eq $n_before ]]"
-
-hook wait; sleep 0.4
-check "wait = red/error bar (9;4;2)" "grep -aq $'\x1b\x1b]9;4;2;100' '$RAW'"
-hook done; sleep 0.4
-check "done clears (9;4;0)" "grep -aq $'\x1b\x1b]9;4;0' '$RAW'"
-
-n_before="$(seq_count)"
-hook working AGENT_FLEET_PROGRESS=0; sleep 0.4
-check "AGENT_FLEET_PROGRESS=0 disables emission" "[[ \$(seq_count) -eq $n_before ]]"
-
-tx pipe-pane -t "$wp"
+# opt-out: fresh daemon with AGENT_FLEET_PROGRESS=0 must emit nothing new
+: > "$RAW"
+printf 'working\n' > "$PANES/$wp.status"
+AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
+  AGENT_FLEET_SNAP_INTERVAL=1 AGENT_FLEET_PROGRESS=0 nohup "$REPO/scripts/snapshotd.sh" >/dev/null 2>&1 &
+sleep 2.5
+n="$(grep -ac $'\x1bPtmux;\x1b\x1b]9;4' "$RAW" 2>/dev/null || true)"
+check "AGENT_FLEET_PROGRESS=0 emits nothing (got ${n:-0})" "[[ '${n:-0}' == '0' ]]"
+kill "$(cat "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
+tx pipe-pane -t "$rp" 2>/dev/null
 exit $FAIL

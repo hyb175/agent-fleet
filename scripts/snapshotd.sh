@@ -42,8 +42,43 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 echo $$ > "$LOCK/pid"
 
-cleanup() { rm -rf "$LOCK" "$SNAP" 2>/dev/null; exit 0; }
+cleanup() {
+  # Don't leave a stale loading bar on the terminal after the fleet stops.
+  [[ -n "$PROG_TTY" ]] && printf '\033Ptmux;\033\033]9;4;0\007\033\\' > "$PROG_TTY" 2>/dev/null
+  rm -rf "$LOCK" "$SNAP" 2>/dev/null
+  exit 0
+}
 trap cleanup INT TERM HUP
+
+# --- terminal progress bar (OSC 9;4, DCS-wrapped for tmux) ------------------
+# Claude Code doesn't emit these under tmux, so the daemon synthesizes them
+# from agent states: the bar mirrors the ACTIVE window's most-urgent agent
+# (indeterminate = working, red = needs input, clear = done/idle/none).
+# Emitting from here — continuously, not edge-triggered on hook events — is
+# what makes it reliable: transitions that happen while a window is hidden
+# (tmux forwards passthrough only from visible panes) self-heal within a
+# tick of you switching there, and scrape-tier agents (hand-started,
+# codespace) are covered because the daemon resolves their states too.
+# Written via the active window's rail tty (any visible pane forwards).
+PROGRESS_ON="${AGENT_FLEET_PROGRESS:-1}"
+PROG_TTY=""; PROG_LAST=""; PROG_AGE=0
+progress_emit() {  # <state> <tty>
+  [[ "$PROGRESS_ON" == "1" ]] || return 0
+  local st="$1" tty="$2" seq
+  [[ -n "$tty" && -w "$tty" ]] || return 0
+  case "$st" in
+    working) seq=$'\033Ptmux;\033\033]9;4;3\007\033\\' ;;      # indeterminate
+    wait)    seq=$'\033Ptmux;\033\033]9;4;2;100\007\033\\' ;;  # full red: needs you
+    *)       seq=$'\033Ptmux;\033\033]9;4;0\007\033\\' ;;      # clear
+  esac
+  # Dedupe per tick, but re-assert every few ticks so a missed write (e.g.
+  # terminal reattach) can't leave the bar stale.
+  PROG_AGE=$(( PROG_AGE + 1 ))
+  if [[ "$st|$tty" != "$PROG_LAST" ]] || (( PROG_AGE >= 5 )); then
+    printf '%s' "$seq" > "$tty" 2>/dev/null || true
+    PROG_LAST="$st|$tty"; PROG_TTY="$tty"; PROG_AGE=0
+  fi
+}
 
 build() {
   local now; printf -v now '%(%s)T' -1
@@ -62,6 +97,7 @@ build() {
     active="${asess}|${awin}"
   else
     active="$(tx display-message -p '#{session_name}|#{window_id}' 2>/dev/null || echo '|')"
+    awin="${active##*|}"   # no attached client: server's current window
   fi
   out+="C $active"$'\n'
 
@@ -72,8 +108,15 @@ build() {
 
   declare -A BEST ROLL
   local agents="" s wid wn widx pane cmd tty kind sid path label st r
+  local aw_rail_tty="" aw_any_tty="" aw_best=9 aw_state="none"
   while IFS='|' read -r s wid wn widx pane cmd tty kind sid path; do
     [[ -z "$pane" ]] && continue
+    # Track the active window's ttys for the progress bar (rail preferred —
+    # it's present in every window and always visible with it).
+    if [[ -n "$awin" && "$wid" == "$awin" ]]; then
+      [[ -z "$aw_any_tty" ]] && aw_any_tty="$tty"
+      [[ "$sid" == "1" && -z "$aw_rail_tty" ]] && aw_rail_tty="$tty"
+    fi
     [[ "$sid" == "1" ]] && continue
     label="$(pane_agent_kind "$kind" "$cmd" "$tty" "$sid")"
     [[ -n "$label" ]] || continue
@@ -85,7 +128,13 @@ build() {
     agents+="A $s|$wid|$widx|$wn|$pane|$label|$st"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
+    # Most-urgent agent state in the active window drives the progress bar.
+    if [[ -n "$awin" && "$wid" == "$awin" ]] && (( r < aw_best )); then
+      aw_best="$r"; aw_state="$st"
+    fi
   done <<<"$snap"
+
+  progress_emit "$aw_state" "${aw_rail_tty:-$aw_any_tty}"
 
   # Per-session dir from the session's active pane (consistent, unlike "first
   # pane seen"), so a stray pane in another cwd can't mislabel the branch.

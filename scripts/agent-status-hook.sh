@@ -43,23 +43,9 @@ if [[ ! -f "$sf" ]]; then
   fi
 fi
 
-# Terminal progress bar (OSC 9;4, DCS-wrapped for tmux): Claude Code doesn't
-# emit these under tmux, so the fleet synthesizes them from the hook states —
-# Ghostty 1.2+/iTerm2/WezTerm render a bar at the top of the window/split.
-# working = indeterminate bar · wait = full red (needs you) · done/idle = clear.
-# Requires allow-passthrough (set by the fleet conf); note tmux forwards only
-# from VISIBLE panes, so the bar tracks the agent you're looking at.
-# Set AGENT_FLEET_PROGRESS=0 to disable.
-if [[ "${AGENT_FLEET_PROGRESS:-1}" == "1" && "$state" != "$prev" ]]; then
-  ptty="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{pane_tty}' 2>/dev/null)"
-  if [[ -n "$ptty" && -w "$ptty" ]]; then
-    case "$state" in
-      working) printf '\033Ptmux;\033\033]9;4;3\007\033\\'     > "$ptty" 2>/dev/null || true ;;
-      wait)    printf '\033Ptmux;\033\033]9;4;2;100\007\033\\' > "$ptty" 2>/dev/null || true ;;
-      *)       printf '\033Ptmux;\033\033]9;4;0\007\033\\'     > "$ptty" 2>/dev/null || true ;;
-    esac
-  fi
-fi
+# (The terminal progress bar is NOT emitted here: hooks fire only on
+# transitions and tmux forwards passthrough only from visible panes, which
+# made a hook-driven bar unreliable. snapshotd emits it continuously instead.)
 
 # Edge-triggered macOS notification on entering an attention state.
 # On by default; set AGENT_FLEET_NOTIFY=0 to silence.
