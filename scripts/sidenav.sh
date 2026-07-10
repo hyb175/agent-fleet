@@ -59,6 +59,13 @@ read_snapshot() {
       A\ *) AGENTS+=("${line#A }"); [[ "$line" == *'|working' ]] && ANIMATE=1 ;;
     esac
   done < "$SNAP"
+  # focus.now (written by the pane-focus-in hook) is fresher than the daemon's
+  # polled C record — prefer it so the highlight tracks switches instantly.
+  local fs fw
+  if [[ -r "$CACHE/focus.now" ]]; then
+    { IFS='|' read -r fs fw < "$CACHE/focus.now"; } 2>/dev/null || true
+    [[ -n "${fs:-}" && -n "${fw:-}" ]] && { CUR_SESS="$fs"; CUR_WIN="$fw"; }
+  fi
 }
 
 # glyph fg + char for a state (set GLYPH); fork-free.
@@ -152,15 +159,26 @@ trap cleanup INT TERM HUP
 SYNC_ON=$'\033[?2026h'; SYNC_OFF=$'\033[?2026l'
 printf '\033[?2026l\033[?1049h\033[?25l'
 clear
-frame=0; i=0
+# The focus hook SIGUSR1s every rail on a switch so the highlight repaints
+# immediately. A trap can't interrupt a foreground `sleep`, so the sleeps run
+# backgrounded behind `wait` (the wait builtin IS interruptible by traps).
+WAKE=0
+trap 'WAKE=1' USR1
+frame=0; i=0; sp=""
 while true; do
   (( i % DATA_EVERY == 0 )) && read_snapshot
   printf '%s%s%s' "$SYNC_ON" "$(draw "$frame")" "$SYNC_OFF"
   # Animate only when something is working AND this rail's window is the active
   # one; otherwise idle (so background rails cost nothing).
   if [[ "$ANIMATE" == 1 && "$RAIL_WIN" == "$CUR_WIN" ]]; then
-    sleep "$TICK"; frame=$(( (frame + 1) % 100000 )); i=$(( i + 1 ))
+    sleep "$TICK" & sp=$!
+    wait "$sp" 2>/dev/null || kill "$sp" 2>/dev/null
+    frame=$(( (frame + 1) % 100000 )); i=$(( i + 1 ))
   else
-    sleep "$REFRESH"; i=0
+    sleep "$REFRESH" & sp=$!
+    wait "$sp" 2>/dev/null || kill "$sp" 2>/dev/null
+    i=0
   fi
+  # Woken by the focus hook: re-read (picks up focus.now) and repaint now.
+  if (( WAKE )); then WAKE=0; i=0; fi
 done
