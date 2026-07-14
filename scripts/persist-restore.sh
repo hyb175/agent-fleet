@@ -20,7 +20,6 @@ SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
 ROOT="${AGENT_FLEET_ROOT:?AGENT_FLEET_ROOT not set}"
 CONF="${AGENT_FLEET_CONF:-$ROOT/conf/agent-fleet.conf}"
 export AGENT_FLEET_CONF="$CONF"   # the conf's Prefix r reload expands this at parse time
-WIDTH="${AGENT_FLEET_SIDENAV_WIDTH:-30}"
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 STATE="$CACHE/fleet.state"
 US=$'\t'   # matches persist-save; every field is non-empty so tab won't collapse
@@ -29,6 +28,31 @@ OVERLAY="$CACHE/hooks-settings.json"                # status-hooks settings over
 
 [[ -f "$STATE" ]] || exit 1
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
+
+# Concurrent cold boots (several terminal tabs each running `agent-fleet
+# attach` after a reboot) must not race the rebuild: the loser used to fail its
+# scratch-session creation and boot a stray home session — or attach
+# mid-restore and resize the half-built layout. One restorer holds the lock;
+# the others wait for it and adopt its outcome.
+RLOCK="$CACHE/restore.lock"
+if ! mkdir "$RLOCK" 2>/dev/null; then
+  hp="$(cat "$RLOCK/pid" 2>/dev/null)"
+  lk_m="$(stat -c %Y "$RLOCK" 2>/dev/null || stat -f %m "$RLOCK" 2>/dev/null || echo 0)"
+  printf -v now_s '%(%s)T' -1
+  live_holder=0
+  if [[ -n "$hp" ]] && kill -0 "$hp" 2>/dev/null; then live_holder=1
+  elif (( now_s - lk_m < 120 )); then live_holder=1   # pid not written yet — grace
+  fi
+  if (( live_holder )); then
+    for _ in $(seq 1 150); do [[ -d "$RLOCK" ]] || break; sleep 0.2; done
+    tx list-sessions >/dev/null 2>&1 && exit 0        # peer restored it
+    exit 1
+  fi
+  rm -rf "$RLOCK" 2>/dev/null; mkdir "$RLOCK" 2>/dev/null || exit 1   # stale takeover
+fi
+echo $$ > "$RLOCK/pid"
+trap 'rm -rf "$RLOCK" 2>/dev/null' EXIT
+trap 'rm -rf "$RLOCK" 2>/dev/null; exit 129' INT TERM HUP
 
 # --- parse the state file ---------------------------------------------------
 declare -A WLAYOUT WNAME WACTIVE   # key: session US widx
@@ -80,10 +104,10 @@ for s in "${sess_order[@]}"; do
     wk="$s$US$widx"
     layout="${WLAYOUT[$wk]}"; wname="${WNAME[$wk]}"; wact="${WACTIVE[$wk]:-0}"
 
-    # panes sorted by pane index; collect cwd + saved claude session (parallel)
-    cwds=(); sids=(); while IFS="$US" read -r pidx prail psid pcwd; do
+    # panes sorted by pane index; parallel arrays: cwd, claude session, rail flag
+    cwds=(); sids=(); rails=(); while IFS="$US" read -r pidx prail psid pcwd; do
       [[ -z "$pidx" ]] && continue
-      cwds+=("$pcwd"); sids+=("$psid")
+      cwds+=("$pcwd"); sids+=("$psid"); rails+=("$prail")
     done < <(printf '%s' "${PANES[$wk]:-}" | sort -t"$US" -k1,1n)
     (( ${#cwds[@]} )) || continue
 
@@ -114,10 +138,20 @@ for s in "${sess_order[@]}"; do
     # reproduce the exact geometry (rail slot included)
     tx select-layout -t "$win_id" "$layout" 2>/dev/null || true
 
-    # the rail is the full-height, left-edge, WIDTH-wide pane — re-render it
-    railp="$(tx list-panes -t "$win_id" \
-              -F '#{pane_id} #{pane_left} #{pane_top} #{pane_width} #{pane_height} #{window_height}' 2>/dev/null \
-            | awk -v w="$WIDTH" '$2==0 && $3==0 && $4==w && $5==$6 {print $1; exit}')"
+    # Re-render the rail into the pane that WAS the rail — identified by the
+    # saved P-record flag, not by geometry. Panes were created in sorted
+    # saved-index order and tmux lists them in index order, so position k maps
+    # 1:1. The old geometry match (left=0, width==30, full height) silently
+    # failed whenever a client attached mid-restore and scaled the layout,
+    # leaving a bare shell (cwd = wherever the rail was spawned from, usually
+    # the fleet repo) sitting where the rail should be — and without the
+    # @fleet-sidenav flag, the ensure hook could never self-heal it.
+    pane_ids=(); while IFS= read -r p; do [[ -n "$p" ]] && pane_ids+=("$p"); done \
+      < <(tx list-panes -t "$win_id" -F '#{pane_id}' 2>/dev/null)
+    railp=""
+    for (( k = 0; k < ${#rails[@]} && k < ${#pane_ids[@]}; k++ )); do
+      [[ "${rails[$k]}" == "1" ]] && { railp="${pane_ids[$k]}"; break; }
+    done
     if [[ -n "$railp" ]]; then
       tx respawn-pane -k -t "$railp" "$rail_cmd" 2>/dev/null || true
       tx set-option -p -t "$railp" @fleet-sidenav 1 2>/dev/null || true

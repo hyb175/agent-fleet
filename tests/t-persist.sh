@@ -41,6 +41,39 @@ after="$(snapshot)"
 check "restore rc=0" "[[ $rc -eq 0 ]]"
 check "layout round-trips byte-identical" "[[ \"\$before\" == \"\$after\" ]]"
 [[ "$before" == "$after" ]] || { echo "--- before ---"; echo "$before"; echo "--- after ---"; echo "$after"; }
+
+# Every flagged rail pane must actually be RUNNING the rail — a flag on a
+# leftover shell (the failed-respawn bug) must fail here.
+rails_running() {
+  local ok=1 flag cmd
+  while IFS='|' read -r flag cmd; do
+    [[ "$flag" == "1" ]] || continue
+    [[ "$cmd" == *sidenav.sh* ]] || ok=0
+  done < <(tx list-panes -a -F '#{?@fleet-sidenav,1,0}|#{pane_start_command}' 2>/dev/null)
+  (( ok ))
+}
+check "restored rails are RUNNING the rail" "rails_running"
+
+# Geometry-immunity: restore under a different rail width — the old
+# left/top/width match would find nothing and leave shells behind.
+tx kill-server; sleep 0.4
+AGENT_FLEET_SIDENAV_WIDTH=25 "$REPO/scripts/persist-restore.sh"
+sleep 1
+check "rails respawn under width mismatch (identity, not geometry)" "rails_running"
+
+# Concurrent cold boots: two restores race; one holds the lock, the other
+# adopts its outcome — no duplicate/stray sessions, rails intact.
+tx kill-server; sleep 0.4
+"$REPO/scripts/persist-restore.sh" & r1=$!
+"$REPO/scripts/persist-restore.sh" & r2=$!
+wait "$r1"; rc1=$?
+wait "$r2"; rc2=$?
+sleep 1
+check "parallel restores both report success" "[[ $rc1 -eq 0 && $rc2 -eq 0 ]]"
+sess_list="$(tx list-sessions -F '#{session_name}' 2>/dev/null | sort | tr '\n' ' ')"
+check "no duplicate/stray sessions (got: $sess_list)" "[[ '$sess_list' == 'alpha beta ' ]]"
+check "rails intact after parallel restore" "rails_running"
+
 tx kill-server 2>/dev/null; sleep 0.3
 rm -rf "$XDG_CACHE_HOME"; mkdir -p "$XDG_CACHE_HOME"
 
