@@ -50,6 +50,9 @@ in_fleet_tmux() {
 
 # Push runtime locations into the server's global env so popup/keybind
 # children (display-popup, run-shell) can resolve them.
+# NOTE: the claude shim (shims/claude) is injected via the conf's
+# default-command (scripts/pane-shell.sh), NOT via the server environment —
+# tmux special-cases PATH and pane spawns ignore global/session PATH overrides.
 ensure_server_env() {
   tx set-environment -g AGENT_FLEET_ROOT "$ROOT_DIR" 2>/dev/null || true
   tx set-environment -g AGENT_FLEET_SOCKET "$SOCKET" 2>/dev/null || true

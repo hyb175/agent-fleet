@@ -153,7 +153,9 @@ Agents launched via `agent-fleet add` run as `claude --settings <overlay>`, wher
 
 The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is not modified. Each hook writes the state to a per-pane file the rail and picker read.
 
-Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Status for hand-started agents is scraped from the pane, and the scrape patterns match the Claude CLI, so non-claude tools are listed correctly but their live state is approximate (they may read `idle` while working). The hooks are claude-specific: `agent-fleet add` attaches them when the command is `claude`; any other tool runs on the scrape tier regardless of how it's launched.
+Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind.
+
+**Hand-typed `claude` gets the hooks too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` dir on `PATH`, so `claude` — including `claude -r` / `--resume` / `-c` — resolves to a shim that attaches the fleet's status hooks. Hand-started claude agents therefore get hook-tier status, notifications, the progress bar, and resume-after-reboot, same as `agent-fleet add` launches. Non-interactive/meta invocations (`-p`, `--help`, `--version`) and commands that already carry `--settings` pass through untouched; `AGENT_FLEET_SHIM=0` opts out. Non-claude tools remain on the scrape tier, so their live state is approximate (they may read `idle` while working).
 
 **`done` clears when you visit it.** Opening a `done` agent — via the picker, `Prefix Space`, `Prefix Tab`, or a rail click — marks it seen: it drops to `idle` and leaves the attention queue, and returns to `done` only when the agent produces new output. Hooked agents track this in their state file; scraped/codespace agents use a `.ackdone` marker. (Raw `Prefix 1`–`9` window jumps don't count as a visit.)
 
@@ -218,9 +220,11 @@ layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach:
 
 - **What's restored** — sessions, tabs (names + order), each window's **exact
   split layout**, and every pane's **working directory**. Hooked Claude agents
-  (`agent-fleet add` / `Prefix C`) come back **resumed**: the fleet records each
-  agent's Claude session id and relaunches it with `claude --resume`, so the
-  conversation continues. The rail is re-rendered per window.
+  come back **resumed**: the fleet records each agent's Claude session id and
+  relaunches it with `claude --resume`, so the conversation continues. This
+  covers `agent-fleet add` / `Prefix C` launches *and* hand-typed `claude` /
+  `claude -r` in fleet panes (hooked via the PATH shim — see Status detection).
+  The rail is re-rendered per window.
 - **What's not** — other running programs, and hand-started Claude (no hook, so
   no session id) come back as shells in the right dir. A codespace workspace
   comes back as a local shell (reconnect with `Prefix g`). A resume that fails
@@ -255,6 +259,7 @@ starts a fresh `home` workspace if there's nothing saved.
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created when the fleet first boots |
 | `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
 | `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (OSC 9;4) driven by the active window's agent state (`0` disables; read at daemon start) |
+| `AGENT_FLEET_SHIM` | `1` | Put the claude shim on shell panes' `PATH` (hooks + resume for hand-typed `claude`); `0` opts out |
 | `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists even if zoxide has never seen them. Default: derived — the parent of every known git repo (unless the parent is itself a repo) |
 | `AGENT_FLEET_SIDENAV_WIDTH` | `30` | Rail width in columns |
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |
