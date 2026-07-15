@@ -33,7 +33,7 @@ while IFS= read -r line; do
     A\ *) ;;
     *) continue ;;
   esac
-  IFS='|' read -r s wid widx wn pane label st <<<"${line#A }"
+  IFS='|' read -r s wid widx wn pane label st pidx <<<"${line#A }"
   [[ -z "$pane" ]] && continue
   case "$st" in
     wait) waits+=("$pane|$s|$wn") ;;

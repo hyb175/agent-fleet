@@ -24,4 +24,17 @@ if [[ "${AGENT_FLEET_SHIM:-1}" == "1" && -n "$ROOT" && -d "$ROOT/shims" ]]; then
     *) export PATH="$ROOT/shims:$PATH" ;;
   esac
 fi
+
+# tmux names a fresh window after its initial command — i.e. this script.
+# Rename to the shell's name (the pre-launcher behavior), but ONLY when the
+# window still carries the launcher's own name: that is exactly the
+# new-window case, and never a split inside a named agent window
+# (automatic-rename is off, so nothing else will fix it up).
+if [[ -n "${TMUX_PANE:-}" ]]; then
+  _tx="${TMUX_BIN:-tmux}"; _sock="${AGENT_FLEET_SOCKET:-agent-fleet}"
+  if [[ "$("$_tx" -L "$_sock" display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)" == "pane-shell.sh" ]]; then
+    "$_tx" -L "$_sock" rename-window -t "$TMUX_PANE" "$(basename "${SHELL:-sh}")" 2>/dev/null || true
+  fi
+fi
+
 exec "${SHELL:-/bin/sh}" -l

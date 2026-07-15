@@ -68,13 +68,21 @@ stale_row() {
 # name so same-workspace agents differ) then agentless workspaces.
 list_fleet() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane label st roll br glyph agents="" spaces="" idx=0 snap_ts=""
+  local line s wid widx wn pane label st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx
+  # First pass: agents per window, so same-window agents get ".pane" suffixes.
+  declare -A NWIN
+  while IFS= read -r line; do
+    [[ "$line" == A\ * ]] || continue
+    IFS='|' read -r s wid _ <<<"${line#A }"
+    NWIN[$wid]=$(( ${NWIN[$wid]:-0} + 1 ))
+  done < "$SNAP"
   while IFS= read -r line; do
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
       A\ *)
-        IFS='|' read -r s wid widx wn pane label st <<<"${line#A }"
+        IFS='|' read -r s wid widx wn pane label st pidx <<<"${line#A }"
         glyph="$(glyph_of "$st")"
+        (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
         printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$st"
         # Prefix a (rank, idx) sort key so the most urgent agents float to the
         # top; idx keeps it stable within a rank. Stripped after sorting, below.
@@ -108,7 +116,7 @@ list_spaces() {
   while IFS= read -r line; do
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
-      A\ *) IFS='|' read -r s wid widx wn pane label st <<<"${line#A }"; NAG[$s]=$(( ${NAG[$s]:-0} + 1 )) ;;
+      A\ *) IFS='|' read -r s wid widx wn pane label st pidx <<<"${line#A }"; NAG[$s]=$(( ${NAG[$s]:-0} + 1 )) ;;
       S\ *) IFS='|' read -r s roll br <<<"${line#S }"; ROLL[$s]="$roll"; BR[$s]="$br"; order+="$s"$'\n' ;;
     esac
   done < "$SNAP"

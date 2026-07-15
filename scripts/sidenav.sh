@@ -56,7 +56,8 @@ read_snapshot() {
       T\ *) read -r SNAP_TS SNAP_IV <<<"${line#T }" ;;
       C\ *) IFS='|' read -r CUR_SESS CUR_WIN <<<"${line#C }" ;;
       S\ *) SPACES+=("${line#S }") ;;
-      A\ *) AGENTS+=("${line#A }"); [[ "$line" == *'|working' ]] && ANIMATE=1 ;;
+      A\ *) AGENTS+=("${line#A }")
+            case "$line" in *'|working'|*'|working|'*) ANIMATE=1 ;; esac ;;
     esac
   done < "$SNAP"
   # focus.now (written by the pane-focus-in hook) is fresher than the daemon's
@@ -100,7 +101,14 @@ blank() { printf '\033[K\n'; }
 draw() {
   local frame="$1"; home
   local line=0; local -a map=()
-  local rec s roll br wid widx wn pane label st GLYPH sel
+  local rec s roll br wid widx wn pane label st GLYPH sel pidx
+  # Agents per window: names get a ".pane" suffix only where a window holds
+  # more than one agent, so same-window agents are tellable apart.
+  local -A NWIN=()
+  for rec in ${AGENTS[@]+"${AGENTS[@]}"}; do
+    IFS='|' read -r s wid _ <<<"$rec"
+    NWIN[$wid]=$(( ${NWIN[$wid]:-0} + 1 ))
+  done
 
   header "spaces" "";                                        line=$((line+1))
   # A crashed daemon (kill -9 skips its cleanup trap) leaves the snapshot on
@@ -133,10 +141,11 @@ draw() {
     printf ' %s(no agents)%s\033[K\n' "$C_DIM" "$C_OFF";     line=$((line+1))
   else
     for rec in "${AGENTS[@]}"; do
-      IFS='|' read -r s wid widx wn pane label st <<<"$rec"
+      IFS='|' read -r s wid widx wn pane label st pidx <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$CUR_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
+      (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
       # Subtitle = workspace + agent kind (claude/codex/opencode…) so same-named
       # tabs are distinguishable and you can tell the tools apart; the glyph
       # already shows state (working/wait/done/idle).

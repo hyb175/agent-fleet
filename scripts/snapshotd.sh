@@ -10,7 +10,7 @@
 #   T <epoch>                                                  freshness
 #   C <session>|<window_id>                                    active view (highlight)
 #   S <session>|<rollup_state>|<branch>                        one per workspace
-#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>
+#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>
 
 set -uo pipefail
 
@@ -103,13 +103,13 @@ build() {
 
   local snap
   snap="$(tx list-panes -a \
-    -F '#{session_name}|#{window_id}|#{window_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}|#{pane_current_path}' \
+    -F '#{session_name}|#{window_id}|#{window_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}|#{pane_current_path}|#{pane_index}' \
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" s wid wn widx pane cmd tty kind sid path label st r
+  local agents="" s wid wn widx pane cmd tty kind sid path label st r pidx
   local aw_rail_tty="" aw_any_tty="" aw_best=9 aw_state="none"
-  while IFS='|' read -r s wid wn widx pane cmd tty kind sid path; do
+  while IFS='|' read -r s wid wn widx pane cmd tty kind sid path pidx; do
     [[ -z "$pane" ]] && continue
     # Track the active window's ttys for the progress bar (rail preferred —
     # it's present in every window and always visible with it).
@@ -125,7 +125,9 @@ build() {
     # (rename-window), so swap it for a lookalike in display fields. Session
     # names are already sanitized at creation by the CLI.
     wn="${wn//|/¦}"
-    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st"$'\n'
+    # Trailing pane_index lets renderers disambiguate multiple agents sharing
+    # one window ("name.2"); readers of older 7-field rows parse it as empty.
+    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
     # Most-urgent agent state in the active window drives the progress bar.
