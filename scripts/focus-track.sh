@@ -6,10 +6,11 @@
 #
 # Two jobs:
 #   1. focus.cur / focus.prev — one-line files powering Prefix Tab jump-back.
-#   2. focus.now ("session|window_id") + SIGUSR1 to every rail — the rail's
-#      highlight follows THIS, not the daemon's polled C record, so switching
-#      agents/workspaces re-highlights instantly instead of lagging up to a
-#      daemon tick + a rail refresh (~3s).
+#   2. focus.now ("session|window_id") + SIGUSR1 to every rail — wakes the
+#      rails to repaint fresh data now, and lets the just-focused rail start
+#      its spinner immediately instead of a daemon tick later. (The highlight
+#      itself is self-derived per rail, so it needs no push — a global
+#      "current view" would be wrong with several clients attached.)
 #
 # Rail panes are never recorded, so "back" always lands on a real agent/shell
 # (clicking the rail focuses its target a beat later, which fires its own event).

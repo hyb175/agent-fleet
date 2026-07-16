@@ -30,9 +30,13 @@ ROWS_DIR="$CACHE/rows"
 mkdir -p "$ROWS_DIR" 2>/dev/null || true
 MAPFILE="$ROWS_DIR/${TMUX_PANE:-unknown}.map"
 
-# This rail's own window id (resolved once; used to decide visibility). No tmux
-# calls happen in the render loop after this.
+# This rail's own window id and session (resolved once). The highlight is
+# SELF-derived: a rail is only visible on a client whose active window is the
+# rail's window, so highlighting our own session/window is correct for every
+# viewer — a global "current view" would be wrong with several clients
+# attached (e.g. one local, one over ssh). No tmux calls in the render loop.
 RAIL_WIN="${AGENT_FLEET_RAIL_WIN:-$("${TMUX_BIN:-tmux}" -L "$SOCKET" display-message -p -t "${TMUX_PANE:-}" '#{window_id}' 2>/dev/null || true)}"
+RAIL_SESS="$("${TMUX_BIN:-tmux}" -L "$SOCKET" display-message -p -t "${TMUX_PANE:-}" '#{session_name}' 2>/dev/null || true)"
 
 C_OFF=$'\033[0m'; C_BOLD=$'\033[1m'
 FG=$'\033[38;2;192;202;245m'        # names
@@ -45,27 +49,31 @@ home() { printf '\033[H'; }
 trunc() { local s="$1" n="$2"; (( n < 1 )) && { printf ''; return; }; if (( ${#s} > n )); then printf '%s…' "${s:0:n-1}"; else printf '%s' "$s"; fi; }
 
 # --- snapshot (re-read every DATA_EVERY ticks) ---
-CUR_SESS=""; CUR_WIN=""; ANIMATE=0; SNAP_TS=""; SNAP_IV=""
+# VISIBLE: some client's active window is this rail's window (from the per-
+# client C records) — it only gates the spinner cadence, never the highlight.
+VISIBLE=0; ANIMATE=0; SNAP_TS=""; SNAP_IV=""
 SPACES=(); AGENTS=()
 read_snapshot() {
-  SPACES=(); AGENTS=(); ANIMATE=0; CUR_SESS=""; CUR_WIN=""; SNAP_TS=""; SNAP_IV=""
+  SPACES=(); AGENTS=(); ANIMATE=0; VISIBLE=0; SNAP_TS=""; SNAP_IV=""
   [[ -f "$SNAP" ]] || return 0
-  local line
+  local line _cc _cs _cw
   while IFS= read -r line; do
     case "$line" in
       T\ *) read -r SNAP_TS SNAP_IV <<<"${line#T }" ;;
-      C\ *) IFS='|' read -r CUR_SESS CUR_WIN <<<"${line#C }" ;;
+      C\ *) IFS='|' read -r _cc _cs _cw <<<"${line#C }"
+            [[ "${_cw:-}" == "$RAIL_WIN" ]] && VISIBLE=1 ;;
       S\ *) SPACES+=("${line#S }") ;;
       A\ *) AGENTS+=("${line#A }")
             case "$line" in *'|working'|*'|working|'*) ANIMATE=1 ;; esac ;;
     esac
   done < "$SNAP"
   # focus.now (written by the pane-focus-in hook) is fresher than the daemon's
-  # polled C record — prefer it so the highlight tracks switches instantly.
+  # polled C records — a rail just switched to starts animating immediately
+  # instead of a tick later.
   local fs fw
   if [[ -r "$CACHE/focus.now" ]]; then
     { IFS='|' read -r fs fw < "$CACHE/focus.now"; } 2>/dev/null || true
-    [[ -n "${fs:-}" && -n "${fw:-}" ]] && { CUR_SESS="$fs"; CUR_WIN="$fw"; }
+    [[ "${fw:-}" == "$RAIL_WIN" ]] && VISIBLE=1
   fi
 }
 
@@ -127,7 +135,7 @@ draw() {
     for rec in "${SPACES[@]}"; do
       IFS='|' read -r s roll br <<<"$rec"
       glyph_for "$roll" "$frame"
-      sel=0; [[ "$s" == "$CUR_SESS" ]] && sel=1
+      sel=0; [[ "$s" == "$RAIL_SESS" ]] && sel=1
       map+=("$line SESS:$s" "$((line+1)) SESS:$s")
       row "$sel" "$GLYPH" "$s" "$br"
       line=$((line+2))
@@ -143,7 +151,7 @@ draw() {
     for rec in "${AGENTS[@]}"; do
       IFS='|' read -r s wid widx wn pane label st pidx <<<"$rec"
       glyph_for "$st" "$frame"
-      sel=0; [[ "$wid" == "$CUR_WIN" ]] && sel=1
+      sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
       (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
       # Subtitle = workspace + agent kind (claude/codex/opencode…) so same-named
@@ -177,9 +185,9 @@ frame=0; i=0; sp=""
 while true; do
   (( i % DATA_EVERY == 0 )) && read_snapshot
   printf '%s%s%s' "$SYNC_ON" "$(draw "$frame")" "$SYNC_OFF"
-  # Animate only when something is working AND this rail's window is the active
-  # one; otherwise idle (so background rails cost nothing).
-  if [[ "$ANIMATE" == 1 && "$RAIL_WIN" == "$CUR_WIN" ]]; then
+  # Animate only when something is working AND this rail is visible on some
+  # client; otherwise idle (so background rails cost nothing).
+  if [[ "$ANIMATE" == 1 && "$VISIBLE" == 1 ]]; then
     sleep "$TICK" & sp=$!
     wait "$sp" 2>/dev/null || kill "$sp" 2>/dev/null
     frame=$(( (frame + 1) % 100000 )); i=$(( i + 1 ))

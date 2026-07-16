@@ -7,8 +7,9 @@
 # each polling tmux — removing the N-rail redundancy that saturated the server.
 #
 # Snapshot format (one record per line):
-#   T <epoch>                                                  freshness
-#   C <session>|<window_id>                                    active view (highlight)
+#   T <epoch> <interval>                                       freshness
+#   C <client>|<session>|<window_id>                           active view, ONE PER
+#                                                              CLIENT ("-" headless)
 #   S <session>|<rollup_state>|<branch>                        one per workspace
 #   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>
 
@@ -43,8 +44,11 @@ fi
 echo $$ > "$LOCK/pid"
 
 cleanup() {
-  # Don't leave a stale loading bar on the terminal after the fleet stops.
-  [[ -n "$PROG_TTY" ]] && printf '\033Ptmux;\033\033]9;4;0\007\033\\' > "$PROG_TTY" 2>/dev/null
+  # Don't leave a stale loading bar on any terminal after the fleet stops.
+  local t
+  for t in "${!PROG_TTYS[@]}"; do
+    printf '\033Ptmux;\033\033]9;4;0\007\033\\' > "$t" 2>/dev/null || true
+  done
   rm -rf "$LOCK" "$SNAP" 2>/dev/null
   exit 0
 }
@@ -61,7 +65,10 @@ trap cleanup INT TERM HUP
 # codespace) are covered because the daemon resolves their states too.
 # Written via the active window's rail tty (any visible pane forwards).
 PROGRESS_ON="${AGENT_FLEET_PROGRESS:-1}"
-PROG_TTY=""; PROG_LAST=""; PROG_AGE=0
+# Per-tty state: with several clients attached the daemon drives one bar per
+# active window's tty, so each terminal mirrors ITS OWN view (tmux forwards a
+# pane's passthrough only to the clients where that pane is visible).
+declare -A PROG_LAST=() PROG_AGE=() PROG_TTYS=()
 progress_emit() {  # <state> <tty>
   [[ "$PROGRESS_ON" == "1" ]] || return 0
   local st="$1" tty="$2" seq
@@ -72,11 +79,11 @@ progress_emit() {  # <state> <tty>
     *)       seq=$'\033Ptmux;\033\033]9;4;0\007\033\\' ;;      # clear
   esac
   # Dedupe per tick, but re-assert every few ticks so a missed write (e.g.
-  # terminal reattach) can't leave the bar stale.
-  PROG_AGE=$(( PROG_AGE + 1 ))
-  if [[ "$st|$tty" != "$PROG_LAST" ]] || (( PROG_AGE >= 5 )); then
+  # terminal reattach, pane invisible at write time) can't leave the bar stale.
+  PROG_AGE[$tty]=$(( ${PROG_AGE[$tty]:-0} + 1 ))
+  if [[ "$st" != "${PROG_LAST[$tty]:-}" ]] || (( ${PROG_AGE[$tty]} >= 5 )); then
     printf '%s' "$seq" > "$tty" 2>/dev/null || true
-    PROG_LAST="$st|$tty"; PROG_TTY="$tty"; PROG_AGE=0
+    PROG_LAST[$tty]="$st"; PROG_AGE[$tty]=0; PROG_TTYS[$tty]=1
   fi
 }
 
@@ -85,21 +92,32 @@ build() {
   # T carries the poll interval so consumers can scale their staleness
   # threshold — a hardcoded cutoff false-alarms when the interval is raised.
   local out="T $now $INTERVAL"$'\n'
-  # Active view = the attached client's session (#{client_session}) and that
-  # session's active window. NOTE: `display-message -c` only sets the client for
-  # #{client_*} formats; #{session_name}/#{window_id} still resolve to a stale
-  # server "current", so we must read #{client_session} explicitly.
-  local client active asess awin
-  client="$(tx list-clients -F '#{client_name}' 2>/dev/null | head -1)"
-  if [[ -n "$client" ]]; then
-    asess="$(tx display-message -c "$client" -p '#{client_session}' 2>/dev/null)"
-    awin="$(tx display-message -t "$asess" -p '#{window_id}' 2>/dev/null)"
-    active="${asess}|${awin}"
+  # Active view PER CLIENT — one C record each, so every attached terminal
+  # (e.g. one local, one over ssh) gets its own highlight and progress bar
+  # instead of everyone following the first client. NOTE: `display-message -c`
+  # only sets the client for #{client_*} formats, so the session->active-window
+  # map is built separately from list-windows (one call for all sessions).
+  local -A SESS_WIN=() AWIN=()
+  local s w cname csess clients
+  while IFS='|' read -r s w; do
+    [[ -n "$s" ]] && SESS_WIN[$s]="$w"
+  done < <(tx list-windows -a -F '#{window_active}|#{session_name}|#{window_id}' 2>/dev/null \
+           | awk -F'|' '$1=="1"{print $2"|"$3}')
+  clients="$(tx list-clients -F '#{client_name}|#{client_session}' 2>/dev/null)"
+  if [[ -n "$clients" ]]; then
+    while IFS='|' read -r cname csess; do
+      [[ -n "$cname" && -n "$csess" ]] || continue
+      w="${SESS_WIN[$csess]:-}"
+      out+="C $cname|$csess|$w"$'\n'
+      [[ -n "$w" ]] && AWIN[$w]=1
+    done <<<"$clients"
   else
-    active="$(tx display-message -p '#{session_name}|#{window_id}' 2>/dev/null || echo '|')"
-    awin="${active##*|}"   # no attached client: server's current window
+    # Headless (no attached client): fall back to the server's current view so
+    # consumers still see a C record and the bar keeps being exercised.
+    local cur; cur="$(tx display-message -p '#{session_name}|#{window_id}' 2>/dev/null || echo '|')"
+    out+="C -|$cur"$'\n'
+    w="${cur##*|}"; [[ -n "$w" ]] && AWIN[$w]=1
   fi
-  out+="C $active"$'\n'
 
   local snap
   snap="$(tx list-panes -a \
@@ -107,15 +125,15 @@ build() {
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" s wid wn widx pane cmd tty kind sid path label st r pidx
-  local aw_rail_tty="" aw_any_tty="" aw_best=9 aw_state="none"
+  local agents="" wid wn widx pane cmd tty kind sid path label st r pidx
+  local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
   while IFS='|' read -r s wid wn widx pane cmd tty kind sid path pidx; do
     [[ -z "$pane" ]] && continue
-    # Track the active window's ttys for the progress bar (rail preferred —
+    # Track each ACTIVE window's ttys for the progress bar (rail preferred —
     # it's present in every window and always visible with it).
-    if [[ -n "$awin" && "$wid" == "$awin" ]]; then
-      [[ -z "$aw_any_tty" ]] && aw_any_tty="$tty"
-      [[ "$sid" == "1" && -z "$aw_rail_tty" ]] && aw_rail_tty="$tty"
+    if [[ -n "${AWIN[$wid]:-}" ]]; then
+      [[ -z "${W_ANY_TTY[$wid]:-}" ]] && W_ANY_TTY[$wid]="$tty"
+      [[ "$sid" == "1" && -z "${W_RAIL_TTY[$wid]:-}" ]] && W_RAIL_TTY[$wid]="$tty"
     fi
     [[ "$sid" == "1" ]] && continue
     label="$(pane_agent_kind "$kind" "$cmd" "$tty" "$sid")"
@@ -130,13 +148,21 @@ build() {
     agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
-    # Most-urgent agent state in the active window drives the progress bar.
-    if [[ -n "$awin" && "$wid" == "$awin" ]] && (( r < aw_best )); then
-      aw_best="$r"; aw_state="$st"
+    # Most-urgent agent state per active window drives that window's bar.
+    if [[ -n "${AWIN[$wid]:-}" ]] && (( r < ${W_BEST[$wid]:-9} )); then
+      W_BEST[$wid]="$r"; W_STATE[$wid]="$st"
     fi
   done <<<"$snap"
 
-  progress_emit "$aw_state" "${aw_rail_tty:-$aw_any_tty}"
+  # One bar per active window, deduped by tty (two clients viewing the same
+  # window share a rail): each terminal mirrors the state of ITS current view.
+  local -A seen_tty=()
+  for w in "${!AWIN[@]}"; do
+    tty="${W_RAIL_TTY[$w]:-${W_ANY_TTY[$w]:-}}"
+    [[ -n "$tty" && -z "${seen_tty[$tty]:-}" ]] || continue
+    seen_tty[$tty]=1
+    progress_emit "${W_STATE[$w]:-none}" "$tty"
+  done
 
   # Per-session dir from the session's active pane (consistent, unlike "first
   # pane seen"), so a stray pane in another cwd can't mislabel the branch.
