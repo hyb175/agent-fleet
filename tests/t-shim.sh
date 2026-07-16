@@ -23,7 +23,8 @@ run_shim() {  # [env VAR=...] -- args...
   local envs=()
   while [[ "$1" != "--" ]]; do envs+=("$1"); shift; done; shift
   rm -f "$WORK/argv"
-  env "${envs[@]}" PATH="$REPO/shims:$FAKEBIN:/usr/bin:/bin" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
+  # $BASH's dir keeps `env bash` resolvable where bash isn't in /usr/bin:/bin (NixOS).
+  env "${envs[@]}" PATH="$REPO/shims:$FAKEBIN:$(dirname "$BASH"):/usr/bin:/bin" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
     bash "$REPO/shims/claude" "$@"
   cat "$WORK/argv" 2>/dev/null | tr '\n' ' '
 }
