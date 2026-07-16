@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# sidenav-click.sh <rail_pane_id> <mouse_y>
+# sidenav-click.sh <rail_pane_id> <mouse_y> [client_name]
 #
 # Invoked by the MouseDown1Pane binding when a sidenav rail is clicked. Maps the
 # clicked screen row to a target (an agent pane or a workspace) via the row map
@@ -11,6 +11,7 @@ set -uo pipefail
 SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
 rail="${1:?usage: sidenav-click.sh <rail_pane> <mouse_y>}"
 y="${2:-}"
+client="${3:-}"
 
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
@@ -25,8 +26,10 @@ for cand in "$y" "$((y - 1))" "$((y + 1))"; do
 done
 [[ -n "$target" ]] || { tx select-pane -t "$rail"; exit 0; }
 
-# Focus the target via the clicking client (explicit, so it works from run-shell).
-client="$(tx list-clients -F '#{client_name}' 2>/dev/null | head -1)"
+# Focus the target via the clicking client (passed by the mouse binding —
+# with several clients attached, guessing from list-clients moves the wrong
+# one). Fallback for old bindings that don't pass it: single client or bust.
+[[ -n "$client" ]] || client="$(tx list-clients -F '#{client_name}' 2>/dev/null | head -1)"
 focus_session() { tx switch-client ${client:+-c "$client"} -t "$1"; }
 
 case "$target" in
