@@ -438,6 +438,35 @@ cmd_stop() {
   echo "fleet stopped"
 }
 
+# reload — respawn the snapshot daemon and every rail so they pick up new code
+# (e.g. after a git pull) without stopping the fleet. Agent panes are untouched.
+# Needed because ensure_snapshotd only starts a daemon when none is alive: a
+# live pre-pull daemon (and rails) would otherwise run stale code forever.
+cmd_reload() {
+  if ! server_up; then echo "fleet not running" >&2; exit 1; fi
+  ensure_server_env
+  local pf="$AF_CACHE_DIR/snapshotd.lock/pid" dpid
+  # Comm-check before killing (same as `stop`): after an unclean shutdown the
+  # pidfile can name a recycled, unrelated process.
+  dpid="$(cat "$pf" 2>/dev/null || true)"
+  { [[ -n "$dpid" ]] && ps -p "$dpid" -o command= 2>/dev/null | grep -q snapshotd \
+      && kill "$dpid" 2>/dev/null; } || true
+  # Let the old daemon's cleanup trap release the lock before relaunching, so
+  # the new daemon doesn't lose the takeover race and exit as a duplicate.
+  local i
+  for i in $(seq 1 20); do [[ -d "$AF_CACHE_DIR/snapshotd.lock" ]] || break; sleep 0.1; done
+  ensure_snapshotd
+  # Respawn each existing rail in place (`show` = kill + recreate). Windows
+  # with the rail hidden are left alone.
+  local w
+  while IFS= read -r w; do
+    [[ -n "$w" ]] || continue
+    "$ROOT_DIR/scripts/sidenav-toggle.sh" "$w" '' show
+  done < <(tx list-panes -a -F '#{window_id} #{@fleet-sidenav}' 2>/dev/null \
+             | awk '$2=="1"{print $1}' | sort -u)
+  echo "fleet reloaded — daemon and rails respawned"
+}
+
 # save — snapshot the current layout to the restore file (also done on a timer
 # by the daemon and on `stop`).
 cmd_save() {
@@ -528,6 +557,7 @@ Verbs:
   agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).
   agent-fleet list                 List workspaces and their agents.
   agent-fleet pick                 Open the fzf picker popup (or attach from a bare shell).
+  agent-fleet reload               Respawn the snapshot daemon and rails (pick up new code after a pull).
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
   agent-fleet stop                 Save the layout, then kill the fleet server.
@@ -557,6 +587,7 @@ main() {
     pick)       cmd_pick "$@" ;;
     cs)         cmd_cs "$@" ;;
     hooks-file) cmd_hooks_file "$@" ;;
+    reload)     cmd_reload "$@" ;;
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;
