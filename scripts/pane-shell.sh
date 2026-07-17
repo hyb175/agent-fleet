@@ -12,16 +12,36 @@
 # empirically; an arbitrary variable propagates, PATH does not).
 #
 # Explicit-command panes (fleet-launched agents, restored panes, cs-connect)
-# never run this. Your shell rc may reorder PATH; the shim survives as long as
-# the rc prepends rather than rebuilds. AGENT_FLEET_SHIM=0 opts out.
+# never run this. AGENT_FLEET_SHIM=0 opts out.
+#
+# PATH ordering: a plain pre-exec prepend loses to any login shell that REBUILDS
+# PATH from its own config (fish, via fish_user_paths / fish_add_path, is the
+# common case — it re-prepends ~/.local/bin ahead of the shim, so the real
+# `claude` wins and the hand-typed agent gets no hooks). We handle that per
+# shell below: fish re-prepends AFTER its config via --init-command; other
+# shells inherit our prepend (which survives as long as their rc prepends).
 
 set -u
 
 ROOT="${AGENT_FLEET_ROOT:-}"
+_shell="${SHELL:-/bin/sh}"
+_shell_args=(-l)
+
 if [[ "${AGENT_FLEET_SHIM:-1}" == "1" && -n "$ROOT" && -d "$ROOT/shims" ]]; then
-  case ":$PATH:" in
-    *":$ROOT/shims:"*) ;;
-    *) export PATH="$ROOT/shims:$PATH" ;;
+  _shim="$ROOT/shims"
+  case "${_shell##*/}" in
+    fish)
+      # --init-command runs after config is read, so this re-prepend wins over
+      # the config's PATH rebuild. Session-local (`set -gx`, NOT the persisted
+      # fish_add_path), so nothing leaks into the user's fish config.
+      _shell_args=(-l -C "set -gx PATH '$_shim' \$PATH")
+      ;;
+    *)
+      case ":$PATH:" in
+        *":$_shim:"*) ;;
+        *) export PATH="$_shim:$PATH" ;;
+      esac
+      ;;
   esac
 fi
 
@@ -33,8 +53,8 @@ fi
 if [[ -n "${TMUX_PANE:-}" ]]; then
   _tx="${TMUX_BIN:-tmux}"; _sock="${AGENT_FLEET_SOCKET:-agent-fleet}"
   if [[ "$("$_tx" -L "$_sock" display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)" == "pane-shell.sh" ]]; then
-    "$_tx" -L "$_sock" rename-window -t "$TMUX_PANE" "$(basename "${SHELL:-sh}")" 2>/dev/null || true
+    "$_tx" -L "$_sock" rename-window -t "$TMUX_PANE" "$(basename "$_shell")" 2>/dev/null || true
   fi
 fi
 
-exec "${SHELL:-/bin/sh}" -l
+exec "$_shell" "${_shell_args[@]}"
