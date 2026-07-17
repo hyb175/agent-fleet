@@ -12,9 +12,9 @@
 #   [kind]   agent kind (claude|kimi|…) — tags the pane so hand-started
 #            agents get labeled and persist-restore relaunches the right CLI
 #
-# Both CLIs pass event JSON on stdin with the same snake_case session_id key.
-# Always exits 0 (non-blocking) so a status write never interferes with the
-# agent.
+# Claude passes event JSON on stdin (we parse the notification message + session
+# id from it). Always exits 0 (non-blocking) so a status write never interferes
+# with the agent.
 
 set -u
 
@@ -30,20 +30,49 @@ cache="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/panes"
 mkdir -p "$cache" 2>/dev/null || exit 0
 f="$cache/${pane}.status"
 
+# Claude passes the event JSON on stdin. Read it ONCE (guarded so a manual/tty
+# invocation can't block) — we parse both the notification message and the
+# session id from it.
+input=""
+[[ -t 0 ]] || input="$(cat 2>/dev/null || true)"
+
 prev=""
 [[ -f "$f" ]] && prev="$(cat "$f" 2>/dev/null || true)"
+
+# The Notification event is OVERLOADED. Claude Code fires it for two unrelated
+# things:
+#   1. a genuine permission/approval prompt — real 'wait', needs you;
+#   2. an idle reminder ~Ns after a turn ends ("Claude is waiting for your
+#      input") — the agent already finished (Stop wrote 'done') and is just
+#      sitting there. Writing 'wait' here turns every idle agent red and the
+#      triage queue cries wolf.
+# Tell them apart and drop the write for the idle reminder. The message text is
+# the direct signal; but it's version-dependent, so the authoritative fallback
+# is the prior state: a real prompt is only ever reached MID-TURN (prev
+# 'working', or 'wait' when re-notified) — a 'wait' arriving from any resting
+# state ('done'/idle/fresh) is the idle reminder, since Stop fired first.
+if [[ "$state" == "wait" ]]; then
+  msg="$(printf '%s' "$input" | sed -n 's/.*"message"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  case "$msg" in
+    *permission*)               : ;;              # approval prompt: keep 'wait'
+    *"waiting for your input"*)  state="" ;;       # idle reminder: leave as-is
+    *) [[ "$prev" == "working" || "$prev" == "wait" ]] || state="" ;;
+  esac
+fi
+
+# Write the new state — unless it was suppressed as an idle reminder above, in
+# which case the finished/idle status the turn left behind stands.
 # Trailing newline matters: status.sh reads this with `read`, which returns
 # nonzero at EOF-without-newline even after assigning the value.
-printf '%s\n' "$state" > "$f"
+[[ -n "$state" ]] && printf '%s\n' "$state" > "$f"
 
-# Capture the agent's session id once, from the event JSON on stdin, so a
-# restored fleet can resume it (`claude --resume <id>` / `kimi --session <id>`).
-# Gated on a per-pane file so we only read stdin on the first event (session id
-# is stable for the pane's lifetime). Stored as a pane option too, so
-# persist-save can read it via a format string.
+# Capture Claude's session id once, from the event JSON, so a restored fleet can
+# `claude --resume <id>`. Gated on a per-pane file so we only parse it on the
+# first event (session id is stable for the pane's lifetime). Stored as a pane
+# option too, so persist-save can read it via a format string.
 sf="$cache/${pane}.session"
 if [[ ! -f "$sf" ]]; then
-  sid="$(sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
+  sid="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
     command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
@@ -60,9 +89,10 @@ fi
 # transitions and tmux forwards passthrough only from visible panes, which
 # made a hook-driven bar unreliable. snapshotd emits it continuously instead.)
 
-# Edge-triggered macOS notification on entering an attention state.
-# On by default; set AGENT_FLEET_NOTIFY=0 to silence.
-if [[ "${AGENT_FLEET_NOTIFY:-1}" == "1" && "$state" != "$prev" ]]; then
+# Edge-triggered macOS notification on entering an attention state. On by
+# default; set AGENT_FLEET_NOTIFY=0 to silence. A suppressed idle reminder has
+# state="" here, so it never fires a spurious "needs your input" popup.
+if [[ -n "$state" && "${AGENT_FLEET_NOTIFY:-1}" == "1" && "$state" != "$prev" ]]; then
   case "$state" in
     wait|done)
       label="$pane"
