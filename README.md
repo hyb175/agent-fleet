@@ -1,11 +1,12 @@
 # agent-fleet
 
-A tmux-native session manager for running and supervising multiple Claude Code agents. A workspace is a tmux session; an agent is a tmux window running `claude`. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
+A tmux-native session manager for running and supervising multiple coding agents — Claude Code first-class, Kimi Code hook-tier, codex/opencode/cursor detected. A workspace is a tmux session; an agent is a tmux window. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
 
-Two surfaces:
+## Two surfaces
 
-- **Picker** (`Prefix o`) — an fzf popup to jump to an agent, switch workspaces, spawn one in a directory, or connect one in a GitHub Codespace. `Prefix w` opens it straight to the workspace switcher.
-- **Sidenav rail** (`Prefix b`, on by default) — a left-edge rail listing workspaces and agents with live status, refreshed in place.
+**Picker** (`Prefix o`) — fzf popup to jump to an agent, switch workspaces, spawn one in a directory, or connect one in a GitHub Codespace. `Prefix w` opens the workspace switcher.
+
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place.
 
 ```
 ┌──────────────────┬─────────────────────────┐
@@ -23,7 +24,25 @@ Two surfaces:
 └──────────────────┴─────────────────────────┘
 ```
 
-`⠋…⠏` working · `●` done / needs input · `○` idle — each agent row shows its tab, then `workspace · tool`.
+**Status glyphs:** `⠋…⠏` working · `●` done/waiting · `○` idle
+
+---
+
+## Quick start
+
+```sh
+agent-fleet attach                 # boot + attach (creates 'home' workspace)
+```
+
+Inside the fleet (prefix: `Ctrl-a`):
+
+```
+Ctrl-a o      open picker → Tab to connect view → pick repo → Enter (spawn workspace)
+Ctrl-a C      add Claude agent to current workspace, jump to it
+Ctrl-a b      toggle sidenav rail
+Ctrl-a o      → Enter on agent row → jump to it
+Ctrl-a L      switch to previous workspace
+```
 
 ---
 
@@ -31,50 +50,32 @@ Two surfaces:
 
 | Tool | Required | Notes |
 | --- | --- | --- |
-| `tmux` ≥ 3.2 | yes | `display-popup` (picker), `split-window -f` (full-height rail), per-pane options |
-| `bash` ≥ 4 | yes | the rail uses associative arrays. macOS ships `/bin/bash` 3.2 — install a newer bash (`brew install bash`) and ensure it precedes `/bin/bash` on `PATH` |
-| `fzf` | yes | powers the picker popup |
-| `claude` (Claude Code CLI) | optional* | the default agent command; the status hooks attach to claude launches |
-| `git` | optional | branch / ahead-count labels in the rail and picker |
-| `zoxide` | optional | frecent directories in the picker's connect view (project-root discovery and `$PWD` work without it) |
-| `osascript` (macOS) / `notify-send` (Linux) | optional | desktop notifications on agent state changes |
+| `tmux` ≥ 3.2 | yes | `display-popup`, `split-window -f`, per-pane options |
+| `bash` ≥ 4 | yes | rail uses associative arrays; macOS ships 3.2 — install newer bash (`brew install bash`) and ensure it precedes `/bin/bash` on `PATH` |
+| `fzf` | yes | powers picker |
+| `claude` | optional* | default agent command; status hooks attach on launch |
+| `git` | optional | branch / ahead-count labels in rail and picker |
+| `zoxide` | optional | frecent directories in picker's connect view |
+| `osascript` (macOS) / `notify-send` (Linux) | optional | desktop notifications on state changes |
 
-\* The manager works without `claude`, but `agent-fleet add` with defaults launches it. A truecolor + Unicode-capable terminal is recommended; the Tokyo Night colors and braille spinner degrade (not crash) on lesser terminals.
+\* Manager works without `claude`, but `agent-fleet add` with defaults launches it. Truecolor + Unicode terminal recommended (Tokyo Night colors and braille spinner degrade on lesser terminals).
 
-**Platform:** developed and exercised on macOS. The macOS/Linux differences are handled — desktop notifications fall back from `osascript` to `notify-send`, and `stat`/`ps` use portable invocations — so Linux should work, but it's less battle-tested. Reports welcome.
+**Platform:** Developed on macOS; Linux works but less battle-tested. macOS/Linux differences are handled (notifications fall back from `osascript` to `notify-send`, `stat`/`ps` use portable invocations).
 
 ---
 
 ## Install
 
-Clone into a directory that will persist — the clone is the runtime home (`install.sh` only symlinks the CLI onto your `PATH`):
+Clone into a persistent directory (the clone is the runtime home):
 
 ```sh
 git clone https://github.com/hyb175/agent-fleet ~/.local/share/agent-fleet
 ~/.local/share/agent-fleet/install.sh
 ```
 
-`install.sh` symlinks `agent-fleet` into `~/.local/bin`, provisions the status cache under `~/.cache/agent-fleet`, and reports missing dependencies. Override the install prefix with `PREFIX=/usr/local ./install.sh`.
+`install.sh` symlinks `agent-fleet` into `~/.local/bin`, provisions the status cache under `~/.cache/agent-fleet`, and reports missing dependencies. Override prefix with `PREFIX=/usr/local ./install.sh`.
 
-If `~/.local/bin` isn't on your `PATH`, add it: `export PATH="$HOME/.local/bin:$PATH"`.
-
----
-
-## Quick start
-
-```sh
-agent-fleet attach                 # boot the fleet + attach (creates a 'home' workspace)
-```
-
-Inside the fleet (prefix is `Ctrl-a`):
-
-```
-Ctrl-a o      open the picker → Tab to the connect view → pick a repo → Enter   (spawns a workspace)
-Ctrl-a C      add a claude agent to the current workspace and jump to it
-Ctrl-a b      toggle the sidenav rail
-Ctrl-a o      → Enter on an agent row → jump to it
-Ctrl-a L      bounce to the previous workspace
-```
+If `~/.local/bin` isn't on `PATH`, add it: `export PATH="$HOME/.local/bin:$PATH"`.
 
 ---
 
@@ -82,13 +83,21 @@ Ctrl-a L      bounce to the previous workspace
 
 | Concept | Maps to | Notes |
 | --- | --- | --- |
-| workspace | a tmux **session** | named from a directory's basename, or a name you pass |
-| agent | a tmux **window** running `claude` | the window tab is the agent |
-| tab | a native tmux window tab | no extra concept |
-| pane | a PTY | an agent owns its window; split (`|` / `-`) for a sidecar shell/log |
-| the fleet | a tmux server on socket `agent-fleet` | isolated from your daily tmux |
+| workspace | tmux **session** | named for a directory's basename, or a custom name |
+| agent | tmux **window** running `claude` | the window tab is the agent |
+| tab | native tmux window tab | no extra concept |
+| pane | a PTY | agent owns its window; split (`\|` / `-`) for sidecars (shell/log) |
+| fleet | tmux server on socket `agent-fleet` | isolated from daily tmux |
 
-**Status** is shown as a glyph: `⠋…⠏` (working, animated), `●` red (needs input), `●` green (done — finished a turn, waiting for your next prompt), `○` (idle). Hook-launched agents (`agent-fleet add` / `Prefix C`) report it directly; for any other agent, status is scraped from the pane (including `done`, detected from Claude's "new task?" footer), so a finished-and-waiting agent reads `done` rather than `idle` either way.
+**Status** is shown as a glyph. Hook-launched agents (`agent-fleet add`, `Prefix C`) report it directly; hand-started agents are detected via pane scrape (`claude`, `codex`, `opencode`, `kimi`, cursor's `agent`).
+
+Status sources:
+- `UserPromptSubmit`, `PreToolUse` hooks → **working** (animated spinner)
+- `Notification` hook → **wait** (needs input, red)
+- `Stop` hook → **done** (green)
+- Hand-started agents → scraped from on-screen text
+
+**Visiting a done agent clears it:** opening via picker, `Prefix Space`, `Prefix Tab`, or rail click marks it seen, drops it to idle, and leaves the attention queue. Returns to done on new output.
 
 ---
 
@@ -96,191 +105,183 @@ Ctrl-a L      bounce to the previous workspace
 
 | Command | Description |
 | --- | --- |
-| `agent-fleet attach [workspace]` | Boot the fleet and attach (or switch, if already inside). The default when run with no subcommand. |
-| `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Switch to an existing workspace, or create one (named for a directory's basename, or the given name) and go to it. Defaults to `$PWD`. An optional final argument sets the workspace name. Names are sanitized: `:`, `.`, space, `/`, `\|` become `_`. |
-| `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (`claude`), target the current/first workspace, name the workspace name. Launches `claude` with the fleet status hooks. `--new-workspace <name>` puts the agent in its own workspace (created or reused) instead of a tab. `--codespace` (alias `--cs`) runs the agent inside a GitHub Codespace over SSH instead (no hooks — see [Codespaces](#codespaces)). `--focus` jumps to the new agent (used by `Prefix C`). |
-| `agent-fleet cs <list\|stop\|connect> [name]` | GitHub Codespaces helpers. `list` (alias `ls`) lists your codespaces; `stop <name>` stops one; `connect <name> [workspace-name]` opens a **shell workspace** in the codespace over SSH (see [Codespaces](#codespaces)). |
-| `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
-| `agent-fleet back` | Jump to the previously focused pane (bound to `Prefix Tab`). |
-| `agent-fleet rename-workspace [<old>] <new>` (alias `rename-ws`) | Rename a workspace; agents named after it follow the rename. |
-| `agent-fleet rename-tab [<session:window>] <new>` (alias `rename-window`) | Rename a tab (window). |
-| `agent-fleet kill <target>` (alias `rm`) | Kill a workspace (`<name>`), window (`<ws>:<window>`), or pane (`%id`). |
-| `agent-fleet list` (alias `ls`) | List workspaces and their windows. |
-| `agent-fleet pick` | Open the picker popup (or attach, from a bare shell). |
-| `agent-fleet hooks-file` | Print the path to the generated Claude settings overlay (hooks only). |
-| `agent-fleet save` | Snapshot the layout to disk (also auto-saved on a timer and on `stop`). |
-| `agent-fleet restore` | Rebuild the saved layout on a stopped fleet (attach does this automatically on a cold boot). |
-| `agent-fleet stop` | Save the layout, then kill the fleet server. |
-| `agent-fleet --version` | Print the version. |
+| `agent-fleet attach [workspace]` | Boot the fleet and attach (or switch, if inside). Default when run with no subcommand. |
+| `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Create or switch to workspace. Defaults to `$PWD`; optional name overrides the directory's basename. Names are sanitized: `:`, `.`, space, `/`, `\|` → `_`. |
+| `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--codespace <name>] [--focus]` | Add agent window. Defaults: command `$AGENT_FLEET_CMD` (claude), target current/first workspace, name after workspace. Launches with fleet status hooks. `--new-workspace` puts it in its own workspace. `--codespace` / `--cs` runs it in a GitHub Codespace over SSH (no hooks). `--focus` jumps to it (used by `Prefix C`). |
+| `agent-fleet cs <list\|stop\|connect> [name]` | GitHub Codespaces: `list` shows yours; `stop <name>` stops one; `connect <name>` opens a shell workspace in the codespace over SSH. |
+| `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by picker). |
+| `agent-fleet back` | Jump to previously focused pane (bound to `Prefix Tab`). Toggles between two. |
+| `agent-fleet rename-workspace [<old>] <new>` | Rename workspace; agents named after it follow the rename. |
+| `agent-fleet rename-tab [<session:window>] <new>` | Rename tab (window). |
+| `agent-fleet kill <target>` (alias `rm`) | Kill workspace (`<name>`), window (`<ws>:<window>`), or pane (`%id`). |
+| `agent-fleet list` (alias `ls`) | List workspaces and windows. |
+| `agent-fleet pick` | Open picker popup (or attach from bare shell). |
+| `agent-fleet hooks-file` | Print path to generated Claude settings overlay (hooks only). |
+| `agent-fleet kimi-hooks [install\|remove\|status]` | Manage the fleet status-hooks block in `~/.kimi/config.toml` (kimi has no per-launch overlay; hooks are install-wide, fenced, and removable). |
+| `agent-fleet reload` | Respawn snapshot daemon and rails (pick up code after `git pull`). |
+| `agent-fleet save` | Snapshot layout to disk (also auto-saved on timer and on `stop`). |
+| `agent-fleet restore` | Rebuild saved layout on stopped fleet (attach does this on cold boot). |
+| `agent-fleet stop` | Save layout, then kill fleet server. |
+| `agent-fleet --version` | Print version. |
 
 ---
 
 ## Keybindings
 
-Prefix is `Ctrl-a`. (The fleet is on its own socket, so this can't collide with your daily tmux even if both use `C-a`.)
+Prefix is `Ctrl-a`. Fleet runs on its own socket, so no collision with daily tmux.
 
 | Key | Action |
 | --- | --- |
-| `Prefix o` | Open the picker popup (fleet / spaces / connect / cloud; `Tab` cycles, `^f`/`^s`/`^z`/`^x` jump). The fleet view lists agents most-urgent-first |
-| `Prefix w` | Quick workspace switch — picker opened straight to the spaces view (every workspace, shell-only included) |
-| `Prefix g` | Open the picker straight to the cloud view (your GitHub Codespaces) |
-| `Prefix f` | Open the picker straight to the connect view — search recent folders **and unvisited project siblings** (git repos first, with branch). `⏎` spawns a shell workspace, `^a` spawns it **with a claude agent**, `^r` names it (`Alt-a`/`Alt-⏎` also work where the terminal passes Alt through) |
-| `Prefix b` | Toggle the sidenav rail in the current window |
-| `Prefix c` | New plain shell window in the current directory (tmux default) |
-| `Prefix C` | Add a Claude agent (with status hooks) — a menu picks a new tab in this workspace or a brand-new workspace (prompts a name); starts in the current dir and jumps to it |
-| `Prefix R` | Force the focused pane to repaint (fixes a stale Claude frame) |
-| `Prefix Tab` | Jump back to the previously focused agent (across windows/workspaces; toggles between the two) |
-| `Prefix Space` | Triage jump — go to the next agent that needs you (`wait`, then `done`), cycling the queue. Most urgent first if you're not already on one |
-| `Prefix L` | Switch to the previous workspace |
-| `Prefix &` | Close the current tab in one shot (even with several panes open) |
-| `Prefix W` | Rename the current workspace |
-| `Prefix T` | Rename the current tab |
-| `Prefix r` | Reload the fleet config |
-| `Prefix \|` / `Prefix -` | Split horizontally / vertically (keeps cwd) |
+| `Prefix o` | Open picker popup (fleet/spaces/connect/cloud; `Tab` cycles, `^f`/`^s`/`^z`/`^x` jump). Fleet view lists agents most-urgent-first. |
+| `Prefix w` | Quick workspace switch — picker to spaces view |
+| `Prefix g` | Picker to cloud view (GitHub Codespaces) |
+| `Prefix f` | Picker to connect view — search recent folders + unvisited siblings (git repos first, with branch). `Enter` spawns shell workspace, `^a` spawns with claude agent, `^r` names it. |
+| `Prefix b` | Toggle sidenav rail in current window |
+| `Prefix c` | New plain shell window (tmux default) |
+| `Prefix C` | Add Claude agent — menu picks new tab or brand-new workspace (prompts name); starts in current dir, jumps to it |
+| `Prefix R` | Force repaint focused pane (fixes stale Claude frame) |
+| `Prefix Tab` | Jump back to previously focused agent (across windows/workspaces); toggle between two |
+| `Prefix Space` | Triage jump — go to next agent needing input (`wait`, then `done`), cycling queue. Most urgent first if not already on one. |
+| `Prefix L` | Switch to previous workspace |
+| `Prefix &` | Close current tab (even with multiple panes) |
+| `Prefix W` | Rename current workspace |
+| `Prefix T` | Rename current tab |
+| `Prefix r` | Reload fleet config |
+| `Prefix \|` / `Prefix -` | Split horizontally / vertically (keep cwd) |
 | `Prefix h/j/k/l` | Move between panes |
 | `Prefix 1`–`9` | Jump to window 1–9 (tmux built-in) |
-| Left-click a rail row | Focus that agent / workspace |
+| Left-click rail row | Focus that agent / workspace |
 
 ---
 
 ## Status detection
 
 Agents launched via `agent-fleet add` run as `claude --settings <overlay>`, where the overlay registers four Claude Code hooks:
-
 - `UserPromptSubmit`, `PreToolUse` → **working**
-- `Notification` → **wait** (needs your input)
+- `Notification` → **wait** (needs input)
 - `Stop` → **done**
 
-The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is not modified. Each hook writes the state to a per-pane file the rail and picker read.
+The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is untouched. Each hook writes state to a per-pane file the rail and picker read.
 
-Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, `kimi`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind.
+**Hand-typed `claude` gets the hooks too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` dir on `PATH`, so `claude`, `claude -r`, `claude --resume`, `claude -c` all resolve to a shim that attaches fleet status hooks. Hand-started claude agents therefore get hook-tier status, notifications, progress bar, and resume-after-reboot. Non-interactive invocations (`-p`, `--help`, `--version`) and commands that already carry `--settings` pass through untouched; set `AGENT_FLEET_SHIM=0` to opt out.
 
-**Hand-typed `claude` gets the hooks too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` dir on `PATH`, so `claude` — including `claude -r` / `--resume` / `-c` — resolves to a shim that attaches the fleet's status hooks. Hand-started claude agents therefore get hook-tier status, notifications, the progress bar, and resume-after-reboot, same as `agent-fleet add` launches. Non-interactive/meta invocations (`-p`, `--help`, `--version`) and commands that already carry `--settings` pass through untouched; `AGENT_FLEET_SHIM=0` opts out. Non-claude tools remain on the scrape tier, so their live state is approximate (they may read `idle` while working).
+**Kimi Code gets hook-tier status too.** Run `agent-fleet kimi-hooks` once: kimi loads hooks only from its global `~/.kimi/config.toml` (no per-launch overlay flag exists), so the fleet writes a fenced, managed `[[hooks]]` block there — idempotent, removable with `kimi-hooks remove`, and a no-op outside fleet panes. Kimi's event map is even sharper than claude's: `UserPromptSubmit`/`PreToolUse`/`PermissionResult` → **working**, `PermissionRequest` → **wait**, `Stop` → **done**. Once installed, every `kimi` in a fleet pane — `add --cmd kimi` or hand-typed — reports status, notifies, drives the progress bar, and resumes after reboot. No PATH shim needed.
 
-**`done` clears when you visit it.** Opening a `done` agent — via the picker, `Prefix Space`, `Prefix Tab`, or a rail click — marks it seen: it drops to `idle` and leaves the attention queue, and returns to `done` only when the agent produces new output. Hooked agents track this in their state file; scraped/codespace agents use a `.ackdone` marker. (Raw `Prefix 1`–`9` window jumps don't count as a visit.)
+Agents started by hand (just running in a shell): `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown as `cursor`) are detected out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Tools without hooks (codex, opencode, cursor) remain on scrape tier (status is approximate; they read `idle` while working).
 
-A single background daemon (`snapshotd.sh`, one per fleet) polls tmux and resolves states/branches once per second, writing `fleet.snapshot`. The rails and the picker read that snapshot instead of each polling tmux, so the number of rails doesn't add tmux load. The daemon starts automatically (on attach, and when rails are created), is single-instance, and exits when the fleet stops.
+A single background daemon (`snapshotd.sh`, one per fleet) polls tmux and resolves states/branches once per second, writing `fleet.snapshot`. Rails and picker read that snapshot instead of polling tmux themselves, so the number of rails doesn't add tmux load. Daemon starts automatically, is single-instance, exits when the fleet stops.
 
 ---
 
 ## Codespaces
 
-An agent can run inside a [GitHub Codespace](https://docs.github.com/codespaces) instead of on your machine. The fleet stays local — it's still the rail and picker supervising the agent — while the agent process executes in the cloud over SSH.
+An agent can run inside a [GitHub Codespace](https://docs.github.com/codespaces) instead of locally. The fleet stays local — rail and picker supervise the agent — while the agent process executes in the cloud over SSH.
 
-**Prerequisite:** the GitHub CLI (`gh`), authenticated, with the `codespace` token scope:
+### Setup
+
+**Prerequisite:** GitHub CLI (`gh`), authenticated, with `codespace` token scope:
 
 ```sh
 gh auth refresh -h github.com -s codespace
 ```
 
-Without the scope, `gh codespace list` returns HTTP 403; the picker's cloud view then shows a **Grant Codespaces access** row that runs this command for you (Enter, inside the popup), or you can run it yourself.
+Without the scope, `gh codespace list` returns HTTP 403; the picker's cloud view shows a **Grant Codespaces access** row that runs this for you.
 
-**The codespace needs an sshd inside the container.** agent-fleet forwards the container's ssh port to your machine and connects with plain `ssh` — not `gh codespace ssh`, whose built-in server many images can't start (*"failed to start SSH server"*). The devcontainers `sshd` feature provides a server on **port 2222**. Add it to the repo's `.devcontainer/devcontainer.json` and rebuild:
+**The codespace needs sshd.** agent-fleet forwards the container's ssh port and connects with plain `ssh`. The devcontainers `sshd` feature provides a server on **port 2222**. Add to `.devcontainer/devcontainer.json`:
 
 ```jsonc
 "features": { "ghcr.io/devcontainers/features/sshd:1": { "version": "latest" } }
 ```
 
+Then rebuild:
+
 ```sh
 gh codespace rebuild -c <name>
 ```
 
-The login user depends on the image (often `dev` or `vscode`); set `AGENT_FLEET_CS_USER` if yours differs, and `AGENT_FLEET_CS_SSH_PORT` if its sshd isn't on 2222.
+Login user is `dev` by default; set `AGENT_FLEET_CS_USER` if yours differs. Set `AGENT_FLEET_CS_SSH_PORT` if sshd isn't on 2222.
 
-Two ways to start one:
+### Two ways to start
 
-- **Picker** — `Prefix g` opens the **cloud** view (or `Prefix o` then `Tab`/`^x`). It lists your codespaces (repo · ref · state); `Enter` opens a **shell workspace** in the codespace (named for it; `^r` to name it yourself).
-- **CLI** — `agent-fleet cs connect <name> [workspace-name]` opens that shell workspace. `agent-fleet add --codespace <name> [--cmd claude]` instead adds a codespace agent into the current workspace (tracked in the rail — see the status note below).
+**Picker** — `Prefix g` opens cloud view (or `Prefix o` then `Tab`/`^x`). Lists codespaces (repo · ref · state); `Enter` opens a shell workspace, `^r` to name it.
 
-A codespace connection is a **remote-shell workspace**, not a proxied agent: the fleet doesn't mirror remote agents into the local rail (that would mean one SSH per agent and scrape-only status). To run several agents in one codespace, start a multiplexer — `tmux`, or agent-fleet itself — **inside** the codespace. The shell is `AGENT_FLEET_CS_CMD` (default `bash`).
+**CLI** — `agent-fleet cs connect <name>` opens shell workspace. `agent-fleet add --codespace <name> [--cmd claude]` adds a codespace agent into current workspace.
 
-A codespace agent runs through `scripts/cs-connect.sh`: it forwards the container's sshd port (`AGENT_FLEET_CS_SSH_PORT`, default 2222) to a free local port with `gh codespace ports forward`, `ssh`es in as `AGENT_FLEET_CS_USER` (default `dev`), and runs the command (a shell by default) **through a login shell** (`bash -lc`) in the repo checkout — `--dir` if given, else `/workspaces/<repo>` resolved from the codespace, else `/workspaces`. The login shell matters: codespaces often install CLIs (including `claude`) under `~/.local/bin`, which a plain `ssh` command shell doesn't put on `PATH`. The agent must be installed in the codespace. Each agent gets its own local port, so several codespace agents can run at once. The forward is torn down when the agent exits; if the connection fails, the pane drops to a shell with the cause rather than closing.
+### Details
 
-**Status for a tracked codespace agent (`add --codespace`) is scrape-based.** The fleet's Claude status hooks attach via a local settings file and key on `$TMUX_PANE`, neither of which exists inside the codespace, so hooks aren't used across SSH. Instead these agents fall back to the same `capture-pane` scrape as hand-started agents (it reads the pane's on-screen text, which shows the remote TUI). Consequences:
+A codespace connection is a **remote-shell workspace**, not a proxied agent: the fleet doesn't mirror remote agents into the local rail (that would mean one SSH per agent, scrape-only status). To run several agents in one codespace, start a multiplexer inside (tmux or agent-fleet itself).
 
-- State updates lag by up to the scrape interval (~1–2s) rather than being instant.
-- No desktop notification fires on state change (notifications come from the hook, which doesn't run).
-- The rail's branch column reflects the local launch directory, not the codespace's git ref. The workspace itself is labeled with the codespace name.
-- A stopped codespace won't accept the forward — start it once (e.g. open it in the browser) before connecting. First connect is slow; the agent reads `idle` until its TUI paints.
+A codespace agent runs through `scripts/cs-connect.sh`: it forwards sshd port to a free local port with `gh codespace ports forward`, `ssh`es in as `AGENT_FLEET_CS_USER`, and runs the command through a login shell in the repo checkout. Each agent gets its own local port, so several can run concurrently. The forward tears down on agent exit; connection failure drops to a shell with the cause.
+
+**Status for tracked codespace agents is scrape-based** (not hook-based, since hooks can't attach across SSH). Consequences:
+- Updates lag up to 1–2s (not instant).
+- No desktop notification on state change.
+- Rail's branch column shows local launch dir, not codespace's ref. Workspace is labeled with codespace name.
+- Stopped codespace won't accept forward — start once (e.g. open in browser) before connecting. First connect is slow; agent reads `idle` until TUI paints.
 
 ---
 
 ## Notifications
 
-When a **hooked** agent changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). Notifications come from the status hook, so scrape-tier agents (hand-started, non-claude, codespace) don't produce them. On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
+When a **hooked** agent (claude, or kimi after `kimi-hooks`) changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). Notifications come from the hook, so scrape-tier agents (codex/opencode/cursor, codespace) don't produce them. On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
 
-The fleet also drives a **terminal progress bar** (OSC 9;4 — rendered by Ghostty 1.2+, iTerm2, WezTerm at the top of the window/split): an indeterminate bar while the window's agent works, a red bar when it needs your input, cleared when it's done. Claude Code doesn't emit these under tmux, so the snapshot daemon synthesizes them — re-asserted every poll tick from the **active window's** most-urgent agent state, which makes it reliable across window switches and covers scrape-tier agents (hand-started, codespace) too. The fleet conf enables the tmux passthrough this needs. Set `AGENT_FLEET_PROGRESS=0` (daemon restart to change) to disable.
+The fleet also drives a **terminal progress bar** (OSC 9;4 — rendered by Ghostty 1.2+, iTerm2, WezTerm at top): indeterminate while the window's agent works, red when it needs input, cleared when done. Claude Code doesn't emit these under tmux, so the daemon synthesizes them from the **active window's most-urgent agent state**, making it reliable across switches and covering scrape-tier agents too. Set `AGENT_FLEET_PROGRESS=0` (daemon restart to change) to disable.
 
 ---
 
 ## Persistence (survives reboot)
 
-tmux is in-memory, so a reboot ends the fleet server. agent-fleet saves the
-layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach:
+tmux is in-memory, so a reboot ends the fleet server. agent-fleet saves the layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach:
 
-- **What's restored** — sessions, tabs (names + order), each window's **exact
-  split layout**, and every pane's **working directory**. Hooked Claude agents
-  come back **resumed**: the fleet records each agent's Claude session id and
-  relaunches it with `claude --resume`, so the conversation continues. This
-  covers `agent-fleet add` / `Prefix C` launches *and* hand-typed `claude` /
-  `claude -r` in fleet panes (hooked via the PATH shim — see Status detection).
-  The rail is re-rendered per window.
-- **What's not** — other running programs, and hand-started Claude (no hook, so
-  no session id) come back as shells in the right dir. A codespace workspace
-  comes back as a local shell (reconnect with `Prefix g`). A resume that fails
-  (deleted/expired session) also falls back to a shell. Set
-  `AGENT_FLEET_RESTORE_AGENTS=0` to restore everything as plain shells.
-- **When it saves** — every `AGENT_FLEET_SAVE_INTERVAL` daemon poll ticks
-  (default 15, ≈15s at the default poll interval), on `agent-fleet stop`, and
-  on `agent-fleet save`.
-- **When it restores** — automatically the next time you `agent-fleet attach`
-  with the fleet stopped (e.g. after a reboot); manually via `agent-fleet restore`.
+**What's restored** — sessions, tabs (names + order), exact split layout per window, every pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind, and relaunches `claude --resume <id>` or `kimi --session <id>`, so the conversation continues. This covers `agent-fleet add` / `Prefix C` launches *and* hand-typed `claude` / `claude -r` in fleet panes (hooked via the PATH shim) *and* hand-typed `kimi` (hooked install-wide via `kimi-hooks`). Rails are re-rendered per window.
 
-To boot the fleet automatically at login, run `agent-fleet attach` from your
-shell profile or a launchd/systemd unit — it rebuilds the saved layout, or
-starts a fresh `home` workspace if there's nothing saved.
+**What's not** — other running programs and unhooked agents (no hook, no session id) come back as shells in the right dir. Codespace workspace comes back as a local shell (reconnect with `Prefix g`). Failed resumes also fall back to shells. Set `AGENT_FLEET_RESTORE_AGENTS=0` to restore everything as shells.
+
+**When it saves** — every `AGENT_FLEET_SAVE_INTERVAL` daemon poll ticks (default 15, ≈15s), on `agent-fleet stop`, on `agent-fleet save`.
+
+**When it restores** — automatically on `agent-fleet attach` after the fleet is stopped (e.g. after reboot); manually via `agent-fleet restore`.
+
+To boot the fleet at login, run `agent-fleet attach` from your shell profile or a launchd/systemd unit — it rebuilds the saved layout or starts a fresh `home` workspace if nothing is saved.
 
 ---
 
-## Customization
-
-### Environment variables
+## Environment variables
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
-| `AGENT_FLEET_CMD` | `claude` | Default command for `add`; the status hooks attach only when the command is `claude` |
-| `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's CLI binary `agent` is shown as `cursor`. |
-| `AGENT_FLEET_CS_CMD` | `bash` | Command a codespace connection runs by default (picker + `add --codespace`); set to `claude`, `fish`, etc. `--cmd` overrides per launch |
-| `AGENT_FLEET_CS_USER` | `dev` | SSH login user for codespace agents (`--codespace`) |
-| `AGENT_FLEET_CS_SSH_PORT` | `2222` | sshd port inside the codespace container (forwarded to a local port) |
-| `AGENT_FLEET_CS_DIR` | `/workspaces/<repo>` | Remote dir a codespace agent cds into before running (set by `add --dir`); defaults to the codespace's repo checkout |
-| `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created when the fleet first boots |
+| `AGENT_FLEET_CMD` | `claude` | Default command for `add`; hooks attach only when the command is `claude` |
+| `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's `agent` shown as `cursor`. |
+| `AGENT_FLEET_CS_CMD` | `bash` | Default command for codespace connections; set to `claude`, `fish`, etc. |
+| `AGENT_FLEET_CS_USER` | `dev` | SSH login user for codespace agents |
+| `AGENT_FLEET_CS_SSH_PORT` | `2222` | sshd port inside codespace container |
+| `AGENT_FLEET_CS_DIR` | `/workspaces/<repo>` | Remote dir codespace agent `cd`s into before running |
+| `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created when fleet first boots |
 | `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
-| `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (OSC 9;4) driven by the active window's agent state (`0` disables; read at daemon start) |
-| `AGENT_FLEET_SHIM` | `1` | Put the claude shim on shell panes' `PATH` (hooks + resume for hand-typed `claude`); `0` opts out |
-| `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists even if zoxide has never seen them. Default: derived — the parent of every known git repo (unless the parent is itself a repo) |
+| `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (OSC 9;4) (`0` disables; read at daemon start) |
+| `AGENT_FLEET_SHIM` | `1` | Put claude shim on shell panes' `PATH` (hooks + resume for hand-typed `claude`); `0` opts out |
+| `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists (default: parent of every known git repo, unless the parent is itself a repo) |
 | `AGENT_FLEET_SIDENAV_WIDTH` | `30` | Rail width in columns |
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |
 | `AGENT_FLEET_SIDENAV_TICK` | `0.1` | Rail spinner frame interval (seconds) |
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
-| `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon poll ticks (≈ seconds at the default 1s `AGENT_FLEET_SNAP_INTERVAL`) |
-| `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked Claude agents with `claude --resume` on restore (`0` = restore everything as shells) |
-| `AGENT_FLEET_GIT_TTL` | `30` | How long a cached git branch stays fresh (seconds) |
-| `TMUX_BIN` | `tmux` | tmux binary used by the CLI and every runtime script |
+| `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon poll ticks (≈ seconds) |
+| `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents with their saved session on restore (`0` = shells) |
+| `AGENT_FLEET_GIT_TTL` | `30` | How long cached git branch stays fresh (seconds) |
+| `TMUX_BIN` | `tmux` | tmux binary used by CLI and scripts |
 
-Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet` (the hooks overlay, per-pane status, and rail row maps). There is no separate override for the cache location.
+Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet` (hooks overlay, per-pane status, rail row maps). No separate override for cache location.
 
 ### tmux options
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `@fleet-sidenav-auto` | `on` | Auto-open the rail on new windows/sessions and on attach. Set `off` to opt out; `Prefix b` still toggles it. |
+| `@fleet-sidenav-auto` | `on` | Auto-open rail on new windows/sessions and on attach. Set `off` to opt out; `Prefix b` still toggles. |
 
 ### Personal layer
 
-If `~/.config/agent-fleet/local.conf` exists, the base config sources it last — drop personal keybinds, theme, or `set -g @fleet-sidenav-auto off` there without editing the repo:
+If `~/.config/agent-fleet/local.conf` exists, the base config sources it last. Drop personal keybinds, theme, or `set -g @fleet-sidenav-auto off` there without editing the repo:
 
 ```tmux
 # ~/.config/agent-fleet/local.conf
@@ -293,8 +294,8 @@ set -g status-style "bg=#222436,fg=#c8d3f5"
 ## Uninstall
 
 ```sh
-rm ~/.local/bin/agent-fleet              # the symlink
-rm -rf ~/.local/share/agent-fleet   # the clone
+rm ~/.local/bin/agent-fleet              # symlink
+rm -rf ~/.local/share/agent-fleet        # clone
 rm -rf ~/.cache/agent-fleet              # runtime state
 ```
 
@@ -303,9 +304,9 @@ rm -rf ~/.cache/agent-fleet              # runtime state
 ## Troubleshooting
 
 - **`Prefix o` does nothing / picker won't open** — needs tmux ≥ 3.2 (`display-popup`). Check `tmux -V`.
-- **The rail pane shows a "needs bash 4+" message** — `env bash` resolved to macOS's `/bin/bash` 3.2. Install a newer bash and ensure it precedes `/bin/bash` on `PATH`.
+- **Rail shows "needs bash 4+" message** — `env bash` resolved to macOS's `/bin/bash` 3.2. Install newer bash and ensure it precedes `/bin/bash` on `PATH`.
 - **Config changes don't take effect** — tmux reads config at server start. Reload with `Prefix r`, or `agent-fleet stop && agent-fleet attach`.
-- **Agent status never updates** — for accurate status, launch agents with `agent-fleet add` (it wires the hooks). Hand-started `claude` uses the less-precise scrape fallback.
+- **Agent status never updates** — for accurate status, launch agents with `agent-fleet add` (wires hooks). Hand-started `claude` uses scrape fallback (less precise).
 
 ---
 
@@ -315,7 +316,7 @@ rm -rf ~/.cache/agent-fleet              # runtime state
 tests/run-all.sh
 ```
 
-Runs the integration suite: status tiers and the done-acknowledgement flow, layout persistence round-trips, multi-reboot claude resume, CLI target matching, prompt-input safety, snapshot staleness, and the codespace port-lock protocol. Every test runs on a throwaway tmux socket with a private cache — nothing touches a running fleet. Each `tests/t-*.sh` is standalone.
+Runs the integration suite: status tiers and done-acknowledgement flow, layout persistence round-trips, multi-reboot claude resume, kimi hooks install/remove + kimi resume round-trip, CLI target matching, prompt-input safety, snapshot staleness, codespace port-lock protocol. Every `tests/t-*.sh` is standalone.
 
 ---
 
