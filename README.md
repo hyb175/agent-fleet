@@ -153,7 +153,7 @@ Agents launched via `agent-fleet add` run as `claude --settings <overlay>`, wher
 
 The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is not modified. Each hook writes the state to a per-pane file the rail and picker read.
 
-Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind.
+Agents started by hand (just running the CLI in a shell) are detected too — `claude`, `codex`, `opencode`, `kimi`, and Cursor's `agent` (shown as `cursor`) out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind.
 
 **Hand-typed `claude` gets the hooks too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` dir on `PATH`, so `claude` — including `claude -r` / `--resume` / `-c` — resolves to a shim that attaches the fleet's status hooks. Hand-started claude agents therefore get hook-tier status, notifications, the progress bar, and resume-after-reboot, same as `agent-fleet add` launches. Non-interactive/meta invocations (`-p`, `--help`, `--version`) and commands that already carry `--settings` pass through untouched; `AGENT_FLEET_SHIM=0` opts out. Non-claude tools remain on the scrape tier, so their live state is approximate (they may read `idle` while working).
 
@@ -251,7 +251,7 @@ starts a fresh `home` workspace if there's nothing saved.
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
 | `AGENT_FLEET_CMD` | `claude` | Default command for `add`; the status hooks attach only when the command is `claude` |
-| `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's CLI binary `agent` is shown as `cursor`. |
+| `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's CLI binary `agent` is shown as `cursor`. |
 | `AGENT_FLEET_CS_CMD` | `bash` | Command a codespace connection runs by default (picker + `add --codespace`); set to `claude`, `fish`, etc. `--cmd` overrides per launch |
 | `AGENT_FLEET_CS_USER` | `dev` | SSH login user for codespace agents (`--codespace`) |
 | `AGENT_FLEET_CS_SSH_PORT` | `2222` | sshd port inside the codespace container (forwarded to a local port) |

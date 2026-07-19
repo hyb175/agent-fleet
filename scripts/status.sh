@@ -109,7 +109,7 @@ state_for_pane() {
 # Foreground commands treated as agents when scraping non-hooked panes.
 # Space-separated; override with AGENT_FLEET_AGENT_CMDS to add other CLIs.
 # (Cursor's CLI binary is literally `agent`.)
-_AGENT_CMDS="${AGENT_FLEET_AGENT_CMDS:-claude codex opencode agent}"
+_AGENT_CMDS="${AGENT_FLEET_AGENT_CMDS:-claude codex opencode agent kimi}"
 
 # Some CLIs ship under a generic binary name; show a friendlier kind in the rail.
 _agent_kind_label() { case "$1" in agent) printf 'cursor' ;; *) printf '%s' "$1" ;; esac; }
