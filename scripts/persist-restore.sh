@@ -4,8 +4,9 @@
 # Recreates sessions, windows (name + exact split layout) and panes in their
 # saved cwds, then re-renders the left rail per window. The sidenav auto-hook
 # is suppressed during the rebuild (via a throwaway scratch session that absorbs
-# the first-window race) so it can't add duplicate rails. Hooked claude agents
-# are relaunched with `claude --resume <saved session id>` (shell fallback);
+# the first-window race) so it can't add duplicate rails. Hooked agents are
+# relaunched with their saved session — `claude --resume <id>` or
+# `kimi --session <id>` by recorded kind (shell fallback on a failed resume);
 # every other pane returns as a shell in its dir.
 #
 # Called by ensure_server on a cold boot and by `agent-fleet restore`. Exits
@@ -59,12 +60,14 @@ declare -A WLAYOUT WNAME WACTIVE   # key: session US widx
 declare -A PANES                   # key: session US widx -> "pidx US rail US cwd\n"...
 declare -A SEEN
 sess_order=(); attached=""
-while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9; do
+while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 f10; do
   case "$kind" in
     A) attached="$f2" ;;
     W) WLAYOUT["$f2$US$f3"]="$f5"; WNAME["$f2$US$f3"]="$f6"; WACTIVE["$f2$US$f3"]="$f4"
        [[ -z "${SEEN[$f2]:-}" ]] && { SEEN[$f2]=1; sess_order+=("$f2"); } ;;
-    P) PANES["$f2$US$f3"]+="$f4$US$f5$US$f8$US$f9"$'\n' ;;   # pidx, sidenav, session, cwd
+    # pidx, sidenav, session, cwd, agent kind (f10 empty in pre-kind state
+    # files — resolved to claude at relaunch below)
+    P) PANES["$f2$US$f3"]+="$f4$US$f5$US$f8$US$f9$US${f10:--}"$'\n' ;;
   esac
 done < "$STATE"
 (( ${#sess_order[@]} )) || exit 1
@@ -104,10 +107,11 @@ for s in "${sess_order[@]}"; do
     wk="$s$US$widx"
     layout="${WLAYOUT[$wk]}"; wname="${WNAME[$wk]}"; wact="${WACTIVE[$wk]:-0}"
 
-    # panes sorted by pane index; parallel arrays: cwd, claude session, rail flag
-    cwds=(); sids=(); rails=(); while IFS="$US" read -r pidx prail psid pcwd; do
+    # panes sorted by pane index; parallel arrays: cwd, agent session, rail
+    # flag, agent kind
+    cwds=(); sids=(); rails=(); kinds=(); while IFS="$US" read -r pidx prail psid pcwd pkind; do
       [[ -z "$pidx" ]] && continue
-      cwds+=("$pcwd"); sids+=("$psid"); rails+=("$prail")
+      cwds+=("$pcwd"); sids+=("$psid"); rails+=("$prail"); kinds+=("${pkind:--}")
     done < <(printf '%s' "${PANES[$wk]:-}" | sort -t"$US" -k1,1n)
     (( ${#cwds[@]} )) || continue
 
@@ -169,8 +173,10 @@ for s in "${sess_order[@]}"; do
       done < <(tx list-panes -t "$win_id" -F '#{pane_id}|#{?@fleet-sidenav,1,0}|#{pane_current_path}' 2>/dev/null)
       used=" "; j=0
       while (( j < ${#sids[@]} )); do
-        sid="${sids[$j]}"; scwd="${cwds[$j]}"; j=$(( j + 1 ))
+        sid="${sids[$j]}"; scwd="${cwds[$j]}"; skind="${kinds[$j]:--}"; j=$(( j + 1 ))
         [[ "$sid" == "-" || -z "$sid" ]] && continue
+        # Pre-kind state files carry no kind; every hooked agent then was claude.
+        [[ "$skind" == "-" || -z "$skind" ]] && skind="claude"
         chosen=""; k=0
         while (( k < ${#work_ids[@]} )); do
           [[ "${work_cwds[$k]}" == "$scwd" && "$used" != *" ${work_ids[$k]} "* ]] && { chosen="${work_ids[$k]}"; break; }
@@ -183,10 +189,16 @@ for s in "${sess_order[@]}"; do
         fi
         [[ -z "$chosen" ]] && continue
         used+="$chosen "
-        rc="claude --resume $sid"
-        [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY"
-        tx set-option -p -t "$chosen" @fleet-agent-kind claude 2>/dev/null || true
-        tx set-option -w -t "$chosen" @fleet-agent claude 2>/dev/null || true
+        # Kind-specific relaunch: claude resumes with --resume + the hooks
+        # overlay; kimi resumes with --session (its hooks are install-wide in
+        # ~/.kimi/config.toml, so no per-launch flag exists or is needed).
+        case "$skind" in
+          kimi) rc="kimi --session $sid" ;;
+          *)    rc="claude --resume $sid"
+                [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY" ;;
+        esac
+        tx set-option -p -t "$chosen" @fleet-agent-kind "$skind" 2>/dev/null || true
+        tx set-option -w -t "$chosen" @fleet-agent "$skind" 2>/dev/null || true
         # Re-arm persistence for the NEXT reboot: without these, the next
         # auto-save (~15s away) records '-' for this pane and the resumed
         # session id is lost. --resume keeps the same session id, so the gate

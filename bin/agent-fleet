@@ -107,10 +107,10 @@ ensure_hook_settings() {
   cat > "$f" <<JSON
 {
   "hooks": {
-    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET" } ] } ],
-    "PreToolUse":       [ { "matcher": "*", "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET" } ] } ],
-    "Notification":     [ { "hooks": [ { "type": "command", "command": "'$hook' wait $SOCKET" } ] } ],
-    "Stop":             [ { "hooks": [ { "type": "command", "command": "'$hook' done $SOCKET" } ] } ]
+    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET claude" } ] } ],
+    "PreToolUse":       [ { "matcher": "*", "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET claude" } ] } ],
+    "Notification":     [ { "hooks": [ { "type": "command", "command": "'$hook' wait $SOCKET claude" } ] } ],
+    "Stop":             [ { "hooks": [ { "type": "command", "command": "'$hook' done $SOCKET claude" } ] } ]
   }
 }
 JSON
@@ -438,6 +438,82 @@ cmd_stop() {
   echo "fleet stopped"
 }
 
+# kimi-hooks [install|remove|status] — manage the fleet's [[hooks]] block in
+# ~/.kimi/config.toml. Unlike claude (per-launch --settings overlay), kimi
+# loads hooks only install-wide from its global config — there is no overlay
+# flag — so this is explicit opt-in state on the user's machine: a fenced,
+# marked block, idempotent install, clean remove. The hook script itself
+# no-ops outside fleet panes (TMUX_PANE gate), so non-fleet kimi runs are
+# unaffected. Events: UserPromptSubmit/PreToolUse/PermissionResult -> working,
+# PermissionRequest -> wait, Stop -> done.
+cmd_kimi_hooks() {
+  local sub="${1:-install}" conf="$HOME/.kimi/config.toml"
+  local b="# >>> agent-fleet hooks >>>" e="# <<< agent-fleet hooks <<<"
+  local hook="$ROOT_DIR/scripts/agent-status-hook.sh"
+  case "$sub" in
+    install)
+      if [[ ! -f "$conf" ]]; then
+        echo "error: $conf not found — run kimi once so it creates its config, then retry" >&2
+        exit 1
+      fi
+      local tmp="$conf.af.$$"
+      # Drop any previous fleet block first (idempotent; also migrates the
+      # block when the repo path or socket changes), keep everything else.
+      sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" || { rm -f "$tmp"; exit 1; }
+      # Guard against a config with no trailing newline — the block marker
+      # must start its own line or remove's range match misses it.
+      if [[ -s "$tmp" && "$(tail -c1 "$tmp")" != "" ]]; then echo >> "$tmp"; fi
+      cat >> "$tmp" <<TOML
+$b
+# Managed by agent-fleet — 'agent-fleet kimi-hooks remove' deletes this block.
+# Maps kimi lifecycle events to fleet pane states; no-op outside fleet panes.
+[[hooks]]
+event = "UserPromptSubmit"
+command = "'$hook' working $SOCKET kimi"
+timeout = 10
+
+[[hooks]]
+event = "PreToolUse"
+command = "'$hook' working $SOCKET kimi"
+timeout = 10
+
+[[hooks]]
+event = "PermissionRequest"
+command = "'$hook' wait $SOCKET kimi"
+timeout = 10
+
+[[hooks]]
+event = "PermissionResult"
+command = "'$hook' working $SOCKET kimi"
+timeout = 10
+
+[[hooks]]
+event = "Stop"
+command = "'$hook' done $SOCKET kimi"
+timeout = 10
+$e
+TOML
+      mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
+      echo "kimi hooks installed in $conf (remove with: agent-fleet kimi-hooks remove)"
+      ;;
+    remove)
+      [[ -f "$conf" ]] || { echo "nothing to remove ($conf not found)"; return 0; }
+      if ! grep -qxF "$b" "$conf"; then echo "no fleet hooks block in $conf"; return 0; fi
+      local tmp="$conf.af.$$"
+      sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" && mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
+      echo "kimi hooks removed from $conf"
+      ;;
+    status)
+      if [[ -f "$conf" ]] && grep -qxF "$b" "$conf"; then
+        echo "installed ($conf)"
+      else
+        echo "not installed"
+      fi
+      ;;
+    *) echo "usage: agent-fleet kimi-hooks [install|remove|status]" >&2; exit 2 ;;
+  esac
+}
+
 # reload — respawn the snapshot daemon and every rail so they pick up new code
 # (e.g. after a git pull) without stopping the fleet. Agent panes are untouched.
 # Needed because ensure_snapshotd only starts a daemon when none is alive: a
@@ -557,6 +633,9 @@ Verbs:
   agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).
   agent-fleet list                 List workspaces and their agents.
   agent-fleet pick                 Open the fzf picker popup (or attach from a bare shell).
+  agent-fleet kimi-hooks [install|remove|status]
+                                   Manage the fleet status-hooks block in ~/.kimi/config.toml
+                                   (kimi has no per-launch overlay; hooks are install-wide).
   agent-fleet reload               Respawn the snapshot daemon and rails (pick up new code after a pull).
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
@@ -587,6 +666,7 @@ main() {
     pick)       cmd_pick "$@" ;;
     cs)         cmd_cs "$@" ;;
     hooks-file) cmd_hooks_file "$@" ;;
+    kimi-hooks) cmd_kimi_hooks "$@" ;;
     reload)     cmd_reload "$@" ;;
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;

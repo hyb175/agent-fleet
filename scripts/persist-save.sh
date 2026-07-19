@@ -37,8 +37,10 @@ tmp="$STATE.tmp.$$"
     -F "W${US}#{session_name}${US}#{window_index}${US}#{window_active}${US}#{window_layout}${US}#{window_name}" \
     2>/dev/null
 
-  # One line per pane: rail (0/1) / active / codespace (or -) / claude session (or -) / cwd.
+  # One line per pane: rail (0/1) / active / codespace (or -) / agent session
+  # (or -) / cwd / agent kind (or -). Kind is LAST so state files from older
+  # versions (9 fields) still parse — a missing kind defaults to claude.
   tx list-panes -a \
-    -F "P${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{?@fleet-sidenav,1,0}${US}#{pane_active}${US}#{?@fleet-codespace,#{@fleet-codespace},-}${US}#{?@fleet-session,#{@fleet-session},-}${US}#{pane_current_path}" \
+    -F "P${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{?@fleet-sidenav,1,0}${US}#{pane_active}${US}#{?@fleet-codespace,#{@fleet-codespace},-}${US}#{?@fleet-session,#{@fleet-session},-}${US}#{pane_current_path}${US}#{?@fleet-agent-kind,#{@fleet-agent-kind},-}" \
     2>/dev/null
 } > "$tmp" 2>/dev/null && mv "$tmp" "$STATE" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; exit 0; }
