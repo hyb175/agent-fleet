@@ -438,70 +438,39 @@ cmd_stop() {
   echo "fleet stopped"
 }
 
-# kimi-hooks [install|remove|status] — manage the fleet's [[hooks]] block in
-# ~/.kimi/config.toml. Unlike claude (per-launch --settings overlay), kimi
-# loads hooks only install-wide from its global config — there is no overlay
-# flag — so this is explicit opt-in state on the user's machine: a fenced,
-# marked block, idempotent install, clean remove. The hook script itself
-# no-ops outside fleet panes (TMUX_PANE gate), so non-fleet kimi runs are
-# unaffected. Events: UserPromptSubmit/PreToolUse/PermissionResult -> working,
-# PermissionRequest -> wait, Stop -> done.
-cmd_kimi_hooks() {
-  local sub="${1:-install}" conf="$HOME/.kimi/config.toml"
-  local b="# >>> agent-fleet hooks >>>" e="# <<< agent-fleet hooks <<<"
-  local hook="$ROOT_DIR/scripts/agent-status-hook.sh"
+# Shared machinery for install-wide agent hook blocks (kimi, codex). These
+# CLIs load hooks only from their global config — no per-launch overlay flag
+# like claude's --settings — so this is explicit opt-in state on the user's
+# machine: a fenced, marked block, idempotent install, clean remove. The hook
+# script itself no-ops outside fleet panes (TMUX_PANE gate), so non-fleet runs
+# are unaffected. Block body arrives on stdin (install only).
+_AF_BLK_BEGIN="# >>> agent-fleet hooks >>>"
+_AF_BLK_END="# <<< agent-fleet hooks <<<"
+manage_hooks_block() {  # <tool> <conf> <install|remove|status> [post-install note]
+  local tool="$1" conf="$2" sub="$3" note="${4:-}"
+  local b="$_AF_BLK_BEGIN" e="$_AF_BLK_END" tmp="$conf.af.$$"
   case "$sub" in
     install)
       if [[ ! -f "$conf" ]]; then
-        echo "error: $conf not found — run kimi once so it creates its config, then retry" >&2
+        echo "error: $conf not found — run $tool once so it creates its config, then retry" >&2
         exit 1
       fi
-      local tmp="$conf.af.$$"
       # Drop any previous fleet block first (idempotent; also migrates the
       # block when the repo path or socket changes), keep everything else.
       sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" || { rm -f "$tmp"; exit 1; }
       # Guard against a config with no trailing newline — the block marker
       # must start its own line or remove's range match misses it.
       if [[ -s "$tmp" && "$(tail -c1 "$tmp")" != "" ]]; then echo >> "$tmp"; fi
-      cat >> "$tmp" <<TOML
-$b
-# Managed by agent-fleet — 'agent-fleet kimi-hooks remove' deletes this block.
-# Maps kimi lifecycle events to fleet pane states; no-op outside fleet panes.
-[[hooks]]
-event = "UserPromptSubmit"
-command = "'$hook' working $SOCKET kimi"
-timeout = 10
-
-[[hooks]]
-event = "PreToolUse"
-command = "'$hook' working $SOCKET kimi"
-timeout = 10
-
-[[hooks]]
-event = "PermissionRequest"
-command = "'$hook' wait $SOCKET kimi"
-timeout = 10
-
-[[hooks]]
-event = "PermissionResult"
-command = "'$hook' working $SOCKET kimi"
-timeout = 10
-
-[[hooks]]
-event = "Stop"
-command = "'$hook' done $SOCKET kimi"
-timeout = 10
-$e
-TOML
+      { printf '%s\n' "$b"; cat; printf '%s\n' "$e"; } >> "$tmp"
       mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
-      echo "kimi hooks installed in $conf (remove with: agent-fleet kimi-hooks remove)"
+      echo "$tool hooks installed in $conf (remove with: agent-fleet $tool-hooks remove)"
+      [[ -n "$note" ]] && echo "$note" || true
       ;;
     remove)
       [[ -f "$conf" ]] || { echo "nothing to remove ($conf not found)"; return 0; }
       if ! grep -qxF "$b" "$conf"; then echo "no fleet hooks block in $conf"; return 0; fi
-      local tmp="$conf.af.$$"
       sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" && mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
-      echo "kimi hooks removed from $conf"
+      echo "$tool hooks removed from $conf"
       ;;
     status)
       if [[ -f "$conf" ]] && grep -qxF "$b" "$conf"; then
@@ -510,8 +479,56 @@ TOML
         echo "not installed"
       fi
       ;;
-    *) echo "usage: agent-fleet kimi-hooks [install|remove|status]" >&2; exit 2 ;;
+    *) echo "usage: agent-fleet $tool-hooks [install|remove|status]" >&2; exit 2 ;;
   esac
+}
+
+# kimi-hooks — kimi's flat [[hooks]] entries in ~/.kimi/config.toml.
+# Events: UserPromptSubmit/PreToolUse/PermissionResult -> working,
+# PermissionRequest -> wait, Stop -> done.
+cmd_kimi_hooks() {
+  local sub="${1:-install}" hook="$ROOT_DIR/scripts/agent-status-hook.sh" ev st
+  if [[ "$sub" != "install" ]]; then
+    manage_hooks_block kimi "$HOME/.kimi/config.toml" "$sub"
+    return
+  fi
+  manage_hooks_block kimi "$HOME/.kimi/config.toml" install <<TOML
+# Managed by agent-fleet — 'agent-fleet kimi-hooks remove' deletes this block.
+# Maps kimi lifecycle events to fleet pane states; no-op outside fleet panes.
+$(for ev in "UserPromptSubmit working" "PreToolUse working" "PermissionRequest wait" \
+            "PermissionResult working" "Stop done"; do
+    st="${ev##* }"; ev="${ev%% *}"
+    printf '[[hooks]]\nevent = "%s"\ncommand = "'\''%s'\'' %s %s kimi"\ntimeout = 10\n\n' \
+      "$ev" "$hook" "$st" "$SOCKET"
+  done)
+TOML
+}
+
+# codex-hooks — codex's nested [[hooks.<Event>]] matcher groups in
+# ~/.codex/config.toml. Same state map as kimi, except codex has no
+# PermissionResult event — PostToolUse covers back-to-working after an
+# approval. Codex trust-gates non-managed hooks: they stay inert until
+# approved once in codex's own startup hooks review (which records the
+# trusted hash), so install alone changes nothing until the user says yes
+# in codex. The status hook prints nothing to stdout, so the
+# PermissionRequest handler never emits an allow/deny decision.
+cmd_codex_hooks() {
+  local sub="${1:-install}" hook="$ROOT_DIR/scripts/agent-status-hook.sh" ev st
+  if [[ "$sub" != "install" ]]; then
+    manage_hooks_block codex "$HOME/.codex/config.toml" "$sub"
+    return
+  fi
+  manage_hooks_block codex "$HOME/.codex/config.toml" install \
+    "note: codex trust-gates hooks — approve them once in the review codex shows at next start" <<TOML
+# Managed by agent-fleet — 'agent-fleet codex-hooks remove' deletes this block.
+# Maps codex lifecycle events to fleet pane states; no-op outside fleet panes.
+$(for ev in "UserPromptSubmit working" "PreToolUse working" "PostToolUse working" \
+            "PermissionRequest wait" "Stop done"; do
+    st="${ev##* }"; ev="${ev%% *}"
+    printf '[[hooks.%s]]\n[[hooks.%s.hooks]]\ntype = "command"\ncommand = "'\''%s'\'' %s %s codex"\ntimeout_sec = 10\n\n' \
+      "$ev" "$ev" "$hook" "$st" "$SOCKET"
+  done)
+TOML
 }
 
 # reload — respawn the snapshot daemon and every rail so they pick up new code
@@ -636,6 +653,9 @@ Verbs:
   agent-fleet kimi-hooks [install|remove|status]
                                    Manage the fleet status-hooks block in ~/.kimi/config.toml
                                    (kimi has no per-launch overlay; hooks are install-wide).
+  agent-fleet codex-hooks [install|remove|status]
+                                   Same for ~/.codex/config.toml. Codex trust-gates hooks:
+                                   approve once in codex's startup hooks review to activate.
   agent-fleet reload               Respawn the snapshot daemon and rails (pick up new code after a pull).
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
@@ -666,7 +686,8 @@ main() {
     pick)       cmd_pick "$@" ;;
     cs)         cmd_cs "$@" ;;
     hooks-file) cmd_hooks_file "$@" ;;
-    kimi-hooks) cmd_kimi_hooks "$@" ;;
+    kimi-hooks)  cmd_kimi_hooks "$@" ;;
+    codex-hooks) cmd_codex_hooks "$@" ;;
     reload)     cmd_reload "$@" ;;
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;

@@ -1,6 +1,6 @@
 # agent-fleet
 
-A tmux-native session manager for running and supervising multiple coding agents — Claude Code first-class, Kimi Code hook-tier, codex/opencode/cursor detected. A workspace is a tmux session; an agent is a tmux window. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
+A tmux-native session manager for running and supervising multiple coding agents — Claude Code first-class, Kimi Code and Codex hook-tier, opencode/cursor detected. A workspace is a tmux session; an agent is a tmux window. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
 
 ## Two surfaces
 
@@ -118,6 +118,7 @@ Status sources:
 | `agent-fleet pick` | Open picker popup (or attach from bare shell). |
 | `agent-fleet hooks-file` | Print path to generated Claude settings overlay (hooks only). |
 | `agent-fleet kimi-hooks [install\|remove\|status]` | Manage the fleet status-hooks block in `~/.kimi/config.toml` (kimi has no per-launch overlay; hooks are install-wide, fenced, and removable). |
+| `agent-fleet codex-hooks [install\|remove\|status]` | Same for `~/.codex/config.toml`. Codex trust-gates hooks: approve once in codex's startup hooks review to activate. |
 | `agent-fleet reload` | Respawn snapshot daemon and rails (pick up code after `git pull`). |
 | `agent-fleet save` | Snapshot layout to disk (also auto-saved on timer and on `stop`). |
 | `agent-fleet restore` | Rebuild saved layout on stopped fleet (attach does this on cold boot). |
@@ -165,9 +166,14 @@ The overlay (hooks only) is generated under `~/.cache/agent-fleet/hooks-settings
 
 **Hand-typed `claude` gets the hooks too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` dir on `PATH`, so `claude`, `claude -r`, `claude --resume`, `claude -c` all resolve to a shim that attaches fleet status hooks. Hand-started claude agents therefore get hook-tier status, notifications, progress bar, and resume-after-reboot. Non-interactive invocations (`-p`, `--help`, `--version`) and commands that already carry `--settings` pass through untouched; set `AGENT_FLEET_SHIM=0` to opt out.
 
-**Kimi Code gets hook-tier status too.** Run `agent-fleet kimi-hooks` once: kimi loads hooks only from its global `~/.kimi/config.toml` (no per-launch overlay flag exists), so the fleet writes a fenced, managed `[[hooks]]` block there — idempotent, removable with `kimi-hooks remove`, and a no-op outside fleet panes. Kimi's event map is even sharper than claude's: `UserPromptSubmit`/`PreToolUse`/`PermissionResult` → **working**, `PermissionRequest` → **wait**, `Stop` → **done**. Once installed, every `kimi` in a fleet pane — `add --cmd kimi` or hand-typed — reports status, notifies, drives the progress bar, and resumes after reboot. No PATH shim needed.
+**Kimi Code and Codex get hook-tier status too.** Both load hooks only from their global config (no per-launch overlay flag exists), so the fleet writes a fenced, managed hooks block there — idempotent, removable, and a no-op outside fleet panes:
 
-Agents started by hand (just running in a shell): `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown as `cursor`) are detected out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Tools without hooks (codex, opencode, cursor) remain on scrape tier (status is approximate; they read `idle` while working).
+- `agent-fleet kimi-hooks` → `[[hooks]]` entries in `~/.kimi/config.toml`. Event map: `UserPromptSubmit`/`PreToolUse`/`PermissionResult` → **working**, `PermissionRequest` → **wait**, `Stop` → **done**.
+- `agent-fleet codex-hooks` → `[[hooks.<Event>]]` groups in `~/.codex/config.toml`. Same map, with `PostToolUse` covering back-to-working after an approval. **Codex trust-gates hooks:** they stay inert until you approve them once in the hooks review codex shows at its next start.
+
+Once installed, every `kimi`/`codex` in a fleet pane — `add --cmd` or hand-typed — reports status, notifies, drives the progress bar, and resumes after reboot. No PATH shim needed.
+
+Agents started by hand (just running in a shell): `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown as `cursor`) are detected out of the box; extend with `AGENT_FLEET_AGENT_CMDS`. The rail labels each row with its workspace and kind. Tools without hooks (opencode, cursor) remain on scrape tier (status is approximate; they read `idle` while working).
 
 A single background daemon (`snapshotd.sh`, one per fleet) polls tmux and resolves states/branches once per second, writing `fleet.snapshot`. Rails and picker read that snapshot instead of polling tmux themselves, so the number of rails doesn't add tmux load. Daemon starts automatically, is single-instance, exits when the fleet stops.
 
@@ -223,7 +229,7 @@ A codespace agent runs through `scripts/cs-connect.sh`: it forwards sshd port to
 
 ## Notifications
 
-When a **hooked** agent (claude, or kimi after `kimi-hooks`) changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). Notifications come from the hook, so scrape-tier agents (codex/opencode/cursor, codespace) don't produce them. On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
+When a **hooked** agent (claude, or kimi/codex after their hooks install) changes to **wait** or **done**, a desktop notification fires (`osascript` on macOS, `notify-send` on Linux). Notifications come from the hook, so scrape-tier agents (opencode/cursor, codespace) don't produce them. On by default; set `AGENT_FLEET_NOTIFY=0` to silence.
 
 The fleet also drives a **terminal progress bar** (OSC 9;4 — rendered by Ghostty 1.2+, iTerm2, WezTerm at top): indeterminate while the window's agent works, red when it needs input, cleared when done. Claude Code doesn't emit these under tmux, so the daemon synthesizes them from the **active window's most-urgent agent state**, making it reliable across switches and covering scrape-tier agents too. Set `AGENT_FLEET_PROGRESS=0` (daemon restart to change) to disable.
 
@@ -233,7 +239,7 @@ The fleet also drives a **terminal progress bar** (OSC 9;4 — rendered by Ghost
 
 tmux is in-memory, so a reboot ends the fleet server. agent-fleet saves the layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach:
 
-**What's restored** — sessions, tabs (names + order), exact split layout per window, every pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind, and relaunches `claude --resume <id>` or `kimi --session <id>`, so the conversation continues. This covers `agent-fleet add` / `Prefix C` launches *and* hand-typed `claude` / `claude -r` in fleet panes (hooked via the PATH shim) *and* hand-typed `kimi` (hooked install-wide via `kimi-hooks`). Rails are re-rendered per window.
+**What's restored** — sessions, tabs (names + order), exact split layout per window, every pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind, and relaunches `claude --resume <id>`, `kimi --session <id>`, or `codex resume <id>`, so the conversation continues. This covers `agent-fleet add` / `Prefix C` launches *and* hand-typed `claude` / `claude -r` in fleet panes (hooked via the PATH shim) *and* hand-typed `kimi`/`codex` (hooked install-wide via `kimi-hooks`/`codex-hooks`). Rails are re-rendered per window.
 
 **What's not** — other running programs and unhooked agents (no hook, no session id) come back as shells in the right dir. Codespace workspace comes back as a local shell (reconnect with `Prefix g`). Failed resumes also fall back to shells. Set `AGENT_FLEET_RESTORE_AGENTS=0` to restore everything as shells.
 
@@ -316,7 +322,7 @@ rm -rf ~/.cache/agent-fleet              # runtime state
 tests/run-all.sh
 ```
 
-Runs the integration suite: status tiers and done-acknowledgement flow, layout persistence round-trips, multi-reboot claude resume, kimi hooks install/remove + kimi resume round-trip, CLI target matching, prompt-input safety, snapshot staleness, codespace port-lock protocol. Every `tests/t-*.sh` is standalone.
+Runs the integration suite: status tiers and done-acknowledgement flow, layout persistence round-trips, multi-reboot claude resume, kimi/codex hooks install/remove + resume round-trips, CLI target matching, prompt-input safety, snapshot staleness, codespace port-lock protocol. Every `tests/t-*.sh` is standalone.
 
 ---
 

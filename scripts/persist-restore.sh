@@ -190,12 +190,14 @@ for s in "${sess_order[@]}"; do
         [[ -z "$chosen" ]] && continue
         used+="$chosen "
         # Kind-specific relaunch: claude resumes with --resume + the hooks
-        # overlay; kimi resumes with --session (its hooks are install-wide in
-        # ~/.kimi/config.toml, so no per-launch flag exists or is needed).
+        # overlay; kimi and codex resume by session id (their hooks are
+        # install-wide in the tool's global config, so no per-launch flag
+        # exists or is needed).
         case "$skind" in
-          kimi) rc="kimi --session $sid" ;;
-          *)    rc="claude --resume $sid"
-                [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY" ;;
+          kimi)  rc="kimi --session $sid" ;;
+          codex) rc="codex resume $sid" ;;
+          *)     rc="claude --resume $sid"
+                 [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY" ;;
         esac
         tx set-option -p -t "$chosen" @fleet-agent-kind "$skind" 2>/dev/null || true
         tx set-option -w -t "$chosen" @fleet-agent "$skind" 2>/dev/null || true
