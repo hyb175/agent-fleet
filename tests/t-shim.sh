@@ -49,7 +49,8 @@ check "outside a tmux pane: no overlay" "[[ '$got' == ' ' || -z '${got// /}' ]]"
 # Non-fish shells inherit our pre-exec PATH prepend. fish is special-cased: a
 # plain prepend loses to fish rebuilding PATH from its own config, so pane-shell
 # re-prepends AFTER config via --init-command (-C) instead.
-BASE_PATH="/usr/bin:/bin"
+# $BASH's dir keeps `env bash` resolvable where bash isn't in /usr/bin:/bin (NixOS).
+BASE_PATH="$(dirname "$BASH"):/usr/bin:/bin"
 cat > "$FAKEBIN/fakeshell" <<EOF
 #!/usr/bin/env bash
 printf '%s' "\$PATH" > "$WORK/shell_path"
@@ -77,7 +78,11 @@ check "fish -C re-prepends the shim ahead of \$PATH" "grep -qF \"set -gx PATH '$
 # conf wires it as default-command; a real (command-less) pane runs it end to
 # end. The property that matters: `claude` typed in that pane resolves to the
 # SHIM (the login shell may legitimately prepend its own dirs; the shim only
-# has to stay ahead of the real claude).
+# has to stay ahead of the real claude). Pin SHELL to fish when available so
+# the check doesn't depend on the invoker's login shell (a NixOS bash login
+# rebuilds PATH wholesale and defeats the pre-exec prepend).
+_real_fish="$(command -v fish || true)"
+[[ -n "$_real_fish" ]] && export SHELL="$_real_fish"
 boot_server t "$WORK"
 check "default-command is pane-shell" "[[ \"\$(tx show -gv default-command)\" == '$REPO/scripts/pane-shell.sh' ]]"
 np="$(tx new-window -d -P -F '#{pane_id}' -t t:)"
