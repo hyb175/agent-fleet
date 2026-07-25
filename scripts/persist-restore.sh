@@ -21,6 +21,10 @@ SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
 ROOT="${AGENT_FLEET_ROOT:?AGENT_FLEET_ROOT not set}"
 CONF="${AGENT_FLEET_CONF:-$ROOT/conf/agent-fleet.conf}"
 export AGENT_FLEET_CONF="$CONF"   # the conf's Prefix r reload expands this at parse time
+# Render the palette's tmux side before booting — the conf sources
+# $AGENT_FLEET_THEME_CONF (exported by theme.sh) at parse time.
+source "$ROOT/scripts/theme.sh"
+theme_write_conf
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 STATE="$CACHE/fleet.state"
 US=$'\t'   # matches persist-save; every field is non-empty so tab won't collapse

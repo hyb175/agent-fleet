@@ -19,8 +19,11 @@ set -uo pipefail
 SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 
-ACCENT="fg=#7aa2f7"   # Tokyo Night blue (matches the conf's static fallback)
-DIM="fg=#292e42"      # same as pane-border-style: reads as a plain divider
+# Palette from theme.sh: accent matches the themed active border, dim matches
+# pane-border-style so an untuned window reads as a plain divider.
+source "$(dirname "${BASH_SOURCE[0]}")/theme.sh"
+ACCENT="fg=$AF_THEME_ACCENT"
+DIM="fg=$AF_THEME_SURFACE"
 
 tune() {
   local win="$1" n

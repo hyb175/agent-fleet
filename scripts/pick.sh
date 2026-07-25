@@ -34,15 +34,16 @@ fi
 SNAP="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/fleet.snapshot"
 
 # State glyphs, prepared once per popup (the picker is a one-shot render, so the
-# spinner frame is fixed at open time). Shared by every view.
+# spinner frame is fixed at open time). Shared by every view. Colors come from
+# theme.sh (sourced via status.sh); shapes differ per state for colorblind use.
 prep_glyphs() {
   local now; printf -v now '%(%s)T' -1
   local frame=$(( now % 10 )) spin=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
-  printf -v G_wait '\033[38;2;247;118;142m●\033[0m'
-  printf -v G_done '\033[38;2;158;206;106m●\033[0m'
-  printf -v G_idle '\033[38;2;86;95;137m○\033[0m'
-  printf -v G_none '\033[38;2;86;95;137m·\033[0m'
-  printf -v G_work '\033[38;2;224;175;104m%s\033[0m' "${spin[frame % 10]}"
+  printf -v G_wait '%s◆\033[0m' "$T_WAIT"
+  printf -v G_done '%s✓\033[0m' "$T_DONE"
+  printf -v G_idle '%s○\033[0m' "$T_MUTED"
+  printf -v G_none '%s·\033[0m' "$T_MUTED"
+  printf -v G_work '%s%s\033[0m' "$T_WORKING" "${spin[frame % 10]}"
 }
 glyph_of() { case "$1" in
   wait) printf '%s' "$G_wait";; working) printf '%s' "$G_work";;
@@ -60,7 +61,7 @@ stale_row() {
   [[ "$ts" =~ ^[0-9]+$ ]] || return 0
   [[ "$iv" =~ ^[0-9]+$ ]] || iv=1
   (( now - ts > iv * 3 + 7 )) && \
-    printf 'NONE\t\033[38;2;247;118;142m⚠ snapshot stale — daemon down?\033[0m\n'
+    printf 'NONE\t%s⚠ snapshot stale — daemon down?\033[0m\n' "$T_WAIT"
   return 0
 }
 
@@ -190,7 +191,7 @@ _conn_emit() {  # <dir> [is_cwd]
   if [[ -e "$d/.git" ]]; then
     b="$(git -C "$d" symbolic-ref --quiet --short HEAD 2>/dev/null)"
     sub="$d$tag"; [[ -n "$b" ]] && sub="$b  ·  $d$tag"
-    printf 'CONNECT:%s\t\033[32m◆\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m\n' "$d" "${d##*/}" "$sub"
+    printf 'CONNECT:%s\t%s◆\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m\n' "$d" "$T_DONE" "${d##*/}" "$sub"
   else
     printf 'CONNECT:%s\t\033[2m+\033[0m \033[1m%-22s\033[0m \033[2m%s%s\033[0m\n' "$d" "${d##*/}" "$d" "$tag"
   fi
@@ -226,7 +227,7 @@ list_connect() {
     [[ -z "$dir" || "$dir" == "$cwd" ]] && continue
     if [[ -e "$dir/.git" ]]; then
       sub="$dir"; b="${BR[$dir]:-}"; [[ -n "$b" ]] && sub="$b  ·  $dir"
-      printf -v line 'CONNECT:%s\t\033[32m◆\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m' "$dir" "${dir##*/}" "$sub"
+      printf -v line 'CONNECT:%s\t%s◆\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m' "$dir" "$T_DONE" "${dir##*/}" "$sub"
       repos+="$line"$'\n'
     else
       printf -v line 'CONNECT:%s\t\033[2m+\033[0m \033[1m%-22s\033[0m \033[2m%s\033[0m' "$dir" "${dir##*/}" "$dir"
@@ -253,8 +254,8 @@ list_cloud() {
   if (( rc != 0 )); then
     if grep -qiE 'codespace.*scope|"codespace" scope|admin rights' <<<"$out"; then
       # Actionable: ⏎ runs the scope grant in the popup, then reopens this view.
-      printf 'AUTH:codespace\t\033[38;2;224;175;104m↻\033[0m \033[1m%-22s\033[0m \033[2mruns: gh auth refresh -s codespace\033[0m\n' \
-        "Grant Codespaces access"
+      printf 'AUTH:codespace\t%s↻\033[0m \033[1m%-22s\033[0m \033[2mruns: gh auth refresh -s codespace\033[0m\n' \
+        "$T_WORKING" "Grant Codespaces access"
     else
       printf 'NONE\t\033[2m(gh codespace list failed: %s)\033[0m\n' "$(head -1 <<<"$out")"
     fi
@@ -316,7 +317,7 @@ run_view() {
     --bind="ctrl-a:become(printf 'AGENT\t%s\n' {1})" \
     --bind="alt-enter:become(printf 'NAME\t%s\n' {1})" \
     --bind="alt-a:become(printf 'AGENT\t%s\n' {1})" \
-    --color="fg+:green,bg+:-1"
+    --color="bg+:$AF_THEME_HL,fg+:$AF_THEME_FG,hl:$AF_THEME_ACCENT,hl+:$AF_THEME_ACCENT,pointer:$AF_THEME_ACCENT,prompt:$AF_THEME_ACCENT,info:$AF_THEME_MUTED,header:$AF_THEME_MUTED,spinner:$AF_THEME_WORKING,marker:$AF_THEME_WAIT,gutter:-1"
 }
 
 next_view() {
@@ -383,10 +384,10 @@ main() {
         clear 2>/dev/null || true
         printf '\n  Granting the \033[1m%s\033[0m scope through gh (a browser will open)…\n\n' "$scope"
         if gh auth refresh -h github.com -s "$scope"; then
-          printf '\n  \033[38;2;158;206;106m✓ %s scope granted.\033[0m opening codespaces…\n' "$scope"
+          printf '\n  %s✓ %s scope granted.\033[0m opening codespaces…\n' "$T_DONE" "$scope"
           sleep 1
         else
-          printf '\n  \033[38;2;247;118;142m✗ gh auth refresh failed.\033[0m press enter to go back…\n'
+          printf '\n  %s✗ gh auth refresh failed.\033[0m press enter to go back…\n' "$T_WAIT"
           read -r _ || true
         fi
         view="cloud"; continue ;;

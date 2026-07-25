@@ -11,20 +11,20 @@ A tmux-native session manager for running and supervising multiple coding agents
 ```
 ┌──────────────────┬─────────────────────────┐
 │ spaces           │                         │
-│ ● dotfiles       │   your agent / shell    │
+│ ✓ dotfiles       │   your agent / shell    │
 │   main ↑2        │   (the work pane)       │
 │                  │                         │
 │ agents      all  │                         │
 │ ⠹ code-review    │                         │
 │   webapp · claude│                         │
-│ ● api-fix        │                         │
+│ ◆ api-fix        │                         │
 │   webapp · codex │                         │
 │ ○ notes          │                         │
 │   home · cursor  │                         │
 └──────────────────┴─────────────────────────┘
 ```
 
-**Status glyphs:** `⠋…⠏` working · `●` done/waiting · `○` idle
+**Status glyphs:** `◆` waiting on you · `⠋…⠏` working · `✓` done · `○` idle — each state has its own shape, so they stay readable without color vision.
 
 ---
 
@@ -58,7 +58,7 @@ Ctrl-a L      switch to previous workspace
 | `zoxide` | optional | frecent directories in picker's connect view |
 | `osascript` (macOS) / `notify-send` (Linux) | optional | desktop notifications on state changes |
 
-\* Manager works without `claude`, but `agent-fleet add` with defaults launches it. Truecolor + Unicode terminal recommended (Tokyo Night colors and braille spinner degrade on lesser terminals).
+\* Manager works without `claude`, but `agent-fleet add` with defaults launches it. Truecolor + Unicode terminal recommended (theme colors and braille spinner degrade on lesser terminals).
 
 **Platform:** Developed on macOS; Linux works but less battle-tested. macOS/Linux differences are handled (notifications fall back from `osascript` to `notify-send`, `stat`/`ps` use portable invocations).
 
@@ -258,6 +258,7 @@ To boot the fleet at login, run `agent-fleet attach` from your shell profile or 
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
 | `AGENT_FLEET_CMD` | `claude` | Default command for `add`; hooks attach only when the command is `claude` |
+| `AGENT_FLEET_THEME` | `tokyo-night` | Palette preset from `conf/themes/` — see [Theming](#theming) |
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's `agent` shown as `cursor`. |
 | `AGENT_FLEET_CS_CMD` | `bash` | Default command for codespace connections; set to `claude`, `fish`, etc. |
 | `AGENT_FLEET_CS_USER` | `dev` | SSH login user for codespace agents |
@@ -285,9 +286,31 @@ Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet` (hooks o
 | --- | --- | --- |
 | `@fleet-sidenav-auto` | `on` | Auto-open rail on new windows/sessions and on attach. Set `off` to opt out; `Prefix b` still toggles. |
 
+### Theming
+
+One palette drives everything — status bar, rail, picker, borders, glyph colors. Pick a preset with `AGENT_FLEET_THEME`:
+
+```sh
+AGENT_FLEET_THEME=catppuccin-mocha agent-fleet reload   # try it live, no restart
+export AGENT_FLEET_THEME=catppuccin-mocha               # persist in your shell profile
+```
+
+| Preset | Look |
+| --- | --- |
+| `tokyo-night` | Default — soft dark blue |
+| `catppuccin-mocha` | Warm pastel dark |
+| `gruvbox` | Retro warm contrast |
+| `nord` | Cool arctic blue |
+| `rose-pine` | Muted rose/violet |
+| `dracula` | High-contrast purple |
+| `everforest` | Green forest, low contrast |
+| `kanagawa` | Ink-wash Japanese |
+
+Each preset is nine hex slots in `conf/themes/<name>.sh` (`bg surface hl fg muted accent wait working done`) — copy one to add your own. Unknown names fall back to `tokyo-night`.
+
 ### Personal layer
 
-If `~/.config/agent-fleet/local.conf` exists, the base config sources it last. Drop personal keybinds, theme, or `set -g @fleet-sidenav-auto off` there without editing the repo:
+If `~/.config/agent-fleet/local.conf` exists, the base config sources it last (after the theme). Drop personal keybinds, style tweaks, or `set -g @fleet-sidenav-auto off` there without editing the repo:
 
 ```tmux
 # ~/.config/agent-fleet/local.conf

@@ -38,11 +38,13 @@ MAPFILE="$ROWS_DIR/${TMUX_PANE:-unknown}.map"
 RAIL_WIN="${AGENT_FLEET_RAIL_WIN:-$("${TMUX_BIN:-tmux}" -L "$SOCKET" display-message -p -t "${TMUX_PANE:-}" '#{window_id}' 2>/dev/null || true)}"
 RAIL_SESS="$("${TMUX_BIN:-tmux}" -L "$SOCKET" display-message -p -t "${TMUX_PANE:-}" '#{session_name}' 2>/dev/null || true)"
 
+# Palette from theme.sh (AGENT_FLEET_THEME preset; T_* are prebuilt escapes).
+source "$ROOT/scripts/theme.sh"
 C_OFF=$'\033[0m'; C_BOLD=$'\033[1m'
-FG=$'\033[38;2;192;202;245m'        # names
-C_DIM=$'\033[38;2;86;95;137m'       # subtitles / headers
-HL=$'\033[48;2;59;66;97m'           # selected row bg (#3b4261, clearly visible)
-ACCENT=$'\033[38;2;122;162;247m'    # selected name + left bar (#7aa2f7)
+FG="$T_FG"          # names
+C_DIM="$T_MUTED"    # subtitles / headers
+HL="$T_HL_BG"       # selected row bg (clearly visible)
+ACCENT="$T_ACCENT"  # selected name + left bar
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 
 home() { printf '\033[H'; }
@@ -77,14 +79,15 @@ read_snapshot() {
   fi
 }
 
-# glyph fg + char for a state (set GLYPH); fork-free.
+# glyph fg + char for a state (set GLYPH); fork-free. Shapes differ per state
+# (◆/spinner/✓/○) so states stay tellable apart without color vision.
 glyph_for() {  # $1=state $2=frame
   case "$1" in
-    wait)    GLYPH=$'\033[38;2;247;118;142m●'"$C_OFF" ;;
-    working) GLYPH=$'\033[38;2;224;175;104m'"${SPIN[$2 % ${#SPIN[@]}]}$C_OFF" ;;
-    done)    GLYPH=$'\033[38;2;158;206;106m●'"$C_OFF" ;;
-    idle)    GLYPH=$'\033[38;2;86;95;137m○'"$C_OFF" ;;
-    *)       GLYPH=$'\033[38;2;86;95;137m·'"$C_OFF" ;;
+    wait)    GLYPH="$T_WAIT◆$C_OFF" ;;
+    working) GLYPH="$T_WORKING${SPIN[$2 % ${#SPIN[@]}]}$C_OFF" ;;
+    done)    GLYPH="$T_DONE✓$C_OFF" ;;
+    idle)    GLYPH="$T_MUTED○$C_OFF" ;;
+    *)       GLYPH="$T_MUTED·$C_OFF" ;;
   esac
 }
 
@@ -125,7 +128,7 @@ draw() {
   printf -v now_ts '%(%s)T' -1
   iv="$SNAP_IV"; [[ "$iv" =~ ^[0-9]+$ ]] || iv=1   # scale with the daemon's poll interval
   if [[ "$SNAP_TS" =~ ^[0-9]+$ ]] && (( now_ts - SNAP_TS > iv * 3 + 7 )); then
-    printf ' %s⚠ stale — daemon down?%s\033[K\n' $'\033[38;2;247;118;142m' "$C_OFF"
+    printf ' %s⚠ stale — daemon down?%s\033[K\n' "$T_WAIT" "$C_OFF"
     line=$((line+1))
   fi
   blank;                                                     line=$((line+1))

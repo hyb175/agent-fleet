@@ -39,6 +39,11 @@ export AGENT_FLEET_SOCKET="$SOCKET"
 # The conf's `bind r source-file "$AGENT_FLEET_CONF"` expands this at server
 # parse time, so reload keeps honoring a custom-conf override.
 export AGENT_FLEET_CONF="$CONF"
+# Resolve the palette (AGENT_FLEET_THEME) and render its tmux side before any
+# tx call can boot the server — the conf sources $AGENT_FLEET_THEME_CONF at
+# parse time.
+source "$ROOT_DIR/scripts/theme.sh"
+theme_write_conf
 tx() { "$TMUX_BIN" -L "$SOCKET" -f "$CONF" "$@"; }
 
 server_up() { tx list-sessions >/dev/null 2>&1; }
@@ -56,6 +61,8 @@ in_fleet_tmux() {
 ensure_server_env() {
   tx set-environment -g AGENT_FLEET_ROOT "$ROOT_DIR" 2>/dev/null || true
   tx set-environment -g AGENT_FLEET_SOCKET "$SOCKET" 2>/dev/null || true
+  # Rails/pickers spawned by tmux hooks resolve the palette from this.
+  tx set-environment -g AGENT_FLEET_THEME "$AF_THEME" 2>/dev/null || true
 }
 
 # '|' is also mapped: it's the fleet.snapshot field delimiter, so letting it
@@ -557,7 +564,12 @@ cmd_reload() {
     "$ROOT_DIR/scripts/sidenav-toggle.sh" "$w" '' show
   done < <(tx list-panes -a -F '#{window_id} #{@fleet-sidenav}' 2>/dev/null \
              | awk '$2=="1"{print $1}' | sort -u)
-  echo "fleet reloaded — daemon and rails respawned"
+  # Re-style the live server (theme.conf was regenerated above at CLI start) and
+  # re-tune per-window border overrides — makes `AGENT_FLEET_THEME=x reload` a
+  # live theme switch, no restart.
+  tx source-file "$CONF" 2>/dev/null || true
+  "$ROOT_DIR/scripts/border-tune.sh" 2>/dev/null || true
+  echo "fleet reloaded — daemon and rails respawned (theme: $AF_THEME)"
 }
 
 # save — snapshot the current layout to the restore file (also done on a timer
@@ -665,6 +677,10 @@ Env:
   AGENT_FLEET_CONF     Base tmux config (default: <repo>/conf/agent-fleet.conf)
   AGENT_FLEET_SOCKET   tmux socket name (default: agent-fleet)
   AGENT_FLEET_CMD      Default agent command (default: claude)
+  AGENT_FLEET_THEME    Palette preset from conf/themes/ (default: tokyo-night;
+                       also: catppuccin-mocha gruvbox nord rose-pine dracula
+                       everforest kanagawa). Switch live: AGENT_FLEET_THEME=nord
+                       agent-fleet reload (persist it in your shell profile).
 
 User overrides: ~/.config/agent-fleet/local.conf is sourced by the base config if present.
 EOF

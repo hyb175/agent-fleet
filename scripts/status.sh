@@ -20,6 +20,9 @@ AF_CACHE2="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/cache"
 AF_SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
 AF_TMUX="${TMUX_BIN:-tmux}"
 
+# Palette (AF_THEME_* hex + T_* SGR escapes), resolved from AGENT_FLEET_THEME.
+source "$(dirname "${BASH_SOURCE[0]}")/theme.sh"
+
 mkdir -p "$AF_CACHE2" 2>/dev/null || true
 
 # cache_bg <key> <ttl_seconds> <cmd> [args...]
@@ -156,23 +159,26 @@ state_rank() {
 # Shared glyph vocabulary (used by the sidenav AND the picker, so they match).
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)        # braille spinner, 1 cell each
 
-# state_fg <state> -> ANSI fg color (Tokyo Night truecolor).
+# state_fg <state> -> ANSI fg color (from the theme palette).
 state_fg() {
   case "$1" in
-    wait)    printf '\033[38;2;247;118;142m' ;;   # red    #f7768e
-    working) printf '\033[38;2;224;175;104m' ;;   # yellow #e0af68
-    done)    printf '\033[38;2;158;206;106m' ;;   # green  #9ece6a
-    *)       printf '\033[38;2;86;95;137m'   ;;   # muted  #565f89
+    wait)    printf '%s' "$T_WAIT" ;;
+    working) printf '%s' "$T_WORKING" ;;
+    done)    printf '%s' "$T_DONE" ;;
+    *)       printf '%s' "$T_MUTED" ;;
   esac
 }
 
 # glyph_char <state> [frame] -> 1-cell glyph; working uses the braille spinner.
+# Each state gets its own SHAPE, not just a color — red/green alone is
+# invisible to deuteranopes.
 glyph_char() {
   case "$1" in
-    working)   printf '%s' "${SPIN[$(( ${2:-0} % ${#SPIN[@]} ))]}" ;;
-    wait|done) printf '●' ;;
-    idle)      printf '○' ;;
-    *)         printf '·' ;;
+    working) printf '%s' "${SPIN[$(( ${2:-0} % ${#SPIN[@]} ))]}" ;;
+    wait)    printf '◆' ;;
+    done)    printf '✓' ;;
+    idle)    printf '○' ;;
+    *)       printf '·' ;;
   esac
 }
 
@@ -244,12 +250,12 @@ summary() {
     esac
   done < <("$AF_TMUX" -L "$AF_SOCKET" list-panes -a \
             -F '#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}' 2>/dev/null)
-  # Match the rail/picker glyphs: ● red wait, braille working, ● green done.
+  # Match the rail/picker glyphs: ◆ wait, braille working, ✓ done.
   # The working frame advances each status refresh (a slow spin).
   local out="" frame=$(( $(date +%s) % 10 ))
-  (( w > 0 )) && out+="#[fg=#f7768e]●${w} "
-  (( g > 0 )) && out+="#[fg=#e0af68]$(glyph_char working "$frame")${g} "
-  (( d > 0 )) && out+="#[fg=#9ece6a]●${d} "
+  (( w > 0 )) && out+="#[fg=$AF_THEME_WAIT]◆${w} "
+  (( g > 0 )) && out+="#[fg=$AF_THEME_WORKING]$(glyph_char working "$frame")${g} "
+  (( d > 0 )) && out+="#[fg=$AF_THEME_DONE]✓${d} "
   [[ -n "$out" ]] && printf '%s#[default]' "$out"
 }
 

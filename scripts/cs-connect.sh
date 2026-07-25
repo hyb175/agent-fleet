@@ -39,7 +39,9 @@ cmd=( "$@" )
 REMOTE_PORT="${AGENT_FLEET_CS_SSH_PORT:-2222}"
 SSH_USER="${AGENT_FLEET_CS_USER:-dev}"
 
-red='\033[38;2;247;118;142m'; blue='\033[38;2;122;162;247m'
+# Palette from theme.sh (AGENT_FLEET_THEME preset).
+source "$(dirname "${BASH_SOURCE[0]}")/theme.sh"
+red="$T_WAIT"; blue="$T_ACCENT"
 dim='\033[2m'; bold='\033[1m'; rst='\033[0m'
 
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
