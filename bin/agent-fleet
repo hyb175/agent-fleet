@@ -61,8 +61,10 @@ in_fleet_tmux() {
 ensure_server_env() {
   tx set-environment -g AGENT_FLEET_ROOT "$ROOT_DIR" 2>/dev/null || true
   tx set-environment -g AGENT_FLEET_SOCKET "$SOCKET" 2>/dev/null || true
-  # Rails/pickers spawned by tmux hooks resolve the palette from this.
+  # Rails/pickers spawned by tmux hooks resolve the palette from this; the
+  # conf's %if needs THEME_CONF in the server env to re-style on re-parse.
   tx set-environment -g AGENT_FLEET_THEME "$AF_THEME" 2>/dev/null || true
+  tx set-environment -g AGENT_FLEET_THEME_CONF "$AGENT_FLEET_THEME_CONF" 2>/dev/null || true
 }
 
 # '|' is also mapped: it's the fleet.snapshot field delimiter, so letting it
@@ -566,8 +568,13 @@ cmd_reload() {
              | awk '$2=="1"{print $1}' | sort -u)
   # Re-style the live server (theme.conf was regenerated above at CLI start) and
   # re-tune per-window border overrides — makes `AGENT_FLEET_THEME=x reload` a
-  # live theme switch, no restart.
+  # live theme switch, no restart. The theme snippet is sourced explicitly:
+  # the conf's %if expands from the SERVER's environment, which on a server
+  # booted before the theme existed doesn't have $AGENT_FLEET_THEME_CONF yet.
   tx source-file "$CONF" 2>/dev/null || true
+  if [[ -f "$AGENT_FLEET_THEME_CONF" ]]; then
+    tx source-file "$AGENT_FLEET_THEME_CONF" 2>/dev/null || true
+  fi
   "$ROOT_DIR/scripts/border-tune.sh" 2>/dev/null || true
   echo "fleet reloaded — daemon and rails respawned (theme: $AF_THEME)"
 }
