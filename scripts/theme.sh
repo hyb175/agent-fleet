@@ -19,8 +19,17 @@ _af_sgr() {  # <var> <38|48> <#rrggbb> — build one SGR escape into <var>
 
 theme_resolve() {
   local dir="${AGENT_FLEET_ROOT:-${BASH_SOURCE[0]%/*}/..}/conf/themes"
-  AF_THEME="${AGENT_FLEET_THEME:-tokyo-night}"
-  [[ -f "$dir/$AF_THEME.sh" ]] || AF_THEME="tokyo-night"
+  # Precedence: env (explicit one-shot override) > the persisted choice
+  # (`agent-fleet theme <name>` writes it) > default. A FILE carries the real
+  # setting because CLI calls fired by tmux keybinds run in the server's
+  # environment, where a shell-profile export never arrives — env-only
+  # persistence got silently reverted by the first `goto` after a switch.
+  AF_THEME="${AGENT_FLEET_THEME:-}"
+  if [[ -z "$AF_THEME" ]]; then
+    local pf="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/theme"
+    if [[ -r "$pf" ]]; then read -r AF_THEME < "$pf" 2>/dev/null || true; fi
+  fi
+  [[ -n "$AF_THEME" && -f "$dir/$AF_THEME.sh" ]] || AF_THEME="tokyo-night"
   # shellcheck source=../conf/themes/tokyo-night.sh
   source "$dir/$AF_THEME.sh"
   export AF_THEME AF_THEME_BG AF_THEME_SURFACE AF_THEME_HL AF_THEME_FG \

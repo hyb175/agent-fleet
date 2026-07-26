@@ -567,8 +567,8 @@ cmd_reload() {
   done < <(tx list-panes -a -F '#{window_id} #{@fleet-sidenav}' 2>/dev/null \
              | awk '$2=="1"{print $1}' | sort -u)
   # Re-style the live server (theme.conf was regenerated above at CLI start) and
-  # re-tune per-window border overrides — makes `AGENT_FLEET_THEME=x reload` a
-  # live theme switch, no restart. The theme snippet is sourced explicitly:
+  # re-tune per-window border overrides — makes `agent-fleet theme <name>` a
+  # live switch, no restart. The theme snippet is sourced explicitly:
   # the conf's %if expands from the SERVER's environment, which on a server
   # booted before the theme existed doesn't have $AGENT_FLEET_THEME_CONF yet.
   tx source-file "$CONF" 2>/dev/null || true
@@ -577,6 +577,35 @@ cmd_reload() {
   fi
   "$ROOT_DIR/scripts/border-tune.sh" 2>/dev/null || true
   echo "fleet reloaded — daemon and rails respawned (theme: $AF_THEME)"
+}
+
+# theme [name] — list presets, or persist + apply one. The choice lives in
+# ~/.config/agent-fleet/theme so every future CLI call (including keybind-fired
+# ones running in the server env) resolves the same palette.
+cmd_theme() {
+  local dir="$ROOT_DIR/conf/themes" cfg="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet"
+  local name="${1:-}" f n
+  if [[ -z "$name" ]]; then
+    for f in "$dir"/*.sh; do
+      n="$(basename "$f" .sh)"
+      if [[ "$n" == "$AF_THEME" ]]; then echo "* $n"; else echo "  $n"; fi
+    done
+    return 0
+  fi
+  if [[ ! -f "$dir/$name.sh" ]]; then
+    echo "error: unknown theme '$name' — list them with: agent-fleet theme" >&2
+    exit 1
+  fi
+  mkdir -p "$cfg" 2>/dev/null || true
+  printf '%s\n' "$name" > "$cfg/theme"
+  export AGENT_FLEET_THEME="$name"
+  theme_resolve
+  theme_write_conf
+  if server_up; then
+    cmd_reload
+  else
+    echo "theme: $name (fleet not running — applies on next boot)"
+  fi
 }
 
 # save — snapshot the current layout to the restore file (also done on a timer
@@ -676,6 +705,7 @@ Verbs:
                                    Same for ~/.codex/config.toml. Codex trust-gates hooks:
                                    approve once in codex's startup hooks review to activate.
   agent-fleet reload               Respawn the snapshot daemon and rails (pick up new code after a pull).
+  agent-fleet theme [name]         List palettes, or switch to one live (persists in ~/.config/agent-fleet/theme).
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
   agent-fleet stop                 Save the layout, then kill the fleet server.
@@ -684,10 +714,8 @@ Env:
   AGENT_FLEET_CONF     Base tmux config (default: <repo>/conf/agent-fleet.conf)
   AGENT_FLEET_SOCKET   tmux socket name (default: agent-fleet)
   AGENT_FLEET_CMD      Default agent command (default: claude)
-  AGENT_FLEET_THEME    Palette preset from conf/themes/ (default: tokyo-night;
-                       also: catppuccin-mocha gruvbox nord rose-pine dracula
-                       everforest kanagawa). Switch live: AGENT_FLEET_THEME=nord
-                       agent-fleet reload (persist it in your shell profile).
+  AGENT_FLEET_THEME    One-shot palette override (normally use: agent-fleet theme <name>,
+                       which persists; presets live in conf/themes/).
 
 User overrides: ~/.config/agent-fleet/local.conf is sourced by the base config if present.
 EOF
@@ -712,6 +740,7 @@ main() {
     kimi-hooks)  cmd_kimi_hooks "$@" ;;
     codex-hooks) cmd_codex_hooks "$@" ;;
     reload)     cmd_reload "$@" ;;
+    theme)      cmd_theme "$@" ;;
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;

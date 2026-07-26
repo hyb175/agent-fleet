@@ -13,6 +13,9 @@ SOCK="af-test-$$"
 export AGENT_FLEET_ROOT="$REPO"
 export AGENT_FLEET_SOCKET="$SOCK"
 export XDG_CACHE_HOME="$(mktemp -d)"
+# Private config too: theme resolution reads $XDG_CONFIG_HOME/agent-fleet/theme,
+# and the machine's real choice must not leak into test assertions.
+export XDG_CONFIG_HOME="$(mktemp -d)"
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 
 tx() { tmux -L "$SOCK" "$@"; }
@@ -32,7 +35,7 @@ boot_server() {  # [session] [dir]
 
 _lib_cleanup() {
   tx kill-server 2>/dev/null
-  rm -rf "$XDG_CACHE_HOME" "$WORK" 2>/dev/null
+  rm -rf "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$WORK" 2>/dev/null
   rm -f "/private/tmp/tmux-$(id -u)/$SOCK" 2>/dev/null
 }
 trap _lib_cleanup EXIT

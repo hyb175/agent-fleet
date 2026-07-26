@@ -258,7 +258,7 @@ To boot the fleet at login, run `agent-fleet attach` from your shell profile or 
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
 | `AGENT_FLEET_CMD` | `claude` | Default command for `add`; hooks attach only when the command is `claude` |
-| `AGENT_FLEET_THEME` | `tokyo-night` | Palette preset from `conf/themes/` — see [Theming](#theming) |
+| `AGENT_FLEET_THEME` | unset | One-shot palette override; the persisted choice comes from `agent-fleet theme <name>` — see [Theming](#theming) |
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping hand-started panes (space-separated). Cursor's `agent` shown as `cursor`. |
 | `AGENT_FLEET_CS_CMD` | `bash` | Default command for codespace connections; set to `claude`, `fish`, etc. |
 | `AGENT_FLEET_CS_USER` | `dev` | SSH login user for codespace agents |
@@ -288,12 +288,14 @@ Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet` (hooks o
 
 ### Theming
 
-One palette drives everything — status bar, rail, picker, borders, glyph colors. Pick a preset with `AGENT_FLEET_THEME`:
+One palette drives everything — status bar, rail, picker, borders, glyph colors. Switch live:
 
 ```sh
-AGENT_FLEET_THEME=catppuccin-mocha agent-fleet reload   # try it live, no restart
-export AGENT_FLEET_THEME=catppuccin-mocha               # persist in your shell profile
+agent-fleet theme                    # list presets (current marked *)
+agent-fleet theme catppuccin-mocha   # switch + persist, no restart
 ```
+
+The choice is stored in `~/.config/agent-fleet/theme`; `AGENT_FLEET_THEME` overrides it for one invocation.
 
 | Preset | Look |
 | --- | --- |
