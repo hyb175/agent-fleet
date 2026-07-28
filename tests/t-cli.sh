@@ -12,6 +12,16 @@ echo "t-cli:"
 mkdir -p "$WORK/apidir"
 boot_server api-v2 "$WORK"
 
+# add help is subcommand-specific, successful, and side-effect free
+windows_before="$(tx list-windows -a -F '#{window_id}' | wc -l | tr -d ' ')"
+for flag in --help -h; do
+  out="$("$AF" add "$flag" 2>&1)"; rc=$?
+  check "add $flag prints focused help" \
+    '[[ $rc -eq 0 && "$out" == "Usage: agent-fleet add"* && "$out" == *"--new-workspace <name>"* && "$out" != *"Verbs:"* ]]'
+  windows_after="$(tx list-windows -a -F '#{window_id}' | wc -l | tr -d ' ')"
+  check "add $flag creates no window" "[[ $windows_after -eq $windows_before ]]"
+done
+
 # prefix-collision family
 "$AF" connect api >/dev/null 2>&1 || true
 check "connect api creates api (no prefix hijack)" "tx has-session -t '=api' 2>/dev/null"

@@ -192,10 +192,28 @@ cmd_connect() {
 #   --cmd <command>         what to run     (default: $AGENT_FLEET_CMD = claude)
 #   --dir <dir>             working dir      (default: target session's path, else $PWD)
 # Prints the new pane id on success.
+usage_add() {
+  cat <<EOF
+Usage: agent-fleet add [name] [options]
+
+Add an agent window to a workspace and print its pane id.
+
+Options:
+  --to <workspace>          Target workspace (default: current fleet workspace, else first).
+  --new-workspace <name>    Put the agent in its own workspace (create or reuse).
+  --cmd <command>           Command to run (default: $DEFAULT_AGENT_CMD).
+  --dir <dir>               Working directory (default: target workspace path, else current directory).
+  --codespace, --cs <name>  Run inside a GitHub Codespace over SSH.
+  --focus                    Focus the new agent window.
+  -h, --help                 Show this help.
+EOF
+}
+
 cmd_add() {
   local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" cs="" cs_dir="" cmd_explicit="" new_ws=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      -h|--help)         usage_add; return 0 ;;
       --to)             target="$2"; shift 2 ;;
       --cmd)            cmd="$2"; cmd_explicit=1; shift 2 ;;
       --dir)            dir="$2"; cs_dir="$2"; shift 2 ;;
