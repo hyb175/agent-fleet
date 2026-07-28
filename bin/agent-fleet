@@ -422,6 +422,83 @@ cmd_rename_tab() {
   tx rename-window -t "$target" "$new" && echo "tab → '$new'"
 }
 
+# move [<target>] --to <workspace> — move a tab (tmux window) to another
+# workspace (session) on the fleet server.
+#   <target>: a pane id (%id, resolved to the window that owns it — an agent
+#             owns its window, so this moves that agent), a <session>:<window>,
+#             or a window id (@id). Omitted -> the current tab (run inside fleet).
+#   --to <workspace>: destination workspace; must already exist.
+#   --focus: follow the tab to the destination (like `add --focus`).
+# Same-server move only (every workspace lives on the one fleet socket, so this
+# always applies). The pane id is server-global and unchanged by the move, so
+# per-pane state files ($AF_CACHE_DIR/panes/*) follow the agent untouched.
+usage_move() {
+  cat <<EOF
+Usage: agent-fleet move [<target>] --to <workspace> [options]
+
+Move a tab (tmux window) to another workspace on the fleet server.
+
+Target:
+  %<pane-id>                A pane id — moves the window that owns it.
+  <session>:<window>        An explicit tab.
+  @<window-id>              A window id.
+  (omitted)                 The current tab (run inside the fleet).
+
+Options:
+  --to <workspace>          Destination workspace (must already exist). Required.
+  --focus                   Follow the tab to the destination workspace.
+  -h, --help                Show this help.
+EOF
+}
+
+cmd_move() {
+  local target="" dest="" focus=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)  usage_move; return 0 ;;
+      --to)       dest="$2"; shift 2 ;;
+      --focus)    focus=1; shift ;;
+      --)         shift; break ;;
+      -*)         echo "error: unknown flag: $1" >&2; usage_move >&2; exit 2 ;;
+      *)          if [[ -z "$target" ]]; then target="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
+    esac
+  done
+  [[ -n "$dest" ]] || { echo "usage: agent-fleet move [<target>] --to <workspace> [--focus]" >&2; exit 2; }
+  server_up || { echo "error: no fleet running" >&2; exit 1; }
+
+  # Resolve <target> to a window id (@id): server-global and stable across the
+  # move, so the same handle drives both move-window and the post-move select.
+  # Moving a window moves every pane in it (an agent plus any sidecar splits
+  # travel together).
+  local ref win=""
+  if [[ -z "$target" ]]; then
+    win="$(current_window)"
+    [[ -n "$win" ]] || { echo "error: no current tab — run inside the fleet or pass <target>" >&2; exit 1; }
+  else
+    case "$target" in
+      %*)  ref="$target" ;;      # pane id -> its window
+      *:*) ref="=$target" ;;     # session:window — '=' exact-matches the session
+      *)   ref="$target" ;;      # @window-id
+    esac
+    win="$(tx display-message -p -t "$ref" '#{window_id}' 2>/dev/null || true)"
+    [[ -n "$win" ]] || { echo "error: no such tab: $target" >&2; exit 1; }
+  fi
+
+  tx has-session -t "=$dest" 2>/dev/null \
+    || { echo "error: no such workspace: $dest (create it with connect / add --new-workspace)" >&2; exit 1; }
+
+  # Trailing ':' with no index -> tmux appends at the next free index (no collision).
+  tx move-window -s "$win" -t "=$dest:" || { echo "error: move failed" >&2; exit 1; }
+
+  # Follow the tab, mirroring `add --focus`: switch workspace first (in-fleet),
+  # then select the moved window in its new home.
+  if [[ -n "$focus" ]] && in_fleet_tmux; then
+    tx switch-client -t "=$dest" 2>/dev/null || true
+    tx select-window -t "$win" 2>/dev/null || true
+  fi
+  echo "tab moved to workspace '$dest'"
+}
+
 # hooks-file — regenerate and print the path to the fleet's Claude settings
 # overlay (hooks only). Useful for inspection or `claude --settings $(…)`.
 cmd_hooks_file() {
@@ -568,15 +645,16 @@ cmd_reload() {
              | awk '$2=="1"{print $1}' | sort -u)
   # Re-style the live server (theme.conf was regenerated above at CLI start) and
   # re-tune per-window border overrides — makes `agent-fleet theme <name>` a
-  # live switch, no restart. The theme snippet is sourced explicitly:
-  # the conf's %if expands from the SERVER's environment, which on a server
-  # booted before the theme existed doesn't have $AGENT_FLEET_THEME_CONF yet.
+  # live switch, no restart. Also picks up edited keybindings/options, the same
+  # thing Prefix r does. The theme snippet is sourced explicitly: the conf's %if
+  # expands from the SERVER's environment, which on a server booted before the
+  # theme existed doesn't have $AGENT_FLEET_THEME_CONF yet.
   tx source-file "$CONF" 2>/dev/null || true
   if [[ -f "$AGENT_FLEET_THEME_CONF" ]]; then
     tx source-file "$AGENT_FLEET_THEME_CONF" 2>/dev/null || true
   fi
   "$ROOT_DIR/scripts/border-tune.sh" 2>/dev/null || true
-  echo "fleet reloaded — daemon and rails respawned (theme: $AF_THEME)"
+  echo "fleet reloaded — config re-sourced, daemon and rails respawned (theme: $AF_THEME)"
 }
 
 # theme [name] — list presets, or persist + apply one. The choice lives in
@@ -695,6 +773,9 @@ Verbs:
   agent-fleet hooks-file           Print (and regenerate) the claude status-hooks overlay path.
   agent-fleet rename-workspace [<old>] <new>   Rename a workspace (session).
   agent-fleet rename-tab [<target>] <new>      Rename a tab (window).
+  agent-fleet move [<target>] --to <ws> [--focus]
+                                   Move a tab to another workspace. Target: %pane, <ws>:<win>,
+                                   @window-id, or the current tab. --focus follows it there.
   agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).
   agent-fleet list                 List workspaces and their agents.
   agent-fleet pick                 Open the fzf picker popup (or attach from a bare shell).
@@ -704,7 +785,7 @@ Verbs:
   agent-fleet codex-hooks [install|remove|status]
                                    Same for ~/.codex/config.toml. Codex trust-gates hooks:
                                    approve once in codex's startup hooks review to activate.
-  agent-fleet reload               Respawn the snapshot daemon and rails (pick up new code after a pull).
+  agent-fleet reload               Re-source the config and respawn the snapshot daemon and rails (pick up new code/binds after a pull).
   agent-fleet theme [name]         List palettes, or switch to one live (persists in ~/.config/agent-fleet/theme).
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
@@ -732,6 +813,7 @@ main() {
     back)       cmd_back "$@" ;;
     rename-workspace|rename-ws) cmd_rename_workspace "$@" ;;
     rename-tab|rename-window)   cmd_rename_tab "$@" ;;
+    move|mv)    cmd_move "$@" ;;
     kill|rm)    cmd_kill "$@" ;;
     list|ls)    cmd_list "$@" ;;
     pick)       cmd_pick "$@" ;;
