@@ -82,12 +82,15 @@ read_snapshot() {
 # glyph fg + char for a state (set GLYPH); fork-free. Shapes differ per state
 # (◆/spinner/✓/○) so states stay tellable apart without color vision.
 glyph_for() {  # $1=state $2=frame
+  # ${T_*} MUST be brace-delimited: a bare "$T_WAIT◆" makes bash (5.x, UTF-8
+  # locale) fold the glyph's leading continuation byte into the variable name,
+  # so it reads an unbound "T_WAIT<byte>" and set -u aborts the whole render.
   case "$1" in
-    wait)    GLYPH="$T_WAIT◆$C_OFF" ;;
-    working) GLYPH="$T_WORKING${SPIN[$2 % ${#SPIN[@]}]}$C_OFF" ;;
-    done)    GLYPH="$T_DONE✓$C_OFF" ;;
-    idle)    GLYPH="$T_MUTED○$C_OFF" ;;
-    *)       GLYPH="$T_MUTED·$C_OFF" ;;
+    wait)    GLYPH="${T_WAIT}◆$C_OFF" ;;
+    working) GLYPH="${T_WORKING}${SPIN[$2 % ${#SPIN[@]}]}$C_OFF" ;;
+    done)    GLYPH="${T_DONE}✓$C_OFF" ;;
+    idle)    GLYPH="${T_MUTED}○$C_OFF" ;;
+    *)       GLYPH="${T_MUTED}·$C_OFF" ;;
   esac
 }
 
