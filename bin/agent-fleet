@@ -542,6 +542,114 @@ cmd_stop() {
   echo "fleet stopped"
 }
 
+# uninstall [-y|--yes] [--purge] — stop the fleet and remove the install.
+# Unlinks the CLI from PATH, kills the server + snapshot daemon, and clears the
+# state cache. The managed tree (the curl installer's $XDG_DATA_HOME/agent-fleet)
+# is removed; a dev checkout is NEVER deleted (guarded by .git / a non-managed
+# root), so uninstall can't nuke your working copy. --purge also drops the
+# config dir. Destructive, so it confirms unless -y is given.
+usage_uninstall() {
+  cat <<EOF
+Usage: agent-fleet uninstall [-y|--yes] [--purge]
+
+Stop the fleet and remove the install: unlink the CLI, kill the server and the
+snapshot daemon, and clear the state cache ($AF_CACHE_DIR).
+
+A managed install (\$XDG_DATA_HOME/agent-fleet, from the curl installer) has its
+tree removed; a dev checkout is left untouched. --purge also removes the config
+dir (${XDG_CONFIG_HOME:-\$HOME/.config}/agent-fleet: theme choice + local.conf).
+
+Options:
+  -y, --yes     Don't prompt for confirmation.
+  --purge       Also remove the config dir.
+  -h, --help    Show this help.
+EOF
+}
+
+# Canonicalize a path by following symlinks (macOS has no readlink -f).
+_canon() {
+  local p="$1" d
+  while [[ -L "$p" ]]; do d="$(cd "$(dirname "$p")" && pwd)"; p="$(readlink "$p")"; [[ "$p" != /* ]] && p="$d/$p"; done
+  [[ -e "$p" ]] && printf '%s' "$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
+}
+
+cmd_uninstall() {
+  local yes="" purge=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -y|--yes)  yes=1; shift ;;
+      --purge)   purge=1; shift ;;
+      -h|--help) usage_uninstall; return 0 ;;
+      *) echo "error: unexpected arg: $1" >&2; usage_uninstall >&2; exit 2 ;;
+    esac
+  done
+
+  local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agent-fleet"
+  local cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet"
+  local real_cli="$BIN_DIR/agent-fleet"
+
+  # Managed install (delete OK) vs dev checkout (never delete): the root must be
+  # exactly the managed data dir AND carry no .git.
+  local managed=0
+  if [[ "$(_canon "$ROOT_DIR" || echo "$ROOT_DIR")" == "$(_canon "$data_dir" || echo "$data_dir")" && ! -d "$ROOT_DIR/.git" ]]; then
+    managed=1
+  fi
+
+  # PATH symlinks (plus the usual install bins) that resolve to our real CLI.
+  local -a links=()
+  local d cand
+  while IFS= read -r d; do
+    [[ -n "$d" && -L "$d/agent-fleet" ]] || continue
+    cand="$d/agent-fleet"
+    [[ "$(_canon "$cand" 2>/dev/null)" == "$real_cli" ]] && links+=("$cand")
+  done < <(printf '%s\n' "${PATH//:/$'\n'}" "$HOME/.local/bin" "/usr/local/bin" | awk 'NF && !seen[$0]++')
+
+  # --- plan + confirm (destructive) ---
+  echo "agent-fleet uninstall will:"
+  echo "  • stop the fleet server + snapshot daemon"
+  if ((${#links[@]})); then printf '  • unlink CLI: %s\n' "${links[@]}"; else echo "  • (no CLI symlink found on PATH)"; fi
+  echo "  • clear state cache: $AF_CACHE_DIR"
+  if ((managed)); then echo "  • remove install tree: $ROOT_DIR"
+  else echo "  • KEEP source tree (dev checkout): $ROOT_DIR"; fi
+  [[ -n "$purge" ]] && echo "  • remove config: $cfg_dir"
+  echo
+  if [[ -z "$yes" ]]; then
+    local ans=""
+    if [[ -t 0 ]]; then
+      read -r -p "proceed? [y/N] " ans || ans=""
+    elif { exec 3</dev/tty; } 2>/dev/null; then
+      read -r -u 3 -p "proceed? [y/N] " ans || ans=""
+      exec 3<&-
+    else
+      echo "refusing to uninstall without a TTY — re-run with -y to confirm" >&2
+      exit 1
+    fi
+    case "$ans" in y|Y|yes|YES) ;; *) echo "aborted."; return 0 ;; esac
+  fi
+
+  # --- stop the fleet (comm-checked daemon kill, then server) ---
+  if server_up; then
+    local pf="$AF_CACHE_DIR/snapshotd.lock/pid" dpid
+    dpid="$(cat "$pf" 2>/dev/null || true)"
+    { [[ -n "$dpid" ]] && ps -p "$dpid" -o command= 2>/dev/null | grep -q snapshotd && kill "$dpid" 2>/dev/null; } || true
+    tx kill-server 2>/dev/null || true
+    echo "stopped the fleet."
+  fi
+
+  # --- unlink, clear state, optional config, then the managed tree last ---
+  local l
+  if ((${#links[@]})); then for l in "${links[@]}"; do rm -f "$l" && echo "unlinked: $l"; done; fi
+  [[ -d "$AF_CACHE_DIR" ]] && rm -rf "$AF_CACHE_DIR" && echo "cleared: $AF_CACHE_DIR"
+  [[ -n "$purge" && -d "$cfg_dir" ]] && rm -rf "$cfg_dir" && echo "removed: $cfg_dir"
+  if ((managed)); then
+    rm -rf "$ROOT_DIR" && echo "removed: $ROOT_DIR"
+    echo "uninstalled."
+  else
+    echo "kept source tree: $ROOT_DIR (delete the checkout yourself if you're done with it)"
+    echo "uninstalled."
+  fi
+}
+
 # Shared machinery for install-wide agent hook blocks (kimi, codex). These
 # CLIs load hooks only from their global config — no per-launch overlay flag
 # like claude's --settings — so this is explicit opt-in state on the user's
@@ -808,6 +916,9 @@ Verbs:
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
   agent-fleet stop                 Save the layout, then kill the fleet server.
+  agent-fleet uninstall [-y] [--purge]
+                                   Stop the fleet, unlink the CLI, and clear state. Removes a managed
+                                   install; never a dev checkout. --purge also drops the config dir.
 
 Env:
   AGENT_FLEET_CONF     Base tmux config (default: <repo>/conf/agent-fleet.conf)
@@ -844,6 +955,7 @@ main() {
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;
+    uninstall)  cmd_uninstall "$@" ;;
     # Internal: echo the last command-prompt input, parked in a tmux option by
     # the conf's prompt bindings (typed text never touches sh — see the conf).
     _prompt)    tx show-option -gqv @fleet-prompt 2>/dev/null ;;
