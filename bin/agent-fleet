@@ -643,13 +643,16 @@ cmd_uninstall() {
     managed=1
   fi
 
-  # PATH symlinks (plus the usual install bins) that resolve to our real CLI.
+  # PATH symlinks (plus the usual install bins) that resolve to our real CLI —
+  # both the full name and the `af` shortcut.
   local -a links=()
-  local d cand
+  local d nm cand
   while IFS= read -r d; do
-    [[ -n "$d" && -L "$d/agent-fleet" ]] || continue
-    cand="$d/agent-fleet"
-    [[ "$(_canon "$cand" 2>/dev/null)" == "$real_cli" ]] && links+=("$cand")
+    for nm in agent-fleet af; do
+      cand="$d/$nm"
+      [[ -L "$cand" ]] || continue
+      [[ "$(_canon "$cand" 2>/dev/null)" == "$real_cli" ]] && links+=("$cand")
+    done
   done < <(printf '%s\n' "${PATH//:/$'\n'}" "$HOME/.local/bin" "/usr/local/bin" | awk 'NF && !seen[$0]++')
 
   # --- plan + confirm (destructive) ---
@@ -1053,7 +1056,7 @@ cmd_cs() {
 
 usage() {
   cat <<EOF
-agent-fleet — tmux-native session manager for Claude Code agents.
+agent-fleet — tmux-native session manager for Claude Code agents.   (alias: af)
 
 Model:  workspace = tmux session   ·   agent = tmux window   ·   isolated socket
 

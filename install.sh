@@ -86,6 +86,21 @@ mkdir -p "$BIN_DIR"
 ln -sf "$ROOT_DIR/bin/agent-fleet" "$BIN_DIR/agent-fleet"
 say "linked: $BIN_DIR/agent-fleet → $ROOT_DIR/bin/agent-fleet"
 
+# Short alias `af` → agent-fleet. Create it only when `af` is free OR the name
+# already points at OUR CLI (idempotent re-install). Never clobber a foreign
+# `af` — a real binary, or a symlink to something else — even if it sits at
+# exactly $BIN_DIR/af.
+af_link="$BIN_DIR/af"
+af_target="$ROOT_DIR/bin/agent-fleet"
+af_is_ours() { [[ -L "$af_link" && "$(readlink "$af_link" 2>/dev/null)" == "$af_target" ]]; }
+af_existing="$(command -v af 2>/dev/null || true)"
+if [[ -z "$af_existing" ]] || af_is_ours; then
+  ln -sf "$af_target" "$af_link"
+  say "linked: $af_link → agent-fleet (shortcut)"
+else
+  say "note: 'af' already taken by $af_existing — skipping the shortcut"
+fi
+
 # Live-status cache. Status hooks are fleet-scoped (applied per-agent via
 # `claude --settings`), so your global ~/.claude/settings.json is untouched.
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
