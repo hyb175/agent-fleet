@@ -27,6 +27,8 @@ BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 ROOT_DIR="$(cd "$BIN_DIR/.." && pwd)"
 
 AGENT_FLEET_VERSION="0.1.0"
+# GitHub slug the self-upgrade fetches releases from (override for a fork).
+AGENT_FLEET_REPO="${AGENT_FLEET_REPO:-hyb175/agent-fleet}"
 
 CONF="${AGENT_FLEET_CONF:-$ROOT_DIR/conf/agent-fleet.conf}"
 SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
@@ -573,6 +575,52 @@ _canon() {
   [[ -e "$p" ]] && printf '%s' "$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
 }
 
+# Ask "<msg> [y/N]" on the controlling terminal. 0=yes, 1=no/abort, 2=no TTY to
+# ask on (caller should tell the user to pass -y). Callers must guard against
+# set -e, e.g.  rc=0; _confirm "…" || rc=$?
+_confirm() {
+  local msg="$1" ans=""
+  if [[ -t 0 ]]; then
+    read -r -p "$msg [y/N] " ans || ans=""
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    read -r -u 3 -p "$msg [y/N] " ans || ans=""
+    exec 3<&-
+  else
+    return 2
+  fi
+  case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+# _semver_gt A B — true iff version A > B. Tolerates a leading 'v'; missing or
+# non-numeric fields count as 0. No dependency on `sort -V` (absent on BSD).
+_semver_gt() {
+  local i x y; local -a A B
+  IFS=. read -r -a A <<<"${1#v}"
+  IFS=. read -r -a B <<<"${2#v}"
+  for i in 0 1 2; do
+    x="${A[$i]:-0}"; x="${x//[!0-9]/}"; x="${x:-0}"
+    y="${B[$i]:-0}"; y="${y//[!0-9]/}"; y="${y:-0}"
+    (( 10#$x > 10#$y )) && return 0
+    (( 10#$x < 10#$y )) && return 1
+  done
+  return 1   # equal -> not greater
+}
+
+# _latest_tag — print the highest vX.Y.Z tag published on GitHub (no jq needed).
+# Reads $AGENT_FLEET_TAGS_URL when set (tests inject a fixture), else the API.
+_latest_tag() {
+  local url="${AGENT_FLEET_TAGS_URL:-https://api.github.com/repos/$AGENT_FLEET_REPO/tags}"
+  local body best="" t
+  body="$(curl -fsSL --max-time 10 "$url" 2>/dev/null)" || return 1
+  while IFS= read -r t; do
+    [[ "$t" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || continue
+    { [[ -z "$best" ]] || _semver_gt "$t" "$best"; } && best="$t"
+  done < <(printf '%s\n' "$body" \
+             | grep -oE '"name"[[:space:]]*:[[:space:]]*"[^"]+"' \
+             | sed -E 's/.*"([^"]+)"$/\1/')
+  [[ -n "$best" ]] && printf '%s' "$best"
+}
+
 cmd_uninstall() {
   local yes="" purge=""
   while [[ $# -gt 0 ]]; do
@@ -614,17 +662,12 @@ cmd_uninstall() {
   [[ -n "$purge" ]] && echo "  • remove config: $cfg_dir"
   echo
   if [[ -z "$yes" ]]; then
-    local ans=""
-    if [[ -t 0 ]]; then
-      read -r -p "proceed? [y/N] " ans || ans=""
-    elif { exec 3</dev/tty; } 2>/dev/null; then
-      read -r -u 3 -p "proceed? [y/N] " ans || ans=""
-      exec 3<&-
-    else
-      echo "refusing to uninstall without a TTY — re-run with -y to confirm" >&2
-      exit 1
-    fi
-    case "$ans" in y|Y|yes|YES) ;; *) echo "aborted."; return 0 ;; esac
+    local rc=0; _confirm "proceed?" || rc=$?
+    case $rc in
+      0) ;;
+      2) echo "refusing to uninstall without a TTY — re-run with -y to confirm" >&2; exit 1 ;;
+      *) echo "aborted."; return 0 ;;
+    esac
   fi
 
   # --- stop the fleet (comm-checked daemon kill, then server) ---
@@ -648,6 +691,140 @@ cmd_uninstall() {
     echo "kept source tree: $ROOT_DIR (delete the checkout yourself if you're done with it)"
     echo "uninstalled."
   fi
+}
+
+# upgrade [--check] [--rollback] [-y] — self-update a managed install to the
+# newest published tag, keeping one .prev backup for rollback. Dev checkouts
+# and Nix installs are detected and pointed at their own update path (git / nix)
+# rather than touched. Reloads the running fleet so new code takes effect live.
+usage_upgrade() {
+  cat <<EOF
+Usage: agent-fleet upgrade [--check] [--rollback] [-y|--yes]
+
+Update a managed install (from the curl installer) to the newest vX.Y.Z tag,
+comparing against the installed version ($AGENT_FLEET_VERSION). The previous
+tree is kept as <install>.prev for one-step rollback.
+
+  --check       Report installed vs latest and exit (no changes).
+  --rollback    Restore the previous version from the .prev backup.
+  -y, --yes     Don't prompt for confirmation.
+  -h, --help    Show this help.
+
+A dev checkout (git) or Nix install is not modified — upgrade prints the right
+command instead. AGENT_FLEET_REF=<tag|sha> forces a specific ref (pin/downgrade).
+EOF
+}
+
+cmd_upgrade() {
+  local check="" rollback="" yes="" force_ref="${AGENT_FLEET_REF:-}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --check)    check=1; shift ;;
+      --rollback) rollback=1; shift ;;
+      -y|--yes)   yes=1; shift ;;
+      -h|--help)  usage_upgrade; return 0 ;;
+      *) echo "error: unexpected arg: $1" >&2; usage_upgrade >&2; exit 2 ;;
+    esac
+  done
+
+  local data_dir="${XDG_DATA_HOME:-$HOME/.local/share}/agent-fleet"
+  local prev_dir="$data_dir.prev"
+
+  # --- install-type detection: only a managed tree is ours to swap ---
+  case "$ROOT_DIR" in
+    /nix/store/*)
+      echo "installed via Nix — upgrade with:"
+      echo "  nix profile upgrade agent-fleet     # or bump the flake input in your config"
+      return 0 ;;
+  esac
+  local managed=0
+  if [[ "$(_canon "$ROOT_DIR" || echo "$ROOT_DIR")" == "$(_canon "$data_dir" || echo "$data_dir")" && ! -d "$ROOT_DIR/.git" ]]; then
+    managed=1
+  fi
+  if (( ! managed )); then
+    echo "this is a dev checkout — upgrade with git:"
+    echo "  git -C \"$ROOT_DIR\" pull --ff-only && agent-fleet reload"
+    return 0
+  fi
+
+  # Reload the live fleet through the (post-swap) CLI so new code takes effect.
+  _reload_live() {
+    server_up || return 0
+    if command -v agent-fleet >/dev/null 2>&1; then agent-fleet reload || true
+    else "$data_dir/bin/agent-fleet" reload || true; fi
+  }
+
+  # --- rollback: swap current <-> .prev ---
+  if [[ -n "$rollback" ]]; then
+    [[ -d "$prev_dir" ]] || { echo "error: nothing to roll back to ($prev_dir missing)" >&2; exit 1; }
+    local swap="$data_dir.swap.$$"
+    rm -rf "$swap"
+    mv "$data_dir" "$swap" && mv "$prev_dir" "$data_dir" && mv "$swap" "$prev_dir" \
+      || { echo "error: rollback swap failed" >&2; exit 1; }
+    echo "rolled back to the previous version ($("$data_dir/bin/agent-fleet" --version 2>/dev/null || echo '?'))."
+    _reload_live
+    return 0
+  fi
+
+  # --- resolve latest published tag ---
+  command -v curl >/dev/null 2>&1 || { echo "error: curl is required" >&2; exit 1; }
+  local installed="$AGENT_FLEET_VERSION" latest
+  latest="$(_latest_tag)" || { echo "error: could not fetch the tag list" >&2; exit 1; }
+  [[ -n "$latest" ]] || { echo "error: no vX.Y.Z tags published yet" >&2; exit 1; }
+
+  if [[ -n "$check" ]]; then
+    echo "installed: $installed"
+    echo "latest:    ${latest#v}"
+    if [[ -n "$force_ref" ]]; then echo "→ AGENT_FLEET_REF=$force_ref set; upgrade would fetch that ref"
+    elif _semver_gt "$latest" "$installed"; then echo "→ update available"
+    else echo "→ up to date"; fi
+    return 0
+  fi
+
+  # --- pick the ref to install ---
+  local ref
+  if [[ -n "$force_ref" ]]; then
+    ref="$force_ref"
+  elif _semver_gt "$latest" "$installed"; then
+    ref="$latest"
+  else
+    echo "already up to date ($installed)."
+    return 0
+  fi
+
+  if [[ -z "$yes" ]]; then
+    local rc=0; _confirm "upgrade $installed → ${ref#v}?" || rc=$?
+    case $rc in
+      0) ;;
+      2) echo "refusing to upgrade without a TTY — re-run with -y" >&2; exit 1 ;;
+      *) echo "aborted."; return 0 ;;
+    esac
+  fi
+
+  # --- download (AGENT_FLEET_TARBALL overrides the source, for tests) ---
+  command -v tar >/dev/null 2>&1 || { echo "error: tar is required" >&2; exit 1; }
+  local tmp url src; tmp="$(mktemp -d)"
+  url="${AGENT_FLEET_TARBALL:-https://codeload.github.com/$AGENT_FLEET_REPO/tar.gz/$ref}"
+  echo "downloading $ref …"
+  curl -fsSL "$url" | tar -xzf - -C "$tmp" \
+    || { rm -rf "$tmp"; echo "error: download/extract failed ($url)" >&2; exit 1; }
+  src="$(find "$tmp" -maxdepth 1 -type d -name 'agent-fleet-*' | head -1)"
+  [[ -n "$src" && -f "$src/bin/agent-fleet" ]] \
+    || { rm -rf "$tmp"; echo "error: tarball did not contain bin/agent-fleet" >&2; exit 1; }
+  chmod +x "$src/bin/agent-fleet" "$src"/scripts/*.sh "$src"/shims/* 2>/dev/null || true
+
+  # --- rotate: current -> .prev, new -> current (atomic mv; running process
+  #     keeps its open inode, so this can safely replace our own tree) ---
+  rm -rf "$prev_dir"
+  mv "$data_dir" "$prev_dir" || { rm -rf "$tmp"; echo "error: could not back up the current install" >&2; exit 1; }
+  if ! mv "$src" "$data_dir"; then
+    mv "$prev_dir" "$data_dir" 2>/dev/null || true
+    rm -rf "$tmp"; echo "error: swap failed — restored the previous version" >&2; exit 1
+  fi
+  rm -rf "$tmp"
+  echo "upgraded $installed → ${ref#v}."
+  _reload_live
+  echo "rollback if needed:  agent-fleet upgrade --rollback"
 }
 
 # Shared machinery for install-wide agent hook blocks (kimi, codex). These
@@ -919,6 +1096,9 @@ Verbs:
   agent-fleet uninstall [-y] [--purge]
                                    Stop the fleet, unlink the CLI, and clear state. Removes a managed
                                    install; never a dev checkout. --purge also drops the config dir.
+  agent-fleet upgrade [--check] [--rollback] [-y]
+                                   Update a managed install to the newest release tag (keeps one
+                                   .prev for rollback). Dev/Nix installs get the right git/nix hint.
 
 Env:
   AGENT_FLEET_CONF     Base tmux config (default: <repo>/conf/agent-fleet.conf)
@@ -956,6 +1136,7 @@ main() {
     restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;
     uninstall)  cmd_uninstall "$@" ;;
+    upgrade)    cmd_upgrade "$@" ;;
     # Internal: echo the last command-prompt input, parked in a tmux option by
     # the conf's prompt bindings (typed text never touches sh — see the conf).
     _prompt)    tx show-option -gqv @fleet-prompt 2>/dev/null ;;
