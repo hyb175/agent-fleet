@@ -976,6 +976,54 @@ cmd_theme() {
   fi
 }
 
+# config [path|edit] — show where config lives, or open your overrides file.
+# The base config ships in the repo; personal overrides go in local.conf, which
+# the base config sources last (so they win). This doesn't parse config — it's
+# a tmux config file; `edit` just opens it in $EDITOR, scaffolding a template.
+usage_config() {
+  cat <<EOF
+Usage: agent-fleet config [path|edit]
+
+  path   (default) Print where config lives: base config, your overrides,
+         theme choice, and the generated theme file.
+  edit   Open your overrides (local.conf) in \$EDITOR, creating a template if
+         it doesn't exist. Apply changes with: agent-fleet reload (or Prefix r).
+EOF
+}
+
+cmd_config() {
+  local cfg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet"
+  local local_conf="$cfg_dir/local.conf"
+  case "${1:-path}" in
+    -h|--help) usage_config; return 0 ;;
+    path)
+      local mark=""; [[ -f "$local_conf" ]] || mark="  (not created yet — run: agent-fleet config edit)"
+      printf 'base config:    %s\n' "$CONF"
+      printf 'your overrides: %s%s\n' "$local_conf" "$mark"
+      printf 'theme choice:   %s\n' "$cfg_dir/theme"
+      printf 'generated:      %s  (do not edit)\n' "${AGENT_FLEET_THEME_CONF:-$AF_CACHE_DIR/theme.conf}"
+      ;;
+    edit)
+      mkdir -p "$cfg_dir"
+      if [[ ! -f "$local_conf" ]]; then
+        cat > "$local_conf" <<'TMPL'
+# agent-fleet overrides — tmux config, sourced last by the base config so these
+# win. Apply changes with: agent-fleet reload  (or Prefix r).
+#
+# Examples:
+#   set -g @fleet-sidenav-auto off              # don't auto-open the rail
+#   bind -n C-Left previous-window              # your own keybinds
+#   set -g status-style "bg=#222436,fg=#c8d3f5" # tweak styling
+TMPL
+        echo "created $local_conf"
+      fi
+      "${EDITOR:-vi}" "$local_conf"
+      echo "saved — apply with: agent-fleet reload"
+      ;;
+    *) echo "error: unknown arg: $1" >&2; usage_config >&2; exit 2 ;;
+  esac
+}
+
 # save — snapshot the current layout to the restore file (also done on a timer
 # by the daemon and on `stop`).
 cmd_save() {
@@ -1043,6 +1091,7 @@ Verbs:
                                    approve once in codex's startup hooks review to activate.
   agent-fleet reload               Re-source the config and respawn the snapshot daemon and rails (pick up new code/binds after a pull).
   agent-fleet theme [name]         List palettes, or switch to one live (persists in ~/.config/agent-fleet/theme).
+  agent-fleet config [path|edit]   Show where config lives, or open your overrides (local.conf) in \$EDITOR.
   agent-fleet save                 Snapshot the layout to disk (also auto-saved + saved on stop).
   agent-fleet restore              Rebuild the saved layout on a stopped fleet (attach does this on boot).
   agent-fleet stop                 Save the layout, then kill the fleet server.
@@ -1084,6 +1133,7 @@ main() {
     codex-hooks) cmd_codex_hooks "$@" ;;
     reload)     cmd_reload "$@" ;;
     theme)      cmd_theme "$@" ;;
+    config)     cmd_config "$@" ;;
     save)       cmd_save "$@" ;;
     restore)    cmd_restore "$@" ;;
     stop)       cmd_stop "$@" ;;

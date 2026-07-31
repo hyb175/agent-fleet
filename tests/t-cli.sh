@@ -70,6 +70,15 @@ check "move-tab.sh moves the tab off its workspace to the picked one (got '$dest
   "[[ -n '$dest2' && '$dest2' != repo-x ]]"
 rm -rf "$stub"
 
+# config: path lists the files; edit scaffolds local.conf (EDITOR=true = no-op)
+cfgh="$WORK/cfghome"
+out="$(XDG_CONFIG_HOME="$cfgh" "$AF" config path 2>&1)"
+check "config path shows base config" "grep -q 'base config:' <<<\"\$out\""
+check "config path flags missing local.conf" "grep -q 'not created yet' <<<\"\$out\""
+XDG_CONFIG_HOME="$cfgh" EDITOR=true "$AF" config edit >/dev/null 2>&1
+check "config edit scaffolds local.conf" "[[ -f '$cfgh/agent-fleet/local.conf' ]]"
+check "scaffold is tmux config" "grep -q 'set -g @fleet-sidenav-auto' '$cfgh/agent-fleet/local.conf'"
+
 # back with empty prev
 mkdir -p "$XDG_CACHE_HOME/agent-fleet"; : > "$XDG_CACHE_HOME/agent-fleet/focus.prev"
 "$AF" back; check "back with empty prev is a clean no-op" "[[ $? -eq 0 ]]"

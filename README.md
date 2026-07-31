@@ -157,6 +157,7 @@ Ctrl-a L      switch to the previous workspace
 | `agent-fleet codex-hooks [install\|remove\|status]` | Same for `~/.codex/config.toml` (codex trust-gates hooks — approve once at startup). |
 | `agent-fleet reload` | Re-source the config and respawn the daemon + rails (pick up new code/binds after an upgrade or `git pull`). |
 | `agent-fleet theme [name]` | List palettes, or switch live. See [Theming](#theming). |
+| `agent-fleet config [path\|edit]` | Show where config lives, or open your overrides (`local.conf`) in `$EDITOR`. |
 | `agent-fleet save` / `restore` | Snapshot / rebuild the layout (auto on a timer and on `stop`; restore runs on cold-boot attach). |
 | `agent-fleet stop` | Save the layout, then kill the fleet server. |
 | `agent-fleet upgrade [--check\|--rollback] [-y]` | Update a managed install. See [Upgrade](#upgrade). |
@@ -277,7 +278,7 @@ The rest are imported from [iTerm2-Color-Schemes](https://github.com/mbadolato/i
 
 ### Personal layer
 
-If `~/.config/agent-fleet/local.conf` exists, the base config sources it last (after the theme) — drop keybinds, style tweaks, or `set -g @fleet-sidenav-auto off` there without editing the repo:
+If `~/.config/agent-fleet/local.conf` exists, the base config sources it last (after the theme) — drop keybinds, style tweaks, or `set -g @fleet-sidenav-auto off` there without editing the repo. `agent-fleet config edit` opens it (scaffolding a template the first time); `agent-fleet config path` shows where every config file lives.
 
 ```tmux
 # ~/.config/agent-fleet/local.conf
