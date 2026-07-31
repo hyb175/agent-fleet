@@ -61,8 +61,8 @@ trap cleanup INT TERM HUP
 # Emitting from here — continuously, not edge-triggered on hook events — is
 # what makes it reliable: transitions that happen while a window is hidden
 # (tmux forwards passthrough only from visible panes) self-heal within a
-# tick of you switching there, and scrape-tier agents (hand-started,
-# codespace) are covered because the daemon resolves their states too.
+# tick of you switching there, and scrape-tier agents (hand-started) are
+# covered because the daemon resolves their states too.
 # Written via the active window's rail tty (any visible pane forwards).
 PROGRESS_ON="${AGENT_FLEET_PROGRESS:-1}"
 # Per-tty state: with several clients attached the daemon drives one bar per

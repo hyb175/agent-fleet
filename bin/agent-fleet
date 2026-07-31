@@ -205,31 +205,25 @@ Options:
   --new-workspace <name>    Put the agent in its own workspace (create or reuse).
   --cmd <command>           Command to run (default: $DEFAULT_AGENT_CMD).
   --dir <dir>               Working directory (default: target workspace path, else current directory).
-  --codespace, --cs <name>  Run inside a GitHub Codespace over SSH.
   --focus                    Focus the new agent window.
   -h, --help                 Show this help.
 EOF
 }
 
 cmd_add() {
-  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" cs="" cs_dir="" cmd_explicit="" new_ws=""
+  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)         usage_add; return 0 ;;
       --to)             target="$2"; shift 2 ;;
-      --cmd)            cmd="$2"; cmd_explicit=1; shift 2 ;;
-      --dir)            dir="$2"; cs_dir="$2"; shift 2 ;;
-      --codespace|--cs) cs="$2"; shift 2 ;;
+      --cmd)            cmd="$2"; shift 2 ;;
+      --dir)            dir="$2"; shift 2 ;;
       --new-workspace)  new_ws="$2"; shift 2 ;;
       --focus)          focus=1; shift ;;
       --)               shift; break ;;
       *)     if [[ -z "$name" ]]; then name="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
     esac
   done
-  # Codespace connections default to a shell — you run claude/tools yourself,
-  # rather than booting straight into an agent. Override per-launch with --cmd,
-  # or globally with AGENT_FLEET_CS_CMD (e.g. fish, zsh, or claude).
-  [[ -n "$cs" && -z "$cmd_explicit" ]] && cmd="${AGENT_FLEET_CS_CMD:-bash}"
 
   if ! server_up; then
     echo "error: no fleet running — connect a workspace first" >&2
@@ -288,18 +282,11 @@ cmd_add() {
   [[ -n "$dir" && "$dir" != "$HOME" ]] && command -v zoxide >/dev/null 2>&1 && zoxide add "$dir" 2>/dev/null || true
 
   # Label for the sidenav's agents list (first word of the command). Computed
-  # from the *inner* command, before any codespace/hook wrapping.
+  # from the *inner* command, before any hook wrapping.
   local label
   label="$(basename "${cmd%% *}")"
 
-  if [[ -n "$cs" ]]; then
-    # Codespace agent: runs over SSH via the wrapper, so the local Claude hooks
-    # can't attach (they'd fire inside the codespace). Tracked by the scrape tier
-    # instead. Pass an explicit remote dir through only when --dir was given.
-    local env_pfx=""
-    [[ -n "$cs_dir" ]] && env_pfx="AGENT_FLEET_CS_DIR='$cs_dir' "
-    cmd="${env_pfx}'$ROOT_DIR/scripts/cs-connect.sh' '$cs' $cmd"
-  elif [[ "$label" == "claude" ]]; then
+  if [[ "$label" == "claude" ]]; then
     # Local claude agent: overlay the fleet status hooks. Gate on the command
     # BASENAME being claude — the hooks (and the --settings flag itself) are
     # claude-specific, so a non-claude AGENT_FLEET_CMD (codex, opencode, …)
@@ -315,9 +302,6 @@ cmd_add() {
   # workspace renames can follow it (per-window). Value = agent kind ("claude").
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$label" 2>/dev/null || true
   tx set-option -w -t "$pane_id" @fleet-agent "$label" 2>/dev/null || true
-  # Mark codespace agents as remote. Read by persist-save (recorded in
-  # fleet.state) and available to any UI that wants to badge remote panes.
-  [[ -n "$cs" ]] && tx set-option -p -t "$pane_id" @fleet-codespace "$cs" 2>/dev/null || true
   # Drop the placeholder window if we created the workspace for this agent, so the
   # agent is the workspace's first tab.
   [[ -n "$ph_win" ]] && tx kill-window -t "$ph_win" 2>/dev/null || true
@@ -1024,35 +1008,6 @@ cmd_pick() {
   fi
 }
 
-# cs <list|stop|connect> — light GitHub Codespaces helpers.
-#   list            list your codespaces (passthrough to `gh codespace list`)
-#   stop <name>     stop a running codespace
-#   connect <name>  create-or-switch a workspace for the codespace and add a
-#                   claude agent into it over SSH (used by the picker's cloud view)
-cmd_cs() {
-  command -v gh >/dev/null 2>&1 || { echo "error: 'gh' (GitHub CLI) not found on PATH" >&2; exit 1; }
-  local sub="${1:-list}"; shift || true
-  case "$sub" in
-    list|ls) gh codespace list "$@" ;;
-    stop)    gh codespace stop -c "${1:?usage: agent-fleet cs stop <name>}" ;;
-    connect|c)
-      local cs="${1:?usage: agent-fleet cs connect <codespace-name> [workspace-name]}"
-      local ws; ws="$(sanitize_name "${2:-$cs}")"
-      ensure_server
-      if tx has-session -t "=$ws" 2>/dev/null; then ensure_server_env; go_to_session "$ws"; return 0; fi
-      ensure_server_env
-      # Lean-thin: the codespace IS the workspace — its first window is a shell
-      # over SSH (not a proxied agent in the rail). Run a multiplexer inside for
-      # more panes/agents. AGENT_FLEET_CS_CMD sets the shell; --cmd-style claude
-      # agents still come from `add --codespace`.
-      local cs_cmd="${AGENT_FLEET_CS_CMD:-bash}" pane
-      pane="$(tx new-session -d -P -F '#{pane_id}' -s "$ws" -n "$ws" -c "$HOME" "'$ROOT_DIR/scripts/cs-connect.sh' '$cs' $cs_cmd")"
-      tx set-option -p -t "$pane" @fleet-codespace "$cs" 2>/dev/null || true
-      go_to_session "$ws"
-      ;;
-    *) echo "usage: agent-fleet cs {list | stop <name> | connect <name>}" >&2; exit 2 ;;
-  esac
-}
 
 usage() {
   cat <<EOF
@@ -1065,15 +1020,10 @@ Verbs:
                                    Resolve-or-create a workspace, then go to it. Optional name
                                    overrides the default (the directory's basename).
   agent-fleet attach [workspace]   Attach to the fleet (sesh-style 3-way branch).
-  agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>]
-                  [--codespace|--cs <name>] [--focus]
+  agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--focus]
                                    Add an agent window (default cmd: claude; hooks attach when the
                                    command is claude). --new-workspace puts it in its own workspace
-                                   instead of a tab. --codespace runs it inside a GitHub Codespace
-                                   over SSH (defaults to a shell). --focus jumps to it (Prefix C).
-                                   Prints its pane id.
-  agent-fleet cs <list | stop <name> | connect <name> [workspace-name]>
-                                   Codespaces: list / stop / connect (opens a shell workspace).
+                                   instead of a tab. --focus jumps to it (Prefix C). Prints its pane id.
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
   agent-fleet back                 Jump to the previously focused pane (bound to Prefix Tab).
   agent-fleet hooks-file           Print (and regenerate) the claude status-hooks overlay path.
@@ -1129,7 +1079,6 @@ main() {
     kill|rm)    cmd_kill "$@" ;;
     list|ls)    cmd_list "$@" ;;
     pick)       cmd_pick "$@" ;;
-    cs)         cmd_cs "$@" ;;
     hooks-file) cmd_hooks_file "$@" ;;
     kimi-hooks)  cmd_kimi_hooks "$@" ;;
     codex-hooks) cmd_codex_hooks "$@" ;;

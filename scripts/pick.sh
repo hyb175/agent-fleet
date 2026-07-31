@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # pick.sh — the fleet's single fzf picker.
 #
-# Views (Tab cycles; ^f/^s/^z/^x jump directly — Ctrl chords, since window
+# Views (Tab cycles; ^f/^s/^z jump directly — Ctrl chords, since window
 # managers like AeroSpace commonly swallow Alt):
 #   fleet    (default) live agents (per-pane), most-urgent first, + agentless
 #            workspaces. ⏎ jumps.
@@ -10,7 +10,6 @@
 #   connect  recent folders (zoxide + project-root discovery), git repos first
 #            w/ branch, noise filtered. ⏎ spawns/attaches a shell workspace;
 #            ^a (or M-a) spawns it with a claude agent. (Prefix f opens here.)
-#   cloud    GitHub Codespaces (gh cs list). ⏎ connects a workspace + agent over SSH.
 
 set -uo pipefail
 
@@ -239,68 +238,25 @@ list_connect() {
   printf '%s%s' "$repos" "$dirs"                      # repos before plain dirs
 }
 
-# Cloud: your GitHub Codespaces. ⏎ creates-or-switches a workspace for the
-# codespace and adds a claude agent into it over SSH (agent-fleet cs connect).
-# Degrades with a guidance row when gh is absent, the token lacks the codespace
-# scope, or there are no codespaces — never a bare empty list.
-list_cloud() {
-  if ! command -v gh >/dev/null 2>&1; then
-    printf 'NONE\t\033[2m(gh CLI not found — install GitHub CLI to use codespaces)\033[0m\n'; return
-  fi
-  local out rc
-  out="$(gh codespace list --json name,repository,state,gitStatus \
-          --template '{{range .}}{{.name}}{{"\t"}}{{.repository}}{{"\t"}}{{.gitStatus.ref}}{{"\t"}}{{.state}}{{"\n"}}{{end}}' 2>&1)"
-  rc=$?
-  if (( rc != 0 )); then
-    if grep -qiE 'codespace.*scope|"codespace" scope|admin rights' <<<"$out"; then
-      # Actionable: ⏎ runs the scope grant in the popup, then reopens this view.
-      printf 'AUTH:codespace\t%s↻\033[0m \033[1m%-22s\033[0m \033[2mruns: gh auth refresh -s codespace\033[0m\n' \
-        "$T_WORKING" "Grant Codespaces access"
-    else
-      printf 'NONE\t\033[2m(gh codespace list failed: %s)\033[0m\n' "$(head -1 <<<"$out")"
-    fi
-    return
-  fi
-  if [[ -z "${out//[$'\n\t ']/}" ]]; then
-    printf 'NONE\t\033[2m(no codespaces — create one on github.com or `gh cs create`)\033[0m\n'; return
-  fi
-  local name repo ref state glyph
-  while IFS=$'\t' read -r name repo ref state; do
-    [[ -z "$name" ]] && continue
-    # Available codespaces read green (ready); stopped/other read muted.
-    case "$state" in
-      Available) glyph="$G_done" ;;
-      *)         glyph="$G_idle" ;;
-    esac
-    printf 'CLOUD:%s\t%s \033[1m%-22s\033[0m \033[2m%s · %s\033[0m\n' \
-      "$name" "$glyph" "${repo##*/}" "${ref:-?}" "$state"
-  done <<<"$out"
-}
-
 run_view() {
   local view="$1" entries header prompt
   case "$view" in
     fleet)
       entries="$(list_fleet)"
       [[ -z "$entries" ]] && entries=$'NONE\t\033[2m(no workspaces — Tab to connect a repo)\033[0m'
-      header='[fleet] spaces connect cloud  ·  Tab  ·  ⏎ jump  ·  / filter'
+      header='[fleet] spaces connect  ·  Tab  ·  ⏎ jump  ·  / filter'
       prompt='› '
       ;;
     spaces)
       entries="$(list_spaces)"
       [[ -z "$entries" ]] && entries=$'NONE\t\033[2m(no workspaces — Tab to connect a repo)\033[0m'
-      header='fleet [spaces] connect cloud  ·  Tab  ·  ⏎ switch  ·  / filter'
+      header='fleet [spaces] connect  ·  Tab  ·  ⏎ switch  ·  / filter'
       prompt='⊞ '
       ;;
     connect)
       entries="$(list_connect)"
-      header='fleet spaces [connect] cloud  ·  Tab  ·  ⏎ shell · ^a +agent · ^r name'
+      header='fleet spaces [connect]  ·  Tab  ·  ⏎ shell · ^a +agent · ^r name'
       prompt='⌕ '
-      ;;
-    cloud)
-      entries="$(list_cloud)"
-      header='fleet spaces connect [cloud]  ·  Tab  ·  ⏎ connect · ^r name'
-      prompt='☁ '
       ;;
   esac
 
@@ -312,7 +268,6 @@ run_view() {
     --bind="ctrl-f:become(echo VIEW:fleet)" \
     --bind="ctrl-s:become(echo VIEW:spaces)" \
     --bind="ctrl-z:become(echo VIEW:connect)" \
-    --bind="ctrl-x:become(echo VIEW:cloud)" \
     --bind="ctrl-r:become(printf 'NAME\t%s\n' {1})" \
     --bind="ctrl-a:become(printf 'AGENT\t%s\n' {1})" \
     --bind="alt-enter:become(printf 'NAME\t%s\n' {1})" \
@@ -321,7 +276,7 @@ run_view() {
 }
 
 next_view() {
-  case "$1" in fleet) echo spaces ;; spaces) echo connect ;; connect) echo cloud ;; *) echo fleet ;; esac
+  case "$1" in fleet) echo spaces ;; spaces) echo connect ;; *) echo fleet ;; esac
 }
 
 main() {
@@ -336,13 +291,11 @@ main() {
       VIEW:fleet)   view="fleet";   continue ;;
       VIEW:spaces)  view="spaces";  continue ;;
       VIEW:connect) view="connect"; continue ;;
-      VIEW:cloud)   view="cloud";   continue ;;
       VIEW:next)    view="$(next_view "$view")"; continue ;;
       NONE)         continue ;;
       PANE:*)       "$AF" goto "${key#PANE:}"; exit 0 ;;
       SESS:*)       "$AF" connect "${key#SESS:}"; exit 0 ;;
       CONNECT:*)    "$AF" connect "${key#CONNECT:}"; exit 0 ;;
-      CLOUD:*)      "$AF" cs connect "${key#CLOUD:}"; exit 0 ;;
       AGENT)
         # ^a (or Alt-a) on a connect row: spawn the workspace WITH a claude
         # agent as its first tab (add --new-workspace creates-or-reuses the
@@ -356,11 +309,10 @@ main() {
             exit 0 ;;
           PANE:*)  "$AF" goto "${target#PANE:}"; exit 0 ;;
           SESS:*)  "$AF" connect "${target#SESS:}"; exit 0 ;;
-          CLOUD:*) "$AF" cs connect "${target#CLOUD:}"; exit 0 ;;
           *)       continue ;;
         esac ;;
       NAME)
-        # ^r (or Alt-⏎) on a connect/cloud row: prompt for a workspace name (pre-filled
+        # ^r (or Alt-⏎) on a connect row: prompt for a workspace name (pre-filled
         # with the default), then create. On any other row, behave like ⏎.
         local target nm def
         target="$(printf '%s' "$selection" | cut -f2)"
@@ -369,34 +321,16 @@ main() {
             def="${target##*/}"; printf '\n'
             read -e -i "$def" -p "  workspace name: " nm </dev/tty 2>/dev/null || nm=""
             "$AF" connect "${target#CONNECT:}" "${nm:-$def}"; exit 0 ;;
-          CLOUD:*)
-            def="${target#CLOUD:}"; printf '\n'
-            read -e -i "$def" -p "  workspace name: " nm </dev/tty 2>/dev/null || nm=""
-            "$AF" cs connect "${target#CLOUD:}" "${nm:-$def}"; exit 0 ;;
           PANE:*)  "$AF" goto "${target#PANE:}"; exit 0 ;;
           SESS:*)  "$AF" connect "${target#SESS:}"; exit 0 ;;
           *)       continue ;;
         esac ;;
-      AUTH:*)
-        # Grant a missing gh token scope interactively (the popup has a TTY, so
-        # gh's one-time-code + browser flow works), then reopen the cloud view.
-        scope="${key#AUTH:}"
-        clear 2>/dev/null || true
-        printf '\n  Granting the \033[1m%s\033[0m scope through gh (a browser will open)…\n\n' "$scope"
-        if gh auth refresh -h github.com -s "$scope"; then
-          printf '\n  %s✓ %s scope granted.\033[0m opening codespaces…\n' "$T_DONE" "$scope"
-          sleep 1
-        else
-          printf '\n  %s✗ gh auth refresh failed.\033[0m press enter to go back…\n' "$T_WAIT"
-          read -r _ || true
-        fi
-        view="cloud"; continue ;;
     esac
   done
 }
 
 # Only run the picker when executed directly (so it can be sourced for tests).
-# Optional arg = initial view (fleet|spaces|connect|cloud); Prefix w opens 'spaces'.
+# Optional arg = initial view (fleet|spaces|connect); Prefix w opens 'spaces'.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   main "$@"
 fi

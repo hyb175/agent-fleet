@@ -11,8 +11,8 @@
 # take the server process's PATH and ignore set-environment overrides (verified
 # empirically; an arbitrary variable propagates, PATH does not).
 #
-# Explicit-command panes (fleet-launched agents, restored panes, cs-connect)
-# never run this. AGENT_FLEET_SHIM=0 opts out.
+# Explicit-command panes (fleet-launched agents, restored panes) never run
+# this. AGENT_FLEET_SHIM=0 opts out.
 #
 # PATH ordering: a plain pre-exec prepend loses to any login shell that REBUILDS
 # PATH from its own config (fish, via fish_user_paths / fish_add_path, is the

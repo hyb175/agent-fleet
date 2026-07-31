@@ -69,9 +69,9 @@ while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 f10; do
     A) attached="$f2" ;;
     W) WLAYOUT["$f2$US$f3"]="$f5"; WNAME["$f2$US$f3"]="$f6"; WACTIVE["$f2$US$f3"]="$f4"
        [[ -z "${SEEN[$f2]:-}" ]] && { SEEN[$f2]=1; sess_order+=("$f2"); } ;;
-    # pidx, sidenav, session, cwd, agent kind (f10 empty in pre-kind state
+    # pidx, sidenav, session, cwd, agent kind (f9 empty in pre-kind state
     # files — resolved to claude at relaunch below)
-    P) PANES["$f2$US$f3"]+="$f4$US$f5$US$f8$US$f9$US${f10:--}"$'\n' ;;
+    P) PANES["$f2$US$f3"]+="$f4$US$f5$US$f7$US$f8$US${f9:--}"$'\n' ;;
   esac
 done < "$STATE"
 (( ${#sess_order[@]} )) || exit 1

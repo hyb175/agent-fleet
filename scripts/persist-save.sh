@@ -3,16 +3,16 @@
 # file so `agent-fleet attach` after a reboot can rebuild it.
 #
 # Records sessions, windows (name / index / exact split layout) and panes (cwd,
-# rail flag, codespace marker). Programs are NOT recorded — restore recreates
-# every pane as a shell (an agent window comes back as a shell in its dir; you
-# resume claude yourself, which needs Claude's own session id).
+# rail flag). Programs are NOT recorded — restore recreates every pane as a
+# shell (an agent window comes back as a shell in its dir; you resume claude
+# yourself, which needs Claude's own session id).
 #
 # Called periodically by snapshotd, by `agent-fleet stop`, and by `agent-fleet
 # save`. Atomic write; a no-op when the fleet isn't running.
 #
 # Fields are tab-separated. tmux escapes non-printable delimiters in -F output
 # (a raw \x1f comes out as literal "\037"), so tab is the only safe separator —
-# and every field is forced non-empty (sidenav -> 0/1, codespace -> value or "-")
+# and every field is forced non-empty (sidenav -> 0/1, session -> value or "-")
 # so `read` (which collapses runs of whitespace-IFS like tab) never merges fields.
 
 set -uo pipefail
@@ -37,10 +37,10 @@ tmp="$STATE.tmp.$$"
     -F "W${US}#{session_name}${US}#{window_index}${US}#{window_active}${US}#{window_layout}${US}#{window_name}" \
     2>/dev/null
 
-  # One line per pane: rail (0/1) / active / codespace (or -) / agent session
-  # (or -) / cwd / agent kind (or -). Kind is LAST so state files from older
-  # versions (9 fields) still parse — a missing kind defaults to claude.
+  # One line per pane: rail (0/1) / active / agent session (or -) / cwd /
+  # agent kind (or -). Kind is LAST so state files from older versions still
+  # parse — a missing kind defaults to claude.
   tx list-panes -a \
-    -F "P${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{?@fleet-sidenav,1,0}${US}#{pane_active}${US}#{?@fleet-codespace,#{@fleet-codespace},-}${US}#{?@fleet-session,#{@fleet-session},-}${US}#{pane_current_path}${US}#{?@fleet-agent-kind,#{@fleet-agent-kind},-}" \
+    -F "P${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{?@fleet-sidenav,1,0}${US}#{pane_active}${US}#{?@fleet-session,#{@fleet-session},-}${US}#{pane_current_path}${US}#{?@fleet-agent-kind,#{@fleet-agent-kind},-}" \
     2>/dev/null
 } > "$tmp" 2>/dev/null && mv "$tmp" "$STATE" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; exit 0; }
