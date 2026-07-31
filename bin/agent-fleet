@@ -26,7 +26,7 @@ done
 BIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 ROOT_DIR="$(cd "$BIN_DIR/.." && pwd)"
 
-AGENT_FLEET_VERSION="0.1.0"
+AGENT_FLEET_VERSION="0.2.0"
 # GitHub slug the self-upgrade fetches releases from (override for a fork).
 AGENT_FLEET_REPO="${AGENT_FLEET_REPO:-hyb175/agent-fleet}"
 
