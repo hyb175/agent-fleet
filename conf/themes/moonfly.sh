@@ -1,0 +1,10 @@
+# Moonfly — imported from iTerm2-Color-Schemes (ghostty/Moonfly)
+AF_THEME_BG="#080808"
+AF_THEME_SURFACE="#323437"
+AF_THEME_HL="#636465"
+AF_THEME_FG="#bdbdbd"
+AF_THEME_MUTED="#949494"
+AF_THEME_ACCENT="#80a0ff"
+AF_THEME_WAIT="#ff5454"
+AF_THEME_WORKING="#e3c78a"
+AF_THEME_DONE="#8cc85f"

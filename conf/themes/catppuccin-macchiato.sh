@@ -1,0 +1,10 @@
+# Catppuccin Macchiato — imported from iTerm2-Color-Schemes (ghostty/Catppuccin Macchiato)
+AF_THEME_BG="#24273a"
+AF_THEME_SURFACE="#494d64"
+AF_THEME_HL="#52566e"
+AF_THEME_FG="#cad3f5"
+AF_THEME_MUTED="#5b6078"
+AF_THEME_ACCENT="#8aadf4"
+AF_THEME_WAIT="#ed8796"
+AF_THEME_WORKING="#eed49f"
+AF_THEME_DONE="#a6da95"

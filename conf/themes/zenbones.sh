@@ -1,0 +1,10 @@
+# Zenbones Dark — imported from iTerm2-Color-Schemes (ghostty/Zenbones Dark)
+AF_THEME_BG="#1c1917"
+AF_THEME_SURFACE="#1c1917"
+AF_THEME_HL="#342f2b"
+AF_THEME_FG="#b4bdc3"
+AF_THEME_MUTED="#4d4540"
+AF_THEME_ACCENT="#6099c0"
+AF_THEME_WAIT="#de6e7c"
+AF_THEME_WORKING="#b77e64"
+AF_THEME_DONE="#819b69"

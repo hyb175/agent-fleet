@@ -1,0 +1,10 @@
+# Sonokai — imported from iTerm2-Color-Schemes (ghostty/Sonokai)
+AF_THEME_BG="#2c2e34"
+AF_THEME_SURFACE="#181819"
+AF_THEME_HL="#4b4e54"
+AF_THEME_FG="#e2e2e3"
+AF_THEME_MUTED="#7f8490"
+AF_THEME_ACCENT="#76cce0"
+AF_THEME_WAIT="#fc5d7c"
+AF_THEME_WORKING="#e7c664"
+AF_THEME_DONE="#9ed072"

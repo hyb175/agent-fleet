@@ -1,0 +1,10 @@
+# Nightfox — imported from iTerm2-Color-Schemes (ghostty/Nightfox)
+AF_THEME_BG="#192330"
+AF_THEME_SURFACE="#393b44"
+AF_THEME_HL="#484952"
+AF_THEME_FG="#cdcecf"
+AF_THEME_MUTED="#575860"
+AF_THEME_ACCENT="#719cd6"
+AF_THEME_WAIT="#c94f6d"
+AF_THEME_WORKING="#dbc074"
+AF_THEME_DONE="#81b29a"

@@ -1,0 +1,10 @@
+# Iceberg Dark — imported from iTerm2-Color-Schemes (ghostty/Iceberg Dark)
+AF_THEME_BG="#161821"
+AF_THEME_SURFACE="#1e2132"
+AF_THEME_HL="#44485d"
+AF_THEME_FG="#c6c8d1"
+AF_THEME_MUTED="#6b7089"
+AF_THEME_ACCENT="#84a0c6"
+AF_THEME_WAIT="#e27878"
+AF_THEME_WORKING="#e2a478"
+AF_THEME_DONE="#b4be82"

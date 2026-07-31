@@ -1,0 +1,10 @@
+# Srcery — imported from iTerm2-Color-Schemes (ghostty/Srcery)
+AF_THEME_BG="#1c1b19"
+AF_THEME_SURFACE="#1c1b19"
+AF_THEME_HL="#564e47"
+AF_THEME_FG="#fce8c3"
+AF_THEME_MUTED="#918175"
+AF_THEME_ACCENT="#2c78bf"
+AF_THEME_WAIT="#ef2f27"
+AF_THEME_WORKING="#fbb829"
+AF_THEME_DONE="#519f50"

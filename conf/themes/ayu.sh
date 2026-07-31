@@ -1,0 +1,10 @@
+# Ayu — imported from iTerm2-Color-Schemes (ghostty/Ayu)
+AF_THEME_BG="#0b0e14"
+AF_THEME_SURFACE="#11151c"
+AF_THEME_HL="#3c3e42"
+AF_THEME_FG="#bfbdb6"
+AF_THEME_MUTED="#686868"
+AF_THEME_ACCENT="#53bdfa"
+AF_THEME_WAIT="#ea6c73"
+AF_THEME_WORKING="#f9af4f"
+AF_THEME_DONE="#7fd962"

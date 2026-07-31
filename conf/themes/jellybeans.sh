@@ -1,0 +1,10 @@
+# Jellybeans — imported from iTerm2-Color-Schemes (ghostty/Jellybeans)
+AF_THEME_BG="#121212"
+AF_THEME_SURFACE="#929292"
+AF_THEME_HL="#a7a7a7"
+AF_THEME_FG="#dedede"
+AF_THEME_MUTED="#bdbdbd"
+AF_THEME_ACCENT="#97bedc"
+AF_THEME_WAIT="#e27373"
+AF_THEME_WORKING="#ffba7b"
+AF_THEME_DONE="#94b979"

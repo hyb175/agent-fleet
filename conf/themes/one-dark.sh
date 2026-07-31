@@ -1,0 +1,10 @@
+# Atom One Dark — imported from iTerm2-Color-Schemes (ghostty/Atom One Dark)
+AF_THEME_BG="#21252b"
+AF_THEME_SURFACE="#21252b"
+AF_THEME_HL="#4b4d50"
+AF_THEME_FG="#abb2bf"
+AF_THEME_MUTED="#767676"
+AF_THEME_ACCENT="#61afef"
+AF_THEME_WAIT="#e06c75"
+AF_THEME_WORKING="#e5c07b"
+AF_THEME_DONE="#98c379"

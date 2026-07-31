@@ -1,0 +1,10 @@
+# Ayu Mirage — imported from iTerm2-Color-Schemes (ghostty/Ayu Mirage)
+AF_THEME_BG="#1f2430"
+AF_THEME_SURFACE="#171b24"
+AF_THEME_HL="#3f4146"
+AF_THEME_FG="#cccac2"
+AF_THEME_MUTED="#686868"
+AF_THEME_ACCENT="#6dcbfa"
+AF_THEME_WAIT="#ed8274"
+AF_THEME_WORKING="#facc6e"
+AF_THEME_DONE="#87d96c"

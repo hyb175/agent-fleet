@@ -1,0 +1,10 @@
+# Kanagawa Dragon — imported from iTerm2-Color-Schemes (ghostty/Kanagawa Dragon)
+AF_THEME_BG="#181616"
+AF_THEME_SURFACE="#0d0c0c"
+AF_THEME_HL="#595954"
+AF_THEME_FG="#c5c9c5"
+AF_THEME_MUTED="#a6a69c"
+AF_THEME_ACCENT="#8ba4b0"
+AF_THEME_WAIT="#c4746e"
+AF_THEME_WORKING="#c4b28a"
+AF_THEME_DONE="#8a9a7b"

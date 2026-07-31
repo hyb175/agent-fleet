@@ -1,0 +1,10 @@
+# iTerm2 Solarized Dark — imported from iTerm2-Color-Schemes (ghostty/iTerm2 Solarized Dark)
+AF_THEME_BG="#002b36"
+AF_THEME_SURFACE="#073642"
+AF_THEME_HL="#1d4a55"
+AF_THEME_FG="#839496"
+AF_THEME_MUTED="#335e69"
+AF_THEME_ACCENT="#268bd2"
+AF_THEME_WAIT="#dc322f"
+AF_THEME_WORKING="#b58900"
+AF_THEME_DONE="#859900"

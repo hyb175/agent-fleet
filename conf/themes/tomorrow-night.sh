@@ -1,0 +1,10 @@
+# Tomorrow Night — imported from iTerm2-Color-Schemes (ghostty/Tomorrow Night)
+AF_THEME_BG="#1d1f21"
+AF_THEME_SURFACE="#000000"
+AF_THEME_HL="#262626"
+AF_THEME_FG="#c5c8c6"
+AF_THEME_MUTED="#4c4c4c"
+AF_THEME_ACCENT="#81a2be"
+AF_THEME_WAIT="#cc6666"
+AF_THEME_WORKING="#f0c674"
+AF_THEME_DONE="#b5bd68"

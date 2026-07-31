@@ -1,0 +1,10 @@
+# Catppuccin Frappe — imported from iTerm2-Color-Schemes (ghostty/Catppuccin Frappe)
+AF_THEME_BG="#303446"
+AF_THEME_SURFACE="#51576d"
+AF_THEME_HL="#595f76"
+AF_THEME_FG="#c6d0f5"
+AF_THEME_MUTED="#626880"
+AF_THEME_ACCENT="#8caaee"
+AF_THEME_WAIT="#e78284"
+AF_THEME_WORKING="#e5c890"
+AF_THEME_DONE="#a6d189"

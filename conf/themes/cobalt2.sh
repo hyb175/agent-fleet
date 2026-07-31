@@ -1,0 +1,10 @@
+# Cobalt2 — imported from iTerm2-Color-Schemes (ghostty/Cobalt2)
+AF_THEME_BG="#132738"
+AF_THEME_SURFACE="#000000"
+AF_THEME_HL="#2a2a2a"
+AF_THEME_FG="#ffffff"
+AF_THEME_MUTED="#555555"
+AF_THEME_ACCENT="#1460d2"
+AF_THEME_WAIT="#ff0000"
+AF_THEME_WORKING="#ffe50a"
+AF_THEME_DONE="#38de21"

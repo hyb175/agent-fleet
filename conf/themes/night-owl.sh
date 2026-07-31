@@ -1,0 +1,10 @@
+# Night Owl — imported from iTerm2-Color-Schemes (ghostty/Night Owl)
+AF_THEME_BG="#011627"
+AF_THEME_SURFACE="#011627"
+AF_THEME_HL="#2c363e"
+AF_THEME_FG="#d6deeb"
+AF_THEME_MUTED="#575656"
+AF_THEME_ACCENT="#82aaff"
+AF_THEME_WAIT="#ef5350"
+AF_THEME_WORKING="#addb67"
+AF_THEME_DONE="#22da6e"

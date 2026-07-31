@@ -1,0 +1,10 @@
+# Gruvbox Material Dark — imported from iTerm2-Color-Schemes (ghostty/Gruvbox Material Dark)
+AF_THEME_BG="#282828"
+AF_THEME_SURFACE="#282828"
+AF_THEME_HL="#524b46"
+AF_THEME_FG="#d4be98"
+AF_THEME_MUTED="#7c6f64"
+AF_THEME_ACCENT="#7daea3"
+AF_THEME_WAIT="#ea6962"
+AF_THEME_WORKING="#d8a657"
+AF_THEME_DONE="#a9b665"

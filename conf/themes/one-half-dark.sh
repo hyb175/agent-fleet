@@ -1,0 +1,10 @@
+# One Half Dark — imported from iTerm2-Color-Schemes (ghostty/One Half Dark)
+AF_THEME_BG="#282c34"
+AF_THEME_SURFACE="#282c34"
+AF_THEME_HL="#424957"
+AF_THEME_FG="#dcdfe4"
+AF_THEME_MUTED="#5d677a"
+AF_THEME_ACCENT="#61afef"
+AF_THEME_WAIT="#e06c75"
+AF_THEME_WORKING="#e5c07b"
+AF_THEME_DONE="#98c379"

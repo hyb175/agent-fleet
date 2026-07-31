@@ -1,0 +1,10 @@
+# Noctis — imported from iTerm2-Color-Schemes (ghostty/Noctis)
+AF_THEME_BG="#052529"
+AF_THEME_SURFACE="#324a4d"
+AF_THEME_HL="#3c595c"
+AF_THEME_FG="#b2cacd"
+AF_THEME_MUTED="#47686c"
+AF_THEME_ACCENT="#49ace9"
+AF_THEME_WAIT="#e66533"
+AF_THEME_WORKING="#e4b781"
+AF_THEME_DONE="#49e9a6"

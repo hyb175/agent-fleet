@@ -1,0 +1,10 @@
+# Seoulbones Dark — imported from iTerm2-Color-Schemes (ghostty/Seoulbones Dark)
+AF_THEME_BG="#4b4b4b"
+AF_THEME_SURFACE="#4b4b4b"
+AF_THEME_HL="#625e5e"
+AF_THEME_FG="#dddddd"
+AF_THEME_MUTED="#797172"
+AF_THEME_ACCENT="#97bdde"
+AF_THEME_WAIT="#e388a3"
+AF_THEME_WORKING="#ffdf9b"
+AF_THEME_DONE="#98bd99"

@@ -1,0 +1,10 @@
+# GitHub Dark Default — imported from iTerm2-Color-Schemes (ghostty/GitHub Dark Default)
+AF_THEME_BG="#0d1117"
+AF_THEME_SURFACE="#484f58"
+AF_THEME_HL="#5b626c"
+AF_THEME_FG="#e6edf3"
+AF_THEME_MUTED="#6e7681"
+AF_THEME_ACCENT="#58a6ff"
+AF_THEME_WAIT="#ff7b72"
+AF_THEME_WORKING="#d29922"
+AF_THEME_DONE="#3fb950"

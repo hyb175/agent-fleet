@@ -1,0 +1,10 @@
+# Shades Of Purple — imported from iTerm2-Color-Schemes (ghostty/Shades Of Purple)
+AF_THEME_BG="#1e1d40"
+AF_THEME_SURFACE="#000000"
+AF_THEME_HL="#343434"
+AF_THEME_FG="#ffffff"
+AF_THEME_MUTED="#686868"
+AF_THEME_ACCENT="#6943ff"
+AF_THEME_WAIT="#d90429"
+AF_THEME_WORKING="#ffe700"
+AF_THEME_DONE="#3ad900"

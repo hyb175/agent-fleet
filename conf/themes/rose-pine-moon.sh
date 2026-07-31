@@ -1,0 +1,10 @@
+# Rose Pine Moon — imported from iTerm2-Color-Schemes (ghostty/Rose Pine Moon)
+AF_THEME_BG="#232136"
+AF_THEME_SURFACE="#393552"
+AF_THEME_HL="#534f6c"
+AF_THEME_FG="#e0def4"
+AF_THEME_MUTED="#6e6a86"
+AF_THEME_ACCENT="#9ccfd8"
+AF_THEME_WAIT="#eb6f92"
+AF_THEME_WORKING="#f6c177"
+AF_THEME_DONE="#3e8fb0"
