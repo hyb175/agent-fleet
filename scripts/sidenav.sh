@@ -54,18 +54,14 @@ home() { printf '\033[H'; }
 # tests; 0 = unknown -> render uncapped (today's behavior).
 RAIL_H=0
 read_height() {
-  if [[ -n "${AGENT_FLEET_SIDENAV_MAX_ROWS:-}" ]]; then RAIL_H="$AGENT_FLEET_SIDENAV_MAX_ROWS"; return; fi
-  local sz=""
-  sz="$(stty size </dev/tty 2>/dev/null)" || sz=""
-  RAIL_H="${sz%% *}"
-  [[ "$RAIL_H" =~ ^[0-9]+$ ]] || RAIL_H=0
-}
-fmt_age() {  # <seconds> -> AGE ("45s"/"4m"/"2h"); fork-free (render loop)
-  local s="$1"
-  if   (( s < 60 ));   then AGE="${s}s"
-  elif (( s < 3600 )); then AGE="$(( s / 60 ))m"
-  else                      AGE="$(( s / 3600 ))h"
+  if [[ -n "${AGENT_FLEET_SIDENAV_MAX_ROWS:-}" ]]; then
+    RAIL_H="$AGENT_FLEET_SIDENAV_MAX_ROWS"
+  else
+    local sz=""
+    sz="$(stty size </dev/tty 2>/dev/null)" || sz=""
+    RAIL_H="${sz%% *}"
   fi
+  [[ "$RAIL_H" =~ ^[0-9]+$ ]] || RAIL_H=0
 }
 trunc() { local s="$1" n="$2"; (( n < 1 )) && { printf ''; return; }; if (( ${#s} > n )); then printf '%s…' "${s:0:n-1}"; else printf '%s' "$s"; fi; }
 
@@ -208,7 +204,10 @@ draw() {
   fi
 
   blank;                                                     line=$((line+1))
-  printf ' %sprefix+o open · prefix+b hide%s\033[K\n' "$C_DIM" "$C_OFF"
+  # No trailing \n on the last line: $(draw) keeps it (\033[J follows), and on
+  # an exact-fit frame that newline scrolls the pane every paint — cutting the
+  # header and shifting the click map one row.
+  printf ' %sprefix+o open · prefix+b hide%s\033[K' "$C_DIM" "$C_OFF"
   printf '\033[J'
 
   if ((${#map[@]})); then printf '%s\n' "${map[@]}" > "$MAP_FILE" 2>/dev/null || true

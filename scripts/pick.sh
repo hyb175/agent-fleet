@@ -87,10 +87,7 @@ list_fleet() {
         # humanized) — ages come from the snapshot's trailing age field.
         sub="$st"
         if [[ "$st" == "wait" && "$age" =~ ^[0-9]+$ ]]; then
-          if   (( age < 60 ));   then sub="wait ${age}s"
-          elif (( age < 3600 )); then sub="wait $(( age / 60 ))m"
-          else                        sub="wait $(( age / 3600 ))h"
-          fi
+          fmt_age "$age"; sub="wait $AGE"
         fi
         printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$sub"
         # Prefix a (rank, idx) sort key so the most urgent agents float to the

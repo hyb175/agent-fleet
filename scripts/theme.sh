@@ -74,5 +74,16 @@ theme_write_conf() {
   return 0
 }
 
+# Shared by the rail and the picker (both source this file); fork-free so the
+# rail's render loop can call it per row.
+# shellcheck disable=SC2034 # AGE is the out-param, read by the sourcing renderers
+fmt_age() {  # <seconds> -> AGE ("45s"/"4m"/"2h")
+  local s="$1"
+  if   (( s < 60 ));   then AGE="${s}s"
+  elif (( s < 3600 )); then AGE="$(( s / 60 ))m"
+  else                      AGE="$(( s / 3600 ))h"
+  fi
+}
+
 export AGENT_FLEET_THEME_CONF="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/theme.conf"
 theme_resolve

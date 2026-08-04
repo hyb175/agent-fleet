@@ -7,10 +7,12 @@ what it can, this file covers what it can't.
 
 ## House rules (each one is a scar)
 
-1. **Brace-delimit variables before Unicode glyphs.** `"$T_WAIT◆"` makes bash
-   5 fold the glyph's leading continuation byte into the variable name — an
-   unbound `T_WAIT<byte>` that kills the whole render under `set -u`. Write
-   `"${T_WAIT}◆"`. (20d2410)
+1. **Brace-delimit variables before Unicode glyphs.** On macOS, `"$T_WAIT◆"`
+   crashed the rail: the glyph's first (lead) byte got treated as part of the
+   variable name — an unbound `T_WAIT<byte>` under `set -u`. Bash names are
+   ASCII-only and glibc builds parse this fine, which is exactly why it ships
+   from Linux and dies on Macs (BSD-libc ctype on a negative `char` is the
+   likely mechanism). Write `"${T_WAIT}◆"` everywhere. (20d2410)
 
 2. **No bare `[[ ]] &&` as the last line of a function or script under
    `set -e`.** A false condition makes the whole thing exit nonzero — or exit,

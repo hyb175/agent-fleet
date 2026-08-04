@@ -81,4 +81,17 @@ done
 check "rail overflow shows +N more" "[[ $ok -eq 1 ]]"
 check "overflow count is 9" "tx capture-pane -p -t '$op' | grep -q '+9 more'"
 tx kill-pane -t "$op" 2>/dev/null
+
+# Even-parity height (exact-fit frame): the header must survive — a trailing
+# newline on the frame's last line used to scroll the pane every paint.
+op="$(tx split-window -P -F '#{pane_id}' -t t: \
+  "env AGENT_FLEET_SIDENAV_MAX_ROWS=13 AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/scripts/sidenav.sh'")"
+ok=0
+for _ in $(seq 1 25); do
+  tx capture-pane -p -t "$op" 2>/dev/null | grep -q 'more (prefix+o)' && { ok=1; break; }
+  sleep 0.2
+done
+check "exact-fit rail still overflows cleanly" "[[ $ok -eq 1 ]]"
+check "exact-fit keeps the spaces header" "tx capture-pane -p -t '$op' | grep -q 'spaces'"
+tx kill-pane -t "$op" 2>/dev/null
 exit "$FAIL"

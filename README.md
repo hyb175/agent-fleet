@@ -228,7 +228,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 
 **Kimi and Codex** load hooks only from their global config, so `agent-fleet kimi-hooks` / `codex-hooks` write a fenced, removable block there (idempotent, a no-op outside fleet panes). Same event map; codex trust-gates hooks, so approve them once in its startup review.
 
-**Scrape tier (approximate).** Hand-started `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown `cursor`) are detected without hooks — extend with `AGENT_FLEET_AGENT_CMDS`. Tools without hooks (opencode, cursor) read `idle` while working. Scraped agents wear a `~` suffix on their kind in the rail/picker (`claude~`), so an off-looking state is attributable to the heuristic tier.
+**Scrape tier (approximate).** Hand-started `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown `cursor`) are detected without hooks — extend with `AGENT_FLEET_AGENT_CMDS`. Tools without hooks (opencode, cursor) read `idle` while working. Scraped agents wear a `~` suffix on their kind in the rail (`claude~`), so an off-looking state is attributable to the heuristic tier.
 
 A single daemon (`snapshotd.sh`, one per fleet) polls tmux once a second, resolves states/branches, and writes `fleet.snapshot`. Rails and picker read that snapshot, so the number of rails adds no tmux load.
 

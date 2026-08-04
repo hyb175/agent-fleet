@@ -52,15 +52,22 @@ cleanup() {
   # opens fail (ENXIO), and a recycled tty number would put escape sequences on
   # an unrelated terminal. Intersect with what tmux reports now, and skip
   # entirely if the server is already gone.
-  local t live
+  local t w live
   live="$(tx list-panes -a -F '#{pane_tty}' 2>/dev/null)"
   if [[ -n "$live" ]]; then
     for t in "${!PROG_TTYS[@]}"; do
       grep -qxF "$t" <<<"$live" || continue
-      printf '\033Ptmux;\033\033]9;4;0\007\033\\' > "$t" 2>/dev/null || true
+      printf '\033Ptmux;\033\033]9;4;0\007\033\134' > "$t" 2>/dev/null || true  # \134 = '\' — avoids a trailing \' shellcheck (SC1003) can't tell from an escaped quote
     done
   fi
-  rm -rf "$LOCK" "$SNAP" 2>/dev/null
+  # …nor frozen tab glyphs: unlike the rail, the tab bar has no staleness
+  # guard, so a glyph left behind would read as live forever.
+  for w in "${!WOPT_LAST[@]}"; do
+    tx set-option -w -t "$w" -u @fleet-win-state 2>/dev/null || true
+  done
+  # Snapshot before lock: consumers gate fabrication/staleness on the lock
+  # dir, so the lock must be the LAST thing to vanish.
+  rm -rf "$SNAP" "$LOCK" 2>/dev/null
   exit 0
 }
 trap cleanup INT TERM HUP
