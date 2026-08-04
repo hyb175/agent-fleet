@@ -48,6 +48,18 @@ ACCENT="$T_ACCENT"  # selected name + left bar
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 
 home() { printf '\033[H'; }
+
+# Pane height for the overflow cap. Re-read only on SIGWINCH (stty is a fork —
+# once per resize, never per tick). AGENT_FLEET_SIDENAV_MAX_ROWS overrides for
+# tests; 0 = unknown -> render uncapped (today's behavior).
+RAIL_H=0
+read_height() {
+  if [[ -n "${AGENT_FLEET_SIDENAV_MAX_ROWS:-}" ]]; then RAIL_H="$AGENT_FLEET_SIDENAV_MAX_ROWS"; return; fi
+  local sz=""
+  sz="$(stty size </dev/tty 2>/dev/null)" || sz=""
+  RAIL_H="${sz%% *}"
+  [[ "$RAIL_H" =~ ^[0-9]+$ ]] || RAIL_H=0
+}
 fmt_age() {  # <seconds> -> AGE ("45s"/"4m"/"2h"); fork-free (render loop)
   local s="$1"
   if   (( s < 60 ));   then AGE="${s}s"
@@ -161,7 +173,22 @@ draw() {
   if (( ${#AGENTS[@]} == 0 )); then
     printf ' %s(no agents)%s\033[K\n' "$C_DIM" "$C_OFF";     line=$((line+1))
   else
+    # Overflow cap: rows past the pane bottom are invisible anyway — count
+    # what's left ("+N more") instead of truncating silently. 2 lines per
+    # row; 3 reserves the footer and the more-row itself.
+    local avail shown=0 total=${#AGENTS[@]}
+    if (( RAIL_H > 0 )); then
+      avail=$(( (RAIL_H - line - 3) / 2 )); (( avail < 1 )) && avail=1
+    else
+      avail=$total
+    fi
     for rec in "${AGENTS[@]}"; do
+      if (( shown >= avail && total > avail )); then
+        printf ' %s+%d more (prefix+o)%s\033[K\n' "$C_DIM" "$(( total - shown ))" "$C_OFF"
+        line=$((line+1))
+        break
+      fi
+      shown=$((shown+1))
       IFS='|' read -r s wid _ wn pane label st pidx age <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
@@ -199,8 +226,12 @@ clear
 # backgrounded behind `wait` (the wait builtin IS interruptible by traps).
 WAKE=0
 trap 'WAKE=1' USR1
+RESIZED=0
+trap 'RESIZED=1' WINCH
+read_height
 frame=0; i=0; sp=""
 while true; do
+  if (( RESIZED )); then RESIZED=0; read_height; fi
   (( i % DATA_EVERY == 0 )) && read_snapshot
   printf '%s%s%s' "$SYNC_ON" "$(draw "$frame")" "$SYNC_OFF"
   # Animate only when something is working AND this rail is visible on some

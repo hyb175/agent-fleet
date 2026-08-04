@@ -53,6 +53,9 @@ check "wait record carries age"        "wait_snap 'claude|wait|[0-9]*|2[0-9][0-9
 check "tab glyph: wait wins -> ◆"      "wait_opt ◆"
 
 kill "$(cat "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
+# The dying daemon's cleanup rm's the snapshot — wait for the lock release
+# BEFORE fabricating snapshots, or cleanup deletes them from under the checks.
+for _ in $(seq 1 30); do [[ -d "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock" ]] || break; sleep 0.2; done
 
 # Picker renders the age humanized, from a fabricated snapshot.
 printf 'T %s 1\nA ws|@9|1|api|%%20|claude|wait|1|247\n' "$(date +%s)" > "$SNAPF"
@@ -60,4 +63,22 @@ printf 'T %s 1\nA ws|@9|1|api|%%20|claude|wait|1|247\n' "$(date +%s)" > "$SNAPF"
 rows="$(AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" bash -c \
   'source "'"$REPO"'/scripts/status.sh"; source "'"$REPO"'/scripts/pick.sh"; prep_glyphs; list_fleet' 2>/dev/null)"
 check "picker shows humanized wait age" "grep -q 'wait 4m' <<<\"\$rows\""
+
+# Rail overflow: 10 agents, 12 usable lines -> a "+N more" row, not silence.
+# Reclaim the agent panes' rows first — the 80x24 test window can run out of
+# split space for the overflow rail otherwise.
+tx kill-pane -t "$hp" 2>/dev/null; tx kill-pane -t "$sp" 2>/dev/null
+{ printf 'T %s 1\n' "$(date +%s)"
+  for k in $(seq 1 10); do printf 'A ws|@%d|%d|ag%d|%%4%d|claude|idle|1|-\n' "$k" "$k" "$k" "$k"; done
+} > "$SNAPF"
+op="$(tx split-window -P -F '#{pane_id}' -t t: \
+  "env AGENT_FLEET_SIDENAV_MAX_ROWS=12 AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/scripts/sidenav.sh'")"
+ok=0
+for _ in $(seq 1 25); do
+  tx capture-pane -p -t "$op" 2>/dev/null | grep -q 'more (prefix+o)' && { ok=1; break; }
+  sleep 0.2
+done
+check "rail overflow shows +N more" "[[ $ok -eq 1 ]]"
+check "overflow count is 9" "tx capture-pane -p -t '$op' | grep -q '+9 more'"
+tx kill-pane -t "$op" 2>/dev/null
 exit "$FAIL"

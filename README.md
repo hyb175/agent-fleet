@@ -271,6 +271,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SHIM` | `1` | Put the claude shim on shell panes' `PATH` (`0` opts out) |
 | `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists |
 | `AGENT_FLEET_SIDENAV_WIDTH` | `30` | Rail width in columns |
+| `AGENT_FLEET_SIDENAV_MAX_ROWS` | pane height | Overrides the rail's usable lines for the `+N more` overflow cap (mainly for tests) |
 | `AGENT_FLEET_SIDENAV_REFRESH` | `2` | Rail idle redraw interval (seconds) |
 | `AGENT_FLEET_SIDENAV_TICK` | `0.1` | Rail spinner frame interval (seconds) |
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
