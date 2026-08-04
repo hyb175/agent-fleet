@@ -48,6 +48,13 @@ ACCENT="$T_ACCENT"  # selected name + left bar
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
 
 home() { printf '\033[H'; }
+fmt_age() {  # <seconds> -> AGE ("45s"/"4m"/"2h"); fork-free (render loop)
+  local s="$1"
+  if   (( s < 60 ));   then AGE="${s}s"
+  elif (( s < 3600 )); then AGE="$(( s / 60 ))m"
+  else                      AGE="$(( s / 3600 ))h"
+  fi
+}
 trunc() { local s="$1" n="$2"; (( n < 1 )) && { printf ''; return; }; if (( ${#s} > n )); then printf '%s…' "${s:0:n-1}"; else printf '%s' "$s"; fi; }
 
 # --- snapshot (re-read every DATA_EVERY ticks) ---
@@ -115,7 +122,7 @@ blank() { printf '\033[K\n'; }
 draw() {
   local frame="$1"; home
   local line=0; local -a map=()
-  local rec s roll br wid wn pane label st GLYPH sel pidx
+  local rec s roll br wid wn pane label st GLYPH sel pidx age sub
   # Agents per window: names get a ".pane" suffix only where a window holds
   # more than one agent, so same-window agents are tellable apart.
   local -A NWIN=()
@@ -155,15 +162,20 @@ draw() {
     printf ' %s(no agents)%s\033[K\n' "$C_DIM" "$C_OFF";     line=$((line+1))
   else
     for rec in "${AGENTS[@]}"; do
-      IFS='|' read -r s wid _ wn pane label st pidx <<<"$rec"
+      IFS='|' read -r s wid _ wn pane label st pidx age <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
       (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
       # Subtitle = workspace + agent kind (claude/codex/opencode…) so same-named
       # tabs are distinguishable and you can tell the tools apart; the glyph
-      # already shows state (working/wait/done/idle).
-      row "$sel" "$GLYPH" "$wn" "$s · $label"
+      # already shows state (working/wait/done/idle). Waiting agents append
+      # how long they've waited — the triage question the rail exists to answer.
+      sub="$s · $label"
+      if [[ "$st" == "wait" && "$age" =~ ^[0-9]+$ ]]; then
+        fmt_age "$age"; sub+=" · $AGE"
+      fi
+      row "$sel" "$GLYPH" "$wn" "$sub"
       line=$((line+2))
     done
   fi

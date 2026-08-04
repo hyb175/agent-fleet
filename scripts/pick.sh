@@ -68,7 +68,7 @@ stale_row() {
 # name so same-workspace agents differ) then agentless workspaces.
 list_fleet() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane label st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx
+  local line s wid widx wn pane st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx age sub
   # First pass: agents per window, so same-window agents get ".pane" suffixes.
   declare -A NWIN
   while IFS= read -r line; do
@@ -80,10 +80,19 @@ list_fleet() {
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
       A\ *)
-        IFS='|' read -r s wid widx wn pane label st pidx <<<"${line#A }"
+        IFS='|' read -r s wid widx wn pane _ st pidx age <<<"${line#A }"
         glyph="$(glyph_of "$st")"
         (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
-        printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$st"
+        # Waiting agents show how long they've waited (the triage sort key,
+        # humanized) — ages come from the snapshot's trailing age field.
+        sub="$st"
+        if [[ "$st" == "wait" && "$age" =~ ^[0-9]+$ ]]; then
+          if   (( age < 60 ));   then sub="wait ${age}s"
+          elif (( age < 3600 )); then sub="wait $(( age / 60 ))m"
+          else                        sub="wait $(( age / 3600 ))h"
+          fi
+        fi
+        printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$sub"
         # Prefix a (rank, idx) sort key so the most urgent agents float to the
         # top; idx keeps it stable within a rank. Stripped after sorting, below.
         agents+="$(state_rank "$st")"$'\t'"$idx"$'\t'"$line"$'\n'
@@ -116,7 +125,7 @@ list_spaces() {
   while IFS= read -r line; do
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
-      A\ *) IFS='|' read -r s wid widx wn pane label st pidx <<<"${line#A }"; NAG[$s]=$(( ${NAG[$s]:-0} + 1 )) ;;
+      A\ *) IFS='|' read -r s _ <<<"${line#A }"; NAG[$s]=$(( ${NAG[$s]:-0} + 1 )) ;;
       S\ *) IFS='|' read -r s roll br <<<"${line#S }"; ROLL[$s]="$roll"; BR[$s]="$br"; order+="$s"$'\n' ;;
     esac
   done < "$SNAP"
