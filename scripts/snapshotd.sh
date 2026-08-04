@@ -152,6 +152,9 @@ build() {
     label="$(pane_agent_kind "$kind" "$cmd" "$tty" "$sid")"
     [[ -n "$label" ]] || continue
     st="$(state_for_pane "$pane" "$cmd")"
+    # Scrape-tier agents (no hook status file) get a "~" label suffix so a
+    # wrong state in the rail/picker is attributable to the heuristic tier.
+    [[ -f "$AF_CACHE/$pane.status" ]] || label="$label~"
     # '|' is this file's field delimiter; window names are user-controlled
     # (rename-window), so swap it for a lookalike in display fields. Session
     # names are already sanitized at creation by the CLI.

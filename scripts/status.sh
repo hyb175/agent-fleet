@@ -66,6 +66,12 @@ cache_bg() {
 # "esc to interrupt" is the only marker Claude Code shows *while generating*, so
 # it cleanly separates working from idle. Avoid loose words like "tokens" — they
 # also appear in the idle footer and misclassified idle agents as working.
+#
+# PROVENANCE: every pattern below is scraped from Claude Code's TUI as observed
+# 2026-07 (2.x era). They are the scrape tier's single point of fragility — a
+# CLI redesign breaks them SILENTLY (states quietly read idle). When touching
+# them: re-verify against a live pane, update this date, and keep the synthetic
+# screen fixtures in t-status.sh in sync — they are the review-time canary.
 _state_capture() {
   local tail
   tail="$("$AF_TMUX" -L "$AF_SOCKET" capture-pane -t "$1" -p 2>/dev/null | tail -12)"
