@@ -28,7 +28,7 @@ CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 SNAP="$CACHE/fleet.snapshot"
 ROWS_DIR="$CACHE/rows"
 mkdir -p "$ROWS_DIR" 2>/dev/null || true
-MAPFILE="$ROWS_DIR/${TMUX_PANE:-unknown}.map"
+MAP_FILE="$ROWS_DIR/${TMUX_PANE:-unknown}.map"
 
 # This rail's own window id and session (resolved once). The highlight is
 # SELF-derived: a rail is only visible on a client whose active window is the
@@ -72,9 +72,9 @@ read_snapshot() {
   # focus.now (written by the pane-focus-in hook) is fresher than the daemon's
   # polled C records — a rail just switched to starts animating immediately
   # instead of a tick later.
-  local fs fw
+  local fw
   if [[ -r "$CACHE/focus.now" ]]; then
-    { IFS='|' read -r fs fw < "$CACHE/focus.now"; } 2>/dev/null || true
+    { IFS='|' read -r _ fw < "$CACHE/focus.now"; } 2>/dev/null || true
     [[ "${fw:-}" == "$RAIL_WIN" ]] && VISIBLE=1
   fi
 }
@@ -115,7 +115,7 @@ blank() { printf '\033[K\n'; }
 draw() {
   local frame="$1"; home
   local line=0; local -a map=()
-  local rec s roll br wid widx wn pane label st GLYPH sel pidx
+  local rec s roll br wid wn pane label st GLYPH sel pidx
   # Agents per window: names get a ".pane" suffix only where a window holds
   # more than one agent, so same-window agents are tellable apart.
   local -A NWIN=()
@@ -155,7 +155,7 @@ draw() {
     printf ' %s(no agents)%s\033[K\n' "$C_DIM" "$C_OFF";     line=$((line+1))
   else
     for rec in "${AGENTS[@]}"; do
-      IFS='|' read -r s wid widx wn pane label st pidx <<<"$rec"
+      IFS='|' read -r s wid _ wn pane label st pidx <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
@@ -172,11 +172,11 @@ draw() {
   printf ' %sprefix+o open · prefix+b hide%s\033[K\n' "$C_DIM" "$C_OFF"
   printf '\033[J'
 
-  if ((${#map[@]})); then printf '%s\n' "${map[@]}" > "$MAPFILE" 2>/dev/null || true
-  else : > "$MAPFILE" 2>/dev/null || true; fi
+  if ((${#map[@]})); then printf '%s\n' "${map[@]}" > "$MAP_FILE" 2>/dev/null || true
+  else : > "$MAP_FILE" 2>/dev/null || true; fi
 }
 
-cleanup() { printf '\033[?2026l\033[?25h\033[?1049l'; rm -f "$MAPFILE" 2>/dev/null; exit 0; }
+cleanup() { printf '\033[?2026l\033[?25h\033[?1049l'; rm -f "$MAP_FILE" 2>/dev/null; exit 0; }
 trap cleanup INT TERM HUP
 
 SYNC_ON=$'\033[?2026h'; SYNC_OFF=$'\033[?2026l'

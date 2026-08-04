@@ -747,6 +747,7 @@ cmd_upgrade() {
     [[ -d "$prev_dir" ]] || { echo "error: nothing to roll back to ($prev_dir missing)" >&2; exit 1; }
     local swap="$data_dir.swap.$$"
     rm -rf "$swap"
+    # shellcheck disable=SC2015 # chained error trap, not if/then/else: any mv failing must hit the handler
     mv "$data_dir" "$swap" && mv "$prev_dir" "$data_dir" && mv "$swap" "$prev_dir" \
       || { echo "error: rollback swap failed" >&2; exit 1; }
     echo "rolled back to the previous version ($("$data_dir/bin/agent-fleet" --version 2>/dev/null || echo '?'))."
@@ -846,6 +847,7 @@ manage_hooks_block() {  # <tool> <conf> <install|remove|status> [post-install no
     remove)
       [[ -f "$conf" ]] || { echo "nothing to remove ($conf not found)"; return 0; }
       if ! grep -qxF "$b" "$conf"; then echo "no fleet hooks block in $conf"; return 0; fi
+      # shellcheck disable=SC2015 # chained error trap, not if/then/else: sed OR mv failing must hit the handler
       sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" && mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
       echo "$tool hooks removed from $conf"
       ;;

@@ -1,0 +1,68 @@
+# CI — the integration suite on both supported platforms, plus shellcheck.
+#
+# The suite (tests/run-all.sh) is CI-friendly by construction: every test runs
+# on a throwaway tmux socket with private XDG cache/config dirs, so no isolation
+# tricks are needed here. fish is installed so t-shim's end-to-end pane check
+# exercises the fish -C re-prepend path instead of its degraded fallback.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tmux fzf fish zoxide
+
+      # macOS ships bash 3.2; the rail needs 4+ (associative arrays). Prepend
+      # brew's bin so `bash` resolves to the new one in later steps.
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install tmux fzf fish bash zoxide
+          echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
+
+      - name: Toolchain sanity
+        run: |
+          bash --version | head -1
+          tmux -V
+          fzf --version
+          bash -c '(( BASH_VERSINFO[0] >= 4 ))'
+
+      - name: Run integration suite
+        run: bash tests/run-all.sh
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      # Severity policy lives in .shellcheckrc (only source-following notices
+      # disabled globally); everything else is fixed or carries a justified
+      # per-line disable. SC2086 (quoting) stays enabled.
+      - name: Lint shell sources
+        run: shellcheck bin/agent-fleet scripts/*.sh shims/* tests/*.sh

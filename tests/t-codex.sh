@@ -56,9 +56,10 @@ check "save records kind codex" "grep -q 'codex' '$CACHE/fleet.state'"
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"
 sleep 0.6
+# shellcheck disable=SC2034 # read inside the eval'd check() conditions below
 starts="$(tx list-panes -t xwork -F '#{pane_start_command}')"
 check "restore relaunches codex resume" "grep -q 'codex resume $UUID' <<<\"\$starts\""
 check "restore does NOT use claude --resume for codex" "! grep -q 'claude --resume $UUID' <<<\"\$starts\""
 
 rm -rf "$FAKEHOME"
-exit $FAIL
+exit "$FAIL"

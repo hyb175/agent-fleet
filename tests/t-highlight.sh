@@ -23,6 +23,7 @@ check "two rails up" "[[ '$n0' == '2' ]]"
 
 # Self-highlight: each rail marks its own workspace row (▎ on the name line).
 cap_a="$(tx capture-pane -t "$alpha_rail" -p 2>/dev/null)"
+# shellcheck disable=SC2034 # cap_b read inside the eval'd check() condition below
 cap_b="$(tx capture-pane -t "$beta_rail" -p 2>/dev/null)"
 check "alpha's rail highlights alpha" "grep -aq '▎.*alpha' <<<\"\$cap_a\""
 check "beta's rail highlights beta" "grep -aq '▎.*beta' <<<\"\$cap_b\""
@@ -36,6 +37,7 @@ check "focus.now records the new view" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet
 check "rails survive SIGUSR1 (trap installed)" "[[ \"\$(rails_alive)\" == '$n0' ]]"
 # The push must NOT move alpha's highlight: another client's (or window's)
 # focus is not this rail's view.
+# shellcheck disable=SC2034 # cap_a read inside the eval'd check() conditions below
 cap_a="$(tx capture-pane -t "$alpha_rail" -p 2>/dev/null)"
 check "alpha's rail still highlights alpha after the push" "grep -aq '▎.*alpha' <<<\"\$cap_a\""
 check "alpha's rail does not highlight beta" "! grep -aq '▎.*beta' <<<\"\$cap_a\""
@@ -45,4 +47,4 @@ AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
   bash "$REPO/scripts/focus-track.sh" "$alpha_rail" 1 alpha "@0"   # rail focus: must be ignored
 check "rail focus is ignored (focus.now unchanged)" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/focus.now')\" == 'beta|$beta_win' ]]"
 check "rails still alive" "[[ \"\$(rails_alive)\" == '$n0' ]]"
-exit $FAIL
+exit "$FAIL"

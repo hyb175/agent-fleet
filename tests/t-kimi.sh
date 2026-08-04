@@ -59,6 +59,7 @@ check "save records the session id" "grep -q '$UUID' '$CACHE/fleet.state'"
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"
 sleep 0.6
+# shellcheck disable=SC2034 # read inside the eval'd check() conditions below
 starts="$(tx list-panes -t kwork -F '#{pane_start_command}')"
 check "restore relaunches kimi --session" "grep -q 'kimi --session $UUID' <<<\"\$starts\""
 check "restore does NOT use claude --resume for kimi" "! grep -q 'claude --resume $UUID' <<<\"\$starts\""
@@ -66,4 +67,4 @@ rp="$(tx list-panes -t kwork -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 !=
 check "restored pane re-tagged kimi" "[[ \"\$(tx display-message -p -t $rp '#{@fleet-agent-kind}')\" == 'kimi' ]]"
 
 rm -rf "$FAKEHOME"
-exit $FAIL
+exit "$FAIL"

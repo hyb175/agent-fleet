@@ -21,7 +21,7 @@ ROOT="${AGENT_FLEET_ROOT:?AGENT_FLEET_ROOT not set}"
 WIDTH="${AGENT_FLEET_SIDENAV_WIDTH:-30}"
 
 win="${1:?usage: sidenav-toggle.sh <window_id> <pane_id> [toggle|ensure]}"
-cur="${2:-}"
+_="${2:-}"   # <pane_id>: accepted for the calling convention, unused here
 mode="${3:-toggle}"
 
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }

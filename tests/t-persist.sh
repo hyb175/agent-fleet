@@ -44,6 +44,7 @@ check "layout round-trips byte-identical" "[[ \"\$before\" == \"\$after\" ]]"
 
 # Every flagged rail pane must actually be RUNNING the rail — a flag on a
 # leftover shell (the failed-respawn bug) must fail here.
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings below
 rails_running() {
   local ok=1 flag cmd
   while IFS='|' read -r flag cmd; do
@@ -102,4 +103,4 @@ check "big window keeps all $before_n panes" "[[ '$before_n' == '$after_n' ]]"
 check "big window rects identical" "[[ '$before_r' == '$after_r' ]]"
 check "auto-rail opt-out survives restore" "[[ \"\$(tx show-option -gqv @fleet-sidenav-auto)\" == off ]]"
 rm -rf "$FAKEHOME"
-exit $FAIL
+exit "$FAIL"

@@ -48,4 +48,4 @@ boot_server seed "$WORK"
 mkdir -p "$WORK/root/fleet_only"
 "$REPO/bin/agent-fleet" connect "$WORK/root/fleet_only" >/dev/null 2>&1 || true
 check "connect registers the dir in zoxide" "zoxide query -l | grep -q 'root/fleet_only\$'"
-exit $FAIL
+exit "$FAIL"

@@ -30,8 +30,9 @@ SNAPDIR="$XDG_CACHE_HOME/agent-fleet"; mkdir -p "$SNAPDIR"
 now="$(date +%s)"
 printf 'T %s 1\nA ws|@9|1|api|%%20|claude|working|1\nA ws|@9|1|api|%%21|claude|idle|2\nA ws|@8|2|solo|%%30|claude|idle|1\n' "$now" \
   > "$SNAPDIR/fleet.snapshot"
+# shellcheck disable=SC2034 # rows read inside the eval'd check() conditions below
 rows="$(AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" bash -c \
   'source "'"$REPO"'/scripts/status.sh"; source "'"$REPO"'/scripts/pick.sh"; prep_glyphs; list_fleet' 2>/dev/null)"
 check "shared-window agents get .pane suffixes" "grep -q 'api.1' <<<\"\$rows\" && grep -q 'api.2' <<<\"\$rows\""
 check "single agent stays unsuffixed" "grep -q 'solo' <<<\"\$rows\" && ! grep -q 'solo.1' <<<\"\$rows\""
-exit $FAIL
+exit "$FAIL"

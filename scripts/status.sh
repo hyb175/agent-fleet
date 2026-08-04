@@ -84,7 +84,7 @@ _state_capture() {
   #   - the "new task?" footer hint — reliable when shown, but only rendered
   #     intermittently now (rotates / larger sessions), so it can't stand alone.
   # A fresh agent shows neither, so this still separates "done" from truly idle.
-  elif grep -qE "new task\?|for ([0-9]+h )?([0-9]+m )?[0-9]+s" <<<"$tail"; then echo done
+  elif grep -qE "new task\?|for ([0-9]+h )?([0-9]+m )?[0-9]+s" <<<"$tail"; then echo "done"
   else echo idle
   fi
 }

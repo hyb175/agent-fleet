@@ -63,9 +63,10 @@ check "rollback restores 0.1.0"              "[[ \"\$($MANAGED --version 2>/dev/
 check ".prev now holds 0.2.0"                "[[ \"\$($data.prev/bin/agent-fleet --version 2>/dev/null)\" == 'agent-fleet 0.2.0' ]]"
 
 # --- dev checkout: never modified, prints the git hint ---
+# shellcheck disable=SC2034 # out read inside the eval'd check() conditions below
 out="$(env XDG_DATA_HOME="$WORK/data" AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_TAGS_URL="file://$newer" \
         "$REPO/bin/agent-fleet" upgrade --check 2>&1)"
 check "dev checkout detected"                "grep -q 'dev checkout' <<<\"\$out\""
 check "dev checkout suggests git pull"       "grep -q 'git -C' <<<\"\$out\""
 
-exit $FAIL
+exit "$FAIL"

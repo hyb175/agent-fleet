@@ -30,4 +30,4 @@ sleep 0.5
 check "apostrophe workspace name works" "tx has-session -t \"=don's_work\" 2>/dev/null"
 cwd="$(tx list-panes -t "don's_work" -F '#{?@fleet-sidenav,1,0}|#{pane_current_path}' | awk -F'|' '$1=="0"{print $2; exit}')"
 check "agent landed in the apostrophe dir (got: $cwd)" "[[ \"\$cwd\" == *\"don's dir\" ]]"
-exit $FAIL
+exit "$FAIL"

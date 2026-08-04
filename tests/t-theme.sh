@@ -42,6 +42,7 @@ check "theme verb persists the choice" "[[ \"\$(cat '$FAKECFG/agent-fleet/theme'
 check "theme verb rejects unknown names" "! env -u AGENT_FLEET_THEME XDG_CONFIG_HOME='$FAKECFG' '$REPO/bin/agent-fleet' theme nope 2>/dev/null"
 # Captured, not piped: under pipefail, grep -q's early exit would SIGPIPE the
 # CLI mid-listing and fail the pipeline even though the row is there.
+# shellcheck disable=SC2034 # lst read inside the eval'd check() condition below
 lst="$(env -u AGENT_FLEET_THEME XDG_CONFIG_HOME="$FAKECFG" "$REPO/bin/agent-fleet" theme)"
 check "theme list marks current" "grep -qx '\* rose-pine' <<<\"\$lst\""
 rm -rf "$FAKECFG"
@@ -63,7 +64,9 @@ check "boot applies themed popup border" "[[ \"\$(tx show -gv popup-border-style
 # ...and a rewrite + source-file re-styles the live server (the reload path).
 ( AGENT_FLEET_THEME=kanagawa; export AGENT_FLEET_THEME
   source "$REPO/scripts/theme.sh"; theme_write_conf )
+# shellcheck disable=SC2031 # theme.sh derives this path from XDG_CACHE_HOME only, so it's
+# unchanged by the subshell re-source above (the subshell isolates AGENT_FLEET_THEME, not this)
 tx source-file "$AGENT_FLEET_THEME_CONF"
 check "live source-file re-styles (kanagawa bg)" "[[ \"\$(tx show -gv status-style)\" == *1f1f28* ]]"
 
-exit $FAIL
+exit "$FAIL"

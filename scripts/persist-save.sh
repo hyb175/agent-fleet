@@ -27,6 +27,7 @@ tx list-sessions >/dev/null 2>&1 || exit 0
 mkdir -p "$CACHE" 2>/dev/null || exit 0
 
 tmp="$STATE.tmp.$$"
+# shellcheck disable=SC2015 # write-then-swap idiom, not if/then/else: mv failing must still clean up the temp
 {
   # Attached session (for best-effort focus on restore).
   att="$(tx list-clients -F '#{client_session}' 2>/dev/null | head -1)"

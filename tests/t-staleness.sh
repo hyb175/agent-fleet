@@ -29,6 +29,7 @@ out="$(fleet_rows)"
 check "90s @ interval=15 -> stale banner" "grep -q 'snapshot stale' <<<\"\$out\""
 
 printf 'T %s\nA a|@1|1|w|%%5|claude|wait\n' "$(( now - 12 ))" > "$SNAPDIR/fleet.snapshot"
+# shellcheck disable=SC2034 # out read inside the eval'd check() condition below
 out="$(fleet_rows)"
 check "legacy T (no interval) -> stale at 12s" "grep -q 'snapshot stale' <<<\"\$out\""
 
@@ -37,4 +38,4 @@ printf 'T %s\nA a|@1|1|w|%%5|claude|wait\n' "$(( now - 90 ))" > "$SNAPDIR/fleet.
 AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" AGENT_FLEET_SOCKET="af-nowhere-$$" \
   bash "$REPO/scripts/next-attention.sh" %99 >/dev/null 2>&1
 check "next-attention refuses stale snapshot (rc=0)" "[[ $? -eq 0 ]]"
-exit $FAIL
+exit "$FAIL"

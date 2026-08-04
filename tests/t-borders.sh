@@ -10,6 +10,7 @@ echo "t-borders:"
 boot_server t "$WORK"
 sleep 0.4
 
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings below
 opt() { tx show -w -t t "$1" 2>/dev/null | awk '{ $1=""; sub(/^ /,""); print }'; }
 
 # baseline: tune-all like a restore would
@@ -29,4 +30,4 @@ kill "$pid" 2>/dev/null
 sleep 1.2
 check "unsplit again: indicators=colour" "[[ \"\$(opt pane-border-indicators)\" == colour ]]"
 check "unsplit again: active border dim" "[[ \"\$(opt pane-active-border-style)\" == *292e42* ]]"
-exit $FAIL
+exit "$FAIL"

@@ -21,8 +21,9 @@ tx pipe-pane -t "$rp" -o "cat > $RAW"                  # tap the rail tty (emiss
 # daemon (fast ticks for the test)
 AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
   AGENT_FLEET_SNAP_INTERVAL=1 nohup "$REPO/scripts/snapshotd.sh" >/dev/null 2>&1 &
-dpid=$!
+_=$!   # daemon backgrounded; reaped by kill-server in lib.sh's EXIT trap, pid unused here
 
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings below
 wait_for() {  # <pattern> — up to ~5s
   for _ in $(seq 1 25); do grep -aq "$1" "$RAW" 2>/dev/null && return 0; sleep 0.2; done
   return 1
@@ -52,4 +53,4 @@ n="$(grep -ac $'\x1bPtmux;\x1b\x1b]9;4' "$RAW" 2>/dev/null || true)"
 check "AGENT_FLEET_PROGRESS=0 emits nothing (got ${n:-0})" "[[ '${n:-0}' == '0' ]]"
 kill "$(cat "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
 tx pipe-pane -t "$rp" 2>/dev/null
-exit $FAIL
+exit "$FAIL"

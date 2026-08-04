@@ -95,4 +95,4 @@ for _ in $(seq 1 25); do
 done
 check "hand-typed claude resolves to the shim" "[[ $ok -eq 1 && \"\$(cat '$WORK/which_claude')\" == '$REPO/shims/claude' ]]"
 rm -rf "$FAKEBIN"
-exit $FAIL
+exit "$FAIL"

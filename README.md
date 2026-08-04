@@ -1,5 +1,7 @@
 # agent-fleet
 
+[![CI](https://github.com/hyb175/agent-fleet/actions/workflows/ci.yml/badge.svg)](https://github.com/hyb175/agent-fleet/actions/workflows/ci.yml)
+
 A tmux-native session manager for running and supervising multiple coding agents — Claude Code first-class, Kimi Code and Codex hook-tier, opencode/cursor detected. A workspace is a tmux **session**; an agent is a tmux **window**. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
 
 The CLI is `agent-fleet` (alias `af`).

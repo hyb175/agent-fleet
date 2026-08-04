@@ -65,7 +65,7 @@ declare -A WLAYOUT WNAME WACTIVE   # key: session US widx
 declare -A PANES                   # key: session US widx -> "pidx US rail US cwd\n"...
 declare -A SEEN
 sess_order=(); attached=""
-while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 f10; do
+while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 _; do
   case "$kind" in
     A) attached="$f2" ;;
     W) WLAYOUT["$f2$US$f3"]="$f5"; WNAME["$f2$US$f3"]="$f6"; WACTIVE["$f2$US$f3"]="$f4"
@@ -103,7 +103,7 @@ for s in "${sess_order[@]}"; do
 
   # window indexes for this session, sorted numerically
   widxs=()
-  for key in "${!WLAYOUT[@]}"; do [[ "$key" == "$s$US"* ]] && widxs+=("${key#*$US}"); done
+  for key in "${!WLAYOUT[@]}"; do [[ "$key" == "$s$US"* ]] && widxs+=("${key#*"$US"}"); done
   widxs_sorted=(); while IFS= read -r x; do [[ -n "$x" ]] && widxs_sorted+=("$x"); done \
     < <(printf '%s\n' "${widxs[@]}" | sort -n)
 

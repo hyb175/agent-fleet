@@ -1,0 +1,5 @@
+# SC1090/SC1091: shellcheck can't (or won't) follow our source paths across
+# files in this multi-invocation setup. These are source-path-resolution
+# notices, not a bug class — everything else stays enabled.
+disable=SC1090
+disable=SC1091

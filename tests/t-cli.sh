@@ -16,6 +16,8 @@ boot_server api-v2 "$WORK"
 windows_before="$(tx list-windows -a -F '#{window_id}' | wc -l | tr -d ' ')"
 for flag in --help -h; do
   out="$("$AF" add "$flag" 2>&1)"; rc=$?
+  # shellcheck disable=SC2016 # single-quoted on purpose: eval'd by check(), reads this
+  # iteration's rc/out at eval time, not at (bogus) string-construction time
   check "add $flag prints focused help" \
     '[[ $rc -eq 0 && "$out" == "Usage: agent-fleet add"* && "$out" == *"--new-workspace <name>"* && "$out" != *"Verbs:"* ]]'
   windows_after="$(tx list-windows -a -F '#{window_id}' | wc -l | tr -d ' ')"
@@ -99,4 +101,4 @@ check "stop succeeds ('$out')" "[[ $rc -eq 0 && '$out' == *'fleet stopped'* ]]"
 check "server down" "! tx list-sessions >/dev/null 2>&1"
 check "recycled pid NOT killed" "kill -0 $victim 2>/dev/null"
 kill "$victim" 2>/dev/null
-exit $FAIL
+exit "$FAIL"
