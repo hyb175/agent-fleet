@@ -105,7 +105,7 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 └──────────────────┴─────────────────────────┘
 ```
 
-**Status glyphs:** `◆` waiting on you · `⠋…⠏` working · `✓` done · `○` idle — each state has its own shape, so they read without color vision.
+**Status glyphs:** `◆` waiting on you · `⠋…⠏` working · `✓` done · `○` idle — each state has its own shape, so they read without color vision. Window tabs in the status bar carry the same glyph for their worst agent (`⠿` = busy), and waiting agents show how long (`· 4m`).
 
 ---
 

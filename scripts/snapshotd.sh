@@ -84,6 +84,8 @@ declare -A PROG_LAST=() PROG_AGE=() PROG_TTYS=()
 # remembered one — a dead pane's tty number can be recycled by an unrelated
 # process, and writing there would paint escape sequences on someone else's
 # terminal (see cleanup above).
+# Last tab glyph pushed per window (see build) — change-detection state.
+declare -A WOPT_LAST=()
 progress_emit() {  # <state> <tty>
   [[ "$PROGRESS_ON" == "1" ]] || return 0
   local st="$1" tty="$2" seq
@@ -142,6 +144,7 @@ build() {
   declare -A BEST ROLL
   local agents="" wid wn widx pane cmd tty kind sid path label st r pidx age m
   local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
+  local -A TAB_BEST=() TAB_STATE=()
   while IFS='|' read -r s wid wn widx pane cmd tty kind sid path pidx; do
     [[ -z "$pane" ]] && continue
     # Track each ACTIVE window's ttys for the progress bar (rail preferred —
@@ -178,7 +181,32 @@ build() {
     if [[ -n "${AWIN[$wid]:-}" ]] && (( r < ${W_BEST[$wid]:-9} )); then
       W_BEST[$wid]="$r"; W_STATE[$wid]="$st"
     fi
+    # …and per EVERY window (not just active ones) drives its tab glyph.
+    if (( r < ${TAB_BEST[$wid]:-9} )); then
+      TAB_BEST[$wid]="$r"; TAB_STATE[$wid]="$st"
+    fi
   done <<<"$snap"
+
+  # Tab-bar glyphs: worst agent state per window -> @fleet-win-state, which
+  # window-status-format renders before #I:#W. Static shapes (tabs can't
+  # animate cheaply; ⠿ = busy). Set only on CHANGE — the common tick sets
+  # nothing — and cleared when a window's agents are gone.
+  local g
+  for w in "${!TAB_STATE[@]}"; do
+    case "${TAB_STATE[$w]}" in
+      wait) g="◆" ;; working) g="⠿" ;; done) g="✓" ;; idle) g="○" ;; *) g="" ;;
+    esac
+    if [[ "${WOPT_LAST[$w]:-}" != "$g" ]]; then
+      tx set-option -w -t "$w" @fleet-win-state "$g" 2>/dev/null || true
+      WOPT_LAST[$w]="$g"
+    fi
+  done
+  for w in "${!WOPT_LAST[@]}"; do
+    if [[ -z "${TAB_STATE[$w]:-}" && -n "${WOPT_LAST[$w]}" ]]; then
+      tx set-option -w -t "$w" -u @fleet-win-state 2>/dev/null || true
+      WOPT_LAST[$w]=""
+    fi
+  done
 
   # One bar per active window, deduped by tty (two clients viewing the same
   # window share a rail): each terminal mirrors the state of ITS current view.

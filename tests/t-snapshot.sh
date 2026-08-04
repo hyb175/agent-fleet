@@ -4,6 +4,7 @@
 #     hooked agents stay unmarked
 #   - waiting hooked agents carry a trailing age field (status-file mtime);
 #     the picker renders it humanized ("wait 4m")
+#   - the window's worst agent state lands in @fleet-win-state (tab glyph)
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -32,12 +33,24 @@ check "hooked agent label unmarked"    "wait_snap '|$hp|claude|'"
 check "scraped agent label gets ~"     "wait_snap '|$sp|codex~|'"
 check "no ~ on the hooked agent"       "! grep -q 'claude~' '$SNAPF'"
 
+# Tab glyph: worst state of the window's agents lands in @fleet-win-state.
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings below
+wait_opt() {  # <glyph> — up to ~6s
+  for _ in $(seq 1 30); do
+    [[ "$(tx show-option -wqv -t t: @fleet-win-state 2>/dev/null)" == "$1" ]] && return 0
+    sleep 0.2
+  done
+  return 1
+}
+check "tab glyph: working -> ⠿"        "wait_opt ⠿"
+
 # Wait state: the record grows a numeric trailing age (from the file's mtime,
 # backdated here so the age is unambiguously non-zero).
 printf 'wait\n' > "$PANES/$hp.status"
 touch -d '@'"$(( $(date +%s) - 240 ))" "$PANES/$hp.status" 2>/dev/null \
   || touch -t "$(date -v-4M '+%Y%m%d%H%M.%S' 2>/dev/null)" "$PANES/$hp.status" 2>/dev/null
 check "wait record carries age"        "wait_snap 'claude|wait|[0-9]*|2[0-9][0-9]\$'"
+check "tab glyph: wait wins -> ◆"      "wait_opt ◆"
 
 kill "$(cat "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
 
