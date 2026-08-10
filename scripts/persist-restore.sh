@@ -5,9 +5,10 @@
 # saved cwds, then re-renders the left rail per window. The sidenav auto-hook
 # is suppressed during the rebuild (via a throwaway scratch session that absorbs
 # the first-window race) so it can't add duplicate rails. Hooked agents are
-# relaunched with their saved session — `claude --resume <id>` or
-# `kimi --session <id>` by recorded kind (shell fallback on a failed resume);
-# every other pane returns as a shell in its dir.
+# relaunched by recorded kind — `claude --resume <id>` / `kimi --session <id>`
+# when a session id was saved, else a FRESH agent (`claude`/`kimi`/`codex`) in
+# the saved dir. A failed/expired resume drops to a shell; every non-agent pane
+# returns as a shell in its dir.
 #
 # Called by ensure_server on a cold boot and by `agent-fleet restore`. Exits
 # non-zero (leaving the caller to create a fresh session) when there's nothing
@@ -166,9 +167,9 @@ for s in "${sess_order[@]}"; do
       tx set-option -p -t "$railp" remain-on-exit off 2>/dev/null || true
     fi
 
-    # relaunch claude agents with their saved session (resume the conversation).
-    # Match each saved session to a live work pane by cwd (fallback: any unused
-    # work pane); a failed/expired resume drops to a shell so the pane survives.
+    # Relaunch agents into live work panes, matched by cwd (fallback: any unused
+    # work pane). Resume by saved id, or start fresh when the id is missing; a
+    # failed/expired resume drops to a shell so the pane survives.
     if [[ "$RESTORE_AGENTS" == "1" ]]; then
       work_ids=(); work_cwds=()
       while IFS='|' read -r pid pr pcwd2; do
@@ -178,7 +179,13 @@ for s in "${sess_order[@]}"; do
       used=" "; j=0
       while (( j < ${#sids[@]} )); do
         sid="${sids[$j]}"; scwd="${cwds[$j]}"; skind="${kinds[$j]:--}"; j=$(( j + 1 ))
-        [[ "$sid" == "-" || -z "$sid" ]] && continue
+        has_sid=1; [[ "$sid" == "-" || -z "$sid" ]] && has_sid=0
+        # A pane with no saved session-id is only relaunched when it WAS an agent
+        # (kind claude/kimi/codex) — then it starts fresh (below). A plain shell
+        # pane (kind '-' and no id) stays a shell.
+        if (( ! has_sid )); then
+          case "$skind" in claude|kimi|codex) : ;; *) continue ;; esac
+        fi
         # Pre-kind state files carry no kind; every hooked agent then was claude.
         [[ "$skind" == "-" || -z "$skind" ]] && skind="claude"
         chosen=""; k=0
@@ -193,30 +200,36 @@ for s in "${sess_order[@]}"; do
         fi
         [[ -z "$chosen" ]] && continue
         used+="$chosen "
-        # Kind-specific relaunch: claude resumes with --resume + the hooks
-        # overlay; kimi and codex resume by session id (their hooks are
-        # install-wide in the tool's global config, so no per-launch flag
-        # exists or is needed).
+        # Relaunch command by kind: resume the saved session when we have an id,
+        # otherwise start the agent FRESH in the saved dir (better than a shell).
+        # kimi/codex hooks are install-wide, so their fresh form takes no flag.
         case "$skind" in
-          kimi)  rc="kimi --session $sid" ;;
-          codex) rc="codex resume $sid" ;;
-          *)     rc="claude --resume $sid"
+          kimi)  (( has_sid )) && rc="kimi --session $sid" || rc="kimi" ;;
+          codex) (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
+          *)     (( has_sid )) && rc="claude --resume $sid" || rc="claude"
                  [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY" ;;
         esac
         tx set-option -p -t "$chosen" @fleet-agent-kind "$skind" 2>/dev/null || true
         tx set-option -w -t "$chosen" @fleet-agent "$skind" 2>/dev/null || true
-        # Re-arm persistence for the NEXT reboot: without these, the next
-        # auto-save (~15s away) records '-' for this pane and the resumed
-        # session id is lost. --resume keeps the same session id, so the gate
-        # file is correct, not stale.
-        tx set-option -p -t "$chosen" @fleet-session "$sid" 2>/dev/null || true
-        mkdir -p "$CACHE/panes" 2>/dev/null || true
-        printf '%s\n' "$sid" > "$CACHE/panes/$chosen.session" 2>/dev/null || true
-        # The shell fallback DISARMS the re-armed session state: if the resume
-        # fails (deleted/expired session), a stale gate file would permanently
-        # block the hook from capturing a manually-started claude's new id, and
-        # every future save would retry the dead sid.
-        fb="rm -f $(printf '%q' "$CACHE/panes/$chosen.session") 2>/dev/null; $(printf '%q' "${TMUX_BIN:-tmux}") -L $(printf '%q' "$SOCK") set-option -p -u @fleet-session 2>/dev/null; exec bash -i"
+        if (( has_sid )); then
+          # Re-arm persistence for the NEXT reboot: without these, the next
+          # auto-save (~15s away) records '-' for this pane and the resumed
+          # session id is lost. --resume keeps the same session id, so the gate
+          # file is correct, not stale.
+          tx set-option -p -t "$chosen" @fleet-session "$sid" 2>/dev/null || true
+          mkdir -p "$CACHE/panes" 2>/dev/null || true
+          printf '%s\n' "$sid" > "$CACHE/panes/$chosen.session" 2>/dev/null || true
+          # A failed resume (deleted/expired session) drops to a shell; clearing
+          # the gate + option lets a manually-started claude capture its new id
+          # instead of every future save retrying the dead sid.
+          fb="rm -f $(printf '%q' "$CACHE/panes/$chosen.session") 2>/dev/null; $(printf '%q' "${TMUX_BIN:-tmux}") -L $(printf '%q' "$SOCK") set-option -p -u @fleet-session 2>/dev/null; exec bash -i"
+        else
+          # Fresh agent: no id yet. Leave @fleet-session unset (clear any stale
+          # gate) so the hook captures the new session's id on its first event.
+          tx set-option -p -t "$chosen" -u @fleet-session 2>/dev/null || true
+          rm -f "$CACHE/panes/$chosen.session" 2>/dev/null || true
+          fb="exec bash -i"
+        fi
         tx respawn-pane -k -t "$chosen" "bash -lc '$rc || { $fb; }'" 2>/dev/null || true
       done
     fi

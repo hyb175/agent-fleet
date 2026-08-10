@@ -221,7 +221,9 @@ tmux is in-memory, so a reboot ends the fleet. agent-fleet saves the layout to `
 
 **Restored** — sessions, tabs (names + order), the exact split layout, each pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind and relaunches `claude --resume <id>`, `kimi --session <id>`, or `codex resume <id>`. This covers `add` / `Prefix C`, hand-typed `claude` / `claude -r`, and hand-typed `kimi` / `codex`.
 
-**Not restored** — other programs and unhooked agents come back as shells in the right dir; failed resumes also fall back to shells. `AGENT_FLEET_RESTORE_AGENTS=0` restores everything as shells.
+An agent whose session-id was never captured (e.g. opened but never prompted before the reboot) comes back as a **fresh** agent of the same kind in that dir — a new conversation, not a shell.
+
+**Not restored** — other programs and non-agent panes come back as shells in the right dir; a failed/expired resume also falls back to a shell. `AGENT_FLEET_RESTORE_AGENTS=0` restores everything as shells.
 
 **When** — saved every `AGENT_FLEET_SAVE_INTERVAL` daemon ticks (≈15s), on `stop`, and on `save`; restored automatically on `attach` after a stop, or manually via `restore`. To boot at login, run `agent-fleet attach` from your shell profile or a launchd/systemd unit.
 
