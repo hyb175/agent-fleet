@@ -11,10 +11,14 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-upgrade:"
 
-# --- build a "managed install" at $WORK/data/agent-fleet (version 0.1.0) ---
+# --- build a "managed install" at $WORK/data/agent-fleet, pinned to 0.1.0 ---
+# Pin the fixture's version explicitly so the test is independent of the repo's
+# current release (a `release.sh` bump must not break it).
 data="$WORK/data/agent-fleet"
 mkdir -p "$data"
 cp -r "$REPO/bin" "$REPO/conf" "$REPO/scripts" "$REPO/shims" "$data/"   # no .git -> managed
+sed -i.bak -E 's/^AGENT_FLEET_VERSION="[^"]*"/AGENT_FLEET_VERSION="0.1.0"/' "$data/bin/agent-fleet"
+rm -f "$data/bin/agent-fleet.bak"
 MANAGED="$data/bin/agent-fleet"
 
 # --- injected tag lists (GitHub /tags-shaped JSON) ---

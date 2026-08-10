@@ -16,6 +16,9 @@ export XDG_CACHE_HOME="$(mktemp -d)"
 # Private config too: theme resolution reads $XDG_CONFIG_HOME/agent-fleet/theme,
 # and the machine's real choice must not leak into test assertions.
 export XDG_CONFIG_HOME="$(mktemp -d)"
+# The running fleet exports AGENT_FLEET_THEME into every pane's env; unset it so
+# a suite launched from inside a themed fleet still resolves the default.
+unset AGENT_FLEET_THEME
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 
 tx() { tmux -L "$SOCK" "$@"; }
