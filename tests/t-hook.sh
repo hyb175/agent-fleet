@@ -60,4 +60,28 @@ check "idle reminder on fresh agent writes nothing" "[[ ! -e \"$SF\" ]]"
 # session id is captured from the JSON regardless of suppression.
 check "session id captured from event JSON"     "[[ \"\$(cat "$CACHE/${PANE}.session" 2>/dev/null)\" == sess-123 ]]"
 
+# --- SessionStart ('start'): records identity, never touches status ---
+# It fires at launch, so an agent that is never prompted still gets a session id
+# recorded and can be resumed after a reboot. It also fires on compaction, which
+# happens mid-turn — writing a status there would clobber the real one.
+SP="%starttest"; SSF="$CACHE/${SP}.status"
+start_fire() {  # <source>
+  printf '{"session_id":"sess-start","hook_event_name":"SessionStart","source":"%s"}' "$1" \
+    | env TMUX_PANE="$SP" AGENT_FLEET_NOTIFY=0 bash "$HOOK" start "$SOCK" claude
+}
+rm -f "$SSF" "$CACHE/${SP}.session"
+start_fire startup
+check "SessionStart records the session id" "[[ \"\$(cat "$CACHE/${SP}.session" 2>/dev/null)\" == sess-start ]]"
+check "SessionStart writes no status"       "[[ ! -e \"$SSF\" ]]"
+printf 'working\n' > "$SSF"
+start_fire compact
+check "SessionStart on compact leaves status alone" "[[ \"\$(cat "$SSF" | tr -d '\n')\" == working ]]"
+
+# The overlay must actually REGISTER SessionStart — without it the hook never
+# fires at launch and a never-prompted agent has no id to resume from.
+overlay="$(AGENT_FLEET_SOCKET="$SOCK" "$REPO/bin/agent-fleet" hooks-file 2>/dev/null)"
+check "overlay is valid JSON" "python3 -c 'import json,sys; json.load(open(sys.argv[1]))' '$overlay' 2>/dev/null"
+check "overlay registers SessionStart -> start" \
+  "python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); c=d['hooks']['SessionStart'][0]['hooks'][0]['command']; sys.exit(0 if ' start ' in c else 1)\" '$overlay' 2>/dev/null"
+
 exit $FAIL

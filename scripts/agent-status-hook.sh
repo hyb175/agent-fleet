@@ -60,6 +60,12 @@ if [[ "$state" == "wait" ]]; then
   esac
 fi
 
+# 'start' (SessionStart) exists only to record identity — the session id below —
+# so it never writes a status. A launching agent isn't working, and the event
+# also fires on compaction mid-turn, where writing anything would clobber the
+# real state.
+[[ "$state" == "start" ]] && state=""
+
 # Write the new state — unless it was suppressed as an idle reminder above, in
 # which case the finished/idle status the turn left behind stands.
 # Trailing newline matters: status.sh reads this with `read`, which returns

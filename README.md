@@ -220,7 +220,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 
 ## Status detection
 
-**Hook tier (precise).** Agents from `agent-fleet add` / `Prefix C` run `claude --settings <overlay>`. Four Claude Code hooks map state: `UserPromptSubmit`/`PreToolUse` → **working**, `Notification` → **wait**, `Stop` → **done**. The overlay (hooks only) is written to `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is untouched.
+**Hook tier (precise).** Agents from `agent-fleet add` / `Prefix C` run `claude --settings <overlay>`. Claude Code hooks map state: `UserPromptSubmit`/`PreToolUse` → **working**, `Notification` → **wait**, `Stop` → **done**. `SessionStart` writes no status — it records the session id at launch so the agent can be resumed after a reboot even if you never prompted it. The overlay (hooks only) is written to `~/.cache/agent-fleet/hooks-settings.json` and applied per-agent — your global `~/.claude/settings.json` is untouched.
 
 **Hand-typed `claude` is hooked too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` on `PATH`, so `claude`, `claude -r`, `claude --resume`, `claude -c` resolve to a shim that attaches the hooks (and resume-after-reboot). Non-interactive calls (`-p`, `--help`, `--version`) and commands already carrying `--settings` pass through; `AGENT_FLEET_SHIM=0` opts out.
 
@@ -246,7 +246,7 @@ tmux is in-memory, so a reboot ends the fleet. agent-fleet saves the layout to `
 
 **Restored** — sessions, tabs (names + order), the exact split layout, each pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind and relaunches `claude --resume <id>`, `kimi --session <id>`, or `codex resume <id>`. This covers `add` / `Prefix C`, hand-typed `claude` / `claude -r`, and hand-typed `kimi` / `codex`.
 
-An agent whose session-id was never captured (e.g. opened but never prompted before the reboot) comes back as a **fresh** agent of the same kind in that dir — a new conversation, not a shell.
+The id is recorded at launch (`SessionStart`), so an agent you opened but never prompted still resumes. If the id is missing anyway, the agent comes back **fresh** in that dir — a new conversation, not a shell.
 
 **Not restored** — other programs and non-agent panes come back as shells in the right dir; a failed/expired resume also falls back to a shell. `AGENT_FLEET_RESTORE_AGENTS=0` restores everything as shells.
 

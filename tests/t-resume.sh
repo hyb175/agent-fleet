@@ -47,6 +47,24 @@ sleep 0.6
 starts="$(tx list-panes -t work -F '#{pane_start_command}')"
 check "reboot #2 STILL resumes" "grep -q 'claude --resume $UUID' <<<\"\$starts\""
 
+# --- never prompted: SessionStart alone is enough to resume after a reboot ---
+# Before the SessionStart hook existed the id was only captured on the first
+# prompt/tool event, so an agent opened and left idle came back as a bare shell.
+NP="never-prompted-id"
+tx new-session -d -s np -n np -c "$WORK/r"
+npw="$(tx list-panes -t np -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 != "1" {print $1; exit}')"
+printf '{"session_id":"%s","hook_event_name":"SessionStart","source":"startup"}' "$NP" \
+  | env TMUX_PANE="$npw" AGENT_FLEET_NOTIFY=0 AGENT_FLEET_SOCKET="$SOCK" \
+        bash "$REPO/scripts/agent-status-hook.sh" start "$SOCK" claude
+check "SessionStart tagged the pane for persistence" \
+  "[[ \"\$(tx display-message -p -t $npw '#{@fleet-session}')\" == '$NP' ]]"
+"$REPO/scripts/persist-save.sh"
+check "save records the never-prompted agent's id" "grep -q '$NP' '$CACHE/fleet.state'"
+tx kill-server; sleep 0.4
+"$REPO/scripts/persist-restore.sh"; sleep 0.6
+starts="$(tx list-panes -t np -F '#{pane_start_command}')"
+check "never-prompted agent RESUMES its conversation" "grep -q 'claude --resume $NP' <<<\"\$starts\""
+
 # --- no saved session-id: a known agent relaunches FRESH; a shell stays a shell ---
 tx new-session -d -s fresh -n fresh -c "$WORK/r"    # agent kind, but no id captured
 fa="$(tx list-panes -t fresh -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 != "1" {print $1; exit}')"

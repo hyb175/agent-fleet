@@ -118,6 +118,7 @@ ensure_hook_settings() {
   cat > "$f" <<JSON
 {
   "hooks": {
+    "SessionStart":     [ { "hooks": [ { "type": "command", "command": "'$hook' start $SOCKET claude" } ] } ],
     "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET claude" } ] } ],
     "PreToolUse":       [ { "matcher": "*", "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET claude" } ] } ],
     "Notification":     [ { "hooks": [ { "type": "command", "command": "'$hook' wait $SOCKET claude" } ] } ],
