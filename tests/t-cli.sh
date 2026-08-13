@@ -70,6 +70,13 @@ check "move-tab.sh moves the tab off its workspace to the picked one (got '$dest
   "[[ -n '$dest2' && '$dest2' != repo-x ]]"
 rm -rf "$stub"
 
+# No code may open /dev/tty. On a process orphaned off a dead pane that open()
+# never returns — it sleeps in the kernel holding a device-node lock, and every
+# terminal on the machine hangs behind it. Comments mentioning it are fine.
+tty_opens="$(grep -rn '/dev/tty' "$REPO/bin" "$REPO/scripts" "$REPO/shims" "$REPO/install.sh" 2>/dev/null \
+  | grep -vE '^[^:]+:[0-9]+: *#' || true)"
+check "nothing opens /dev/tty${tty_opens:+ (found: $tty_opens)}" "[[ -z \"\$tty_opens\" ]]"
+
 # config: path lists the files; edit scaffolds local.conf (EDITOR=true = no-op)
 cfgh="$WORK/cfghome"
 out="$(XDG_CONFIG_HOME="$cfgh" "$AF" config path 2>&1)"

@@ -559,19 +559,19 @@ _canon() {
   [[ -e "$p" ]] && printf '%s' "$(cd "$(dirname "$p")" && pwd)/$(basename "$p")"
 }
 
-# Ask "<msg> [y/N]" on the controlling terminal. 0=yes, 1=no/abort, 2=no TTY to
-# ask on (caller should tell the user to pass -y). Callers must guard against
-# set -e, e.g.  rc=0; _confirm "…" || rc=$?
+# Ask "<msg> [y/N]" on stdin. 0=yes, 1=no/abort, 2=not interactive (caller
+# should tell the user to pass -y). Callers must guard against set -e, e.g.
+#   rc=0; _confirm "…" || rc=$?
+#
+# Deliberately only reads stdin. An earlier version fell back to opening
+# /dev/tty when stdin wasn't a terminal: on a process orphaned off a dead pane
+# that open() doesn't fail, it sleeps forever in the kernel holding a
+# device-node lock, and every terminal on the machine hangs behind it. Prompting
+# through a redirected stdin is a nicety; -y already covers that case.
 _confirm() {
-  local msg="$1" ans=""
-  if [[ -t 0 ]]; then
-    read -r -p "$msg [y/N] " ans || ans=""
-  elif { exec 3</dev/tty; } 2>/dev/null; then
-    read -r -u 3 -p "$msg [y/N] " ans || ans=""
-    exec 3<&-
-  else
-    return 2
-  fi
+  [[ -t 0 ]] || return 2
+  local ans=""
+  read -r -p "$1 [y/N] " ans || ans=""
   case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 

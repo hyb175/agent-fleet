@@ -319,7 +319,12 @@ main() {
         case "$target" in
           CONNECT:*)
             def="${target##*/}"; printf '\n'
-            read -e -i "$def" -p "  workspace name: " nm </dev/tty 2>/dev/null || nm=""
+            # Read from stdin, which is the popup's own tty (piping the row list
+            # into fzf doesn't touch it). Never re-open /dev/tty: on a process
+            # orphaned off a dead pane that open() blocks forever in the kernel
+            # and hangs every terminal on the machine behind it.
+            nm=""
+            [[ -t 0 ]] && { read -e -i "$def" -p "  workspace name: " nm || nm=""; }
             "$AF" connect "${target#CONNECT:}" "${nm:-$def}"; exit 0 ;;
           PANE:*)  "$AF" goto "${target#PANE:}"; exit 0 ;;
           SESS:*)  "$AF" connect "${target#SESS:}"; exit 0 ;;
