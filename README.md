@@ -129,10 +129,11 @@ Ctrl-a L      switch to the previous workspace
 Put the **whole fleet** on the host that runs the agents, then attach to it:
 
 ```sh
-agent-fleet attach --remote devbox    # ssh -t devbox, attach to its fleet
+ssh devbox            # install agent-fleet there the same way as anywhere else
+agent-fleet attach
 ```
 
-Equivalent by hand: `ssh devbox`, then `agent-fleet attach`. `AGENT_FLEET_SSH_OPTS` passes extra ssh flags (`-p 2222`, `-J jump`, …). Install agent-fleet on the host the same way as anywhere else.
+As a one-liner, `ssh -t devbox 'bash -lc "agent-fleet attach"'` — `-t` because tmux needs a TTY, and a login shell because a non-interactive ssh command won't have `~/.local/bin` on `PATH`.
 
 Run the agents and the fleet on the **same** machine. The status hooks execute in the agent's own process and write to that machine's cache, so a split setup (fleet local, agent remote over SSH) loses hook-tier status, notifications, and resume — the reason the earlier Codespaces integration was removed. With the whole fleet on the host, status, rail, persistence, and `--resume` behave exactly as they do locally.
 
