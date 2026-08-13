@@ -11,6 +11,7 @@ The CLI is `agent-fleet` (alias `af`).
 - [Upgrade](#upgrade)
 - [Two surfaces](#two-surfaces)
 - [Quick start](#quick-start)
+- [Running the fleet remotely](#running-the-fleet-remotely)
 - [Concepts](#concepts)
 - [Commands](#commands)
 - [Keybindings](#keybindings)
@@ -120,6 +121,29 @@ Ctrl-a C      add a Claude agent to the current workspace, jump to it
 Ctrl-a b      toggle the sidenav rail
 Ctrl-a L      switch to the previous workspace
 ```
+
+---
+
+## Running the fleet remotely
+
+Put the **whole fleet** on the host that runs the agents, then attach to it:
+
+```sh
+agent-fleet attach --remote devbox    # ssh -t devbox, attach to its fleet
+```
+
+Equivalent by hand: `ssh devbox`, then `agent-fleet attach`. `AGENT_FLEET_SSH_OPTS` passes extra ssh flags (`-p 2222`, `-J jump`, …). Install agent-fleet on the host the same way as anywhere else.
+
+Run the agents and the fleet on the **same** machine. The status hooks execute in the agent's own process and write to that machine's cache, so a split setup (fleet local, agent remote over SSH) loses hook-tier status, notifications, and resume — the reason the earlier Codespaces integration was removed. With the whole fleet on the host, status, rail, persistence, and `--resume` behave exactly as they do locally.
+
+Because agents keep running on the host, closing your laptop doesn't stop them — reattach later and the fleet is where you left it. Any persistent box works (VM, Coder workspace, another Mac); a private network like Tailscale avoids exposing SSH.
+
+**Two differences from a local fleet:**
+
+- **Desktop notifications fire on the host, not your laptop** — `osascript` / `notify-send` run wherever the hook runs. The rail, the picker, and the terminal progress bar still reach you over SSH. `AGENT_FLEET_NOTIFY=0` turns the dead notifications off.
+- **Terminal size follows the most recently active client** (tmux `window-size latest`). With two clients of different sizes attached, the windows resize to whoever acted last.
+
+Several people can attach at once — the fleet tracks state per client, so each viewer gets their own rail highlight and progress bar. `tmux -L agent-fleet attach -r` attaches read-only for an observer.
 
 ---
 

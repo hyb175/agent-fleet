@@ -70,6 +70,21 @@ check "move-tab.sh moves the tab off its workspace to the picked one (got '$dest
   "[[ -n '$dest2' && '$dest2' != repo-x ]]"
 rm -rf "$stub"
 
+# attach --remote: build an ssh command that runs the HOST's agent-fleet under a
+# login shell (so a ~/.local/bin install is on PATH). A workspace name is passed
+# as ONE argument — it must not be able to inject a second command.
+stub="$(mktemp -d)"; printf '#!/bin/sh\nfor a in "$@"; do printf "[%%s]" "$a"; done; echo\n' > "$stub/ssh"
+chmod +x "$stub/ssh"
+out="$(PATH="$stub:$PATH" "$AF" attach --remote devbox 2>&1)"
+check "remote attach forces a TTY (-t)" "grep -q '\[-t\]' <<<\"\$out\""
+check "remote attach targets the host" "grep -q '\[devbox\]' <<<\"\$out\""
+check "remote attach runs a login shell" "grep -q 'bash -lc' <<<\"\$out\""
+out="$(PATH="$stub:$PATH" AGENT_FLEET_SSH_OPTS='-p 2222' "$AF" attach --remote devbox 2>&1)"
+check "AGENT_FLEET_SSH_OPTS split into argv" "grep -q '\[-p\]\[2222\]' <<<\"\$out\""
+out="$(PATH="$stub:$PATH" "$AF" attach 'pwn;touch $stub/OWNED' --remote devbox 2>&1)"
+check "workspace name cannot inject a command" "[[ ! -e '$stub/OWNED' ]] && grep -q 'pwn' <<<\"\$out\""
+rm -rf "$stub"
+
 # config: path lists the files; edit scaffolds local.conf (EDITOR=true = no-op)
 cfgh="$WORK/cfghome"
 out="$(XDG_CONFIG_HOME="$cfgh" "$AF" config path 2>&1)"

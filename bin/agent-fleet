@@ -353,7 +353,29 @@ cmd_back() {
 
 # attach [target] — sesh-style 3-way branch.
 cmd_attach() {
-  local target="${1:-}"
+  local target="" host=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --remote|-R) host="${2:?usage: agent-fleet attach [workspace] --remote <host>}"; shift 2 ;;
+      --)          shift; break ;;
+      *)           if [[ -z "$target" ]]; then target="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
+    esac
+  done
+
+  # --remote: the fleet lives on <host> — run ITS agent-fleet and attach over
+  # ssh. Deliberately not "local fleet, remote agent": the status hooks are
+  # local to the agent process, so the whole fleet belongs on one machine.
+  # -t forces a TTY (tmux needs one); bash -lc sources the profile so a
+  # ~/.local/bin install is on PATH. Nesting inside a local tmux is fine — the
+  # remote server is a different machine, so the foreign-tmux guard below
+  # doesn't apply.
+  if [[ -n "$host" ]]; then
+    local rcmd="agent-fleet attach"
+    [[ -n "$target" ]] && rcmd="$rcmd $(printf '%q' "$target")"
+    # shellcheck disable=SC2086  # AGENT_FLEET_SSH_OPTS is intentionally split
+    exec ssh -t ${AGENT_FLEET_SSH_OPTS:-} "$host" "bash -lc $(printf '%q' "$rcmd")"
+  fi
+
   ensure_server
   if [[ -n "$target" ]] && ! tx has-session -t "=$target" 2>/dev/null; then
     echo "error: no such workspace: $target" >&2
@@ -1067,7 +1089,9 @@ Verbs:
   agent-fleet connect <dir|name> [workspace-name]
                                    Resolve-or-create a workspace, then go to it. Optional name
                                    overrides the default (the directory's basename).
-  agent-fleet attach [workspace]   Attach to the fleet (sesh-style 3-way branch).
+  agent-fleet attach [workspace] [--remote <host>]
+                                   Attach to the fleet (sesh-style 3-way branch). --remote attaches to
+                                   the fleet running ON <host> over ssh (AGENT_FLEET_SSH_OPTS for flags).
   agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--focus]
                                    Add an agent window (default cmd: claude; hooks attach when the
                                    command is claude). --new-workspace puts it in its own workspace
