@@ -44,11 +44,20 @@ fi
 echo $$ > "$LOCK/pid"
 
 cleanup() {
-  # Don't leave a stale loading bar on any terminal after the fleet stops.
-  local t
-  for t in "${!PROG_TTYS[@]}"; do
-    printf '\033Ptmux;\033\033]9;4;0\007\033\\' > "$t" 2>/dev/null || true
-  done
+  # Don't leave a stale loading bar on any terminal after the fleet stops — but
+  # only on ttys that are STILL LIVE. PROG_TTYS accumulates every tty this
+  # daemon ever wrote, so by shutdown most name panes that are long gone; those
+  # opens fail (ENXIO), and a recycled tty number would put escape sequences on
+  # an unrelated terminal. Intersect with what tmux reports now, and skip
+  # entirely if the server is already gone.
+  local t live
+  live="$(tx list-panes -a -F '#{pane_tty}' 2>/dev/null)"
+  if [[ -n "$live" ]]; then
+    for t in "${!PROG_TTYS[@]}"; do
+      grep -qxF "$t" <<<"$live" || continue
+      printf '\033Ptmux;\033\033]9;4;0\007\033\\' > "$t" 2>/dev/null || true
+    done
+  fi
   rm -rf "$LOCK" "$SNAP" 2>/dev/null
   exit 0
 }
@@ -69,6 +78,10 @@ PROGRESS_ON="${AGENT_FLEET_PROGRESS:-1}"
 # active window's tty, so each terminal mirrors ITS OWN view (tmux forwards a
 # pane's passthrough only to the clients where that pane is visible).
 declare -A PROG_LAST=() PROG_AGE=() PROG_TTYS=()
+# INVARIANT: <tty> must come from the CURRENT tick's list-panes, never from a
+# remembered one — a dead pane's tty number can be recycled by an unrelated
+# process, and writing there would paint escape sequences on someone else's
+# terminal (see cleanup above).
 progress_emit() {  # <state> <tty>
   [[ "$PROGRESS_ON" == "1" ]] || return 0
   local st="$1" tty="$2" seq
