@@ -98,9 +98,14 @@ ensure_server() {
     rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session 2>/dev/null || true
     # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
     # we have one; otherwise start a fresh home workspace.
-    if [[ -f "$AF_CACHE_DIR/fleet.state" ]] && "$ROOT_DIR/scripts/persist-restore.sh" 2>/dev/null; then
-      :
-    else
+    local rc=1
+    if [[ -f "$AF_CACHE_DIR/fleet.state" ]]; then
+      rc=0; "$ROOT_DIR/scripts/persist-restore.sh" 2>/dev/null || rc=$?
+    fi
+    if (( rc != 0 )); then
+      # rc 3 = the state belongs to a different socket (see persist-restore).
+      # Say so: otherwise a renamed socket looks like the fleet lost its layout.
+      (( rc == 3 )) && echo "agent-fleet: saved layout belongs to another tmux socket — starting fresh on '$SOCKET'" >&2
       tx new-session -d -s "$HOME_SESSION" -c "$HOME"
     fi
   fi
@@ -1125,11 +1130,16 @@ cmd_restore() {
     echo "error: fleet already running — stop it first (agent-fleet stop)" >&2
     exit 1
   fi
+  if [[ ! -f "$AF_CACHE_DIR/fleet.state" ]]; then
+    echo "nothing to restore" >&2; exit 1
+  fi
+  # Any other failure (e.g. the state belongs to another socket) is explained on
+  # persist-restore's own stderr.
   if "$ROOT_DIR/scripts/persist-restore.sh"; then
     ensure_server_env; ensure_snapshotd
     echo "layout restored — attach with: agent-fleet attach"
   else
-    echo "nothing to restore" >&2; exit 1
+    exit 1
   fi
 }
 
@@ -1199,6 +1209,9 @@ Env:
   AGENT_FLEET_CMD      Default agent command (default: claude)
   AGENT_FLEET_THEME    One-shot palette override (normally use: agent-fleet theme <name>,
                        which persists; presets live in conf/themes/).
+  AGENT_FLEET_RESTORE_ANY_SOCKET=1
+                       Let restore rebuild a layout saved on a different socket. Off by
+                       default so a one-off AGENT_FLEET_SOCKET can't clone the live fleet.
 
 User overrides: ~/.config/agent-fleet/local.conf is sourced by the base config if present.
 EOF

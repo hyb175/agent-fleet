@@ -2,6 +2,7 @@
 # t-persist.sh — layout persistence round-trips exactly.
 #   - sessions / window names / exact split rects / work-pane cwds / one rail
 #     per window survive save -> kill-server -> restore
+#   - restore refuses state saved on a different tmux socket (opt-out via env)
 #   - a 7-pane 200x50 window keeps every pane (session sized from the layout,
 #     splits rebalanced) and the user's @fleet-sidenav-auto opt-out survives
 set -uo pipefail
@@ -54,6 +55,18 @@ rails_running() {
   (( ok ))
 }
 check "restored rails are RUNNING the rail" "rails_running"
+
+# The cache isn't socket-scoped: a one-off AGENT_FLEET_SOCKET must not rebuild
+# (and re-resume) the live fleet on a throwaway socket.
+OTHER="$SOCK-other"
+AGENT_FLEET_SOCKET="$OTHER" "$REPO/scripts/persist-restore.sh" 2>/dev/null; rc_other=$?
+check "restore refuses a foreign socket" "[[ $rc_other -eq 3 ]]"
+check "nothing booted on the foreign socket" "! tmux -L '$OTHER' list-sessions >/dev/null 2>&1"
+AGENT_FLEET_SOCKET="$OTHER" AGENT_FLEET_RESTORE_ANY_SOCKET=1 \
+  "$REPO/scripts/persist-restore.sh" >/dev/null 2>&1; rc_forced=$?
+check "AGENT_FLEET_RESTORE_ANY_SOCKET overrides the refusal" "[[ $rc_forced -eq 0 ]]"
+tmux -L "$OTHER" kill-server 2>/dev/null
+rm -f "/private/tmp/tmux-$(id -u)/$OTHER" 2>/dev/null
 
 # Geometry-immunity: restore under a different rail width — the old
 # left/top/width match would find nothing and leave shells behind.

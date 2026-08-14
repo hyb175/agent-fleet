@@ -257,6 +257,8 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 
 **When** — saved every `AGENT_FLEET_SAVE_INTERVAL` daemon ticks (≈15s), on `stop`, and on `save`; restored automatically on `attach` after a stop, or manually via `restore`. To boot at login, run `agent-fleet attach` from your shell profile or a launchd/systemd unit.
 
+**Socket-scoped** — the state file records the socket it was saved on, and restore refuses to rebuild it anywhere else. The cache dir is shared across sockets, so without this a throwaway `AGENT_FLEET_SOCKET=scratch agent-fleet attach` would clone the live fleet and `--resume` every agent a second time — two processes appending to one transcript. If you deliberately renamed your socket, `AGENT_FLEET_RESTORE_ANY_SOCKET=1 agent-fleet restore` moves the layout over.
+
 ---
 
 ## Environment variables
@@ -280,6 +282,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
 | `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon ticks |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents on restore (`0` = shells) |
+| `AGENT_FLEET_RESTORE_ANY_SOCKET` | `0` | Allow restoring a layout saved on a different socket |
 | `AGENT_FLEET_GIT_TTL` | `30` | Cached git-branch freshness (seconds) |
 | `TMUX_BIN` | `tmux` | tmux binary used by the CLI and scripts |
 

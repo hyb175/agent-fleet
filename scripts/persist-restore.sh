@@ -12,7 +12,8 @@
 #
 # Called by ensure_server on a cold boot and by `agent-fleet restore`. Exits
 # non-zero (leaving the caller to create a fresh session) when there's nothing
-# to restore. Fields are TAB-separated with every field forced non-empty — see
+# to restore, or when the state belongs to another tmux socket.
+# Fields are TAB-separated with every field forced non-empty — see
 # persist-save.sh for why (tmux escapes control-char delimiters in -F output;
 # read collapses runs of whitespace IFS).
 
@@ -34,6 +35,20 @@ OVERLAY="$CACHE/hooks-settings.json"                # status-hooks settings over
 
 [[ -f "$STATE" ]] || exit 1
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
+
+# The cache isn't socket-scoped, so the live fleet's state file is visible to
+# any `AGENT_FLEET_SOCKET=throwaway agent-fleet attach`, which would rebuild the
+# whole fleet on that socket and `claude --resume` every agent a second time —
+# two processes appending to one transcript. Only rebuild onto the socket that
+# saved the state; state files predating the S record carry no socket and are
+# restored as before.
+state_sock="$(awk -F"$US" '$1=="S"{print $2; exit}' "$STATE" 2>/dev/null)"
+if [[ -n "$state_sock" && "$state_sock" != "$SOCK" \
+      && "${AGENT_FLEET_RESTORE_ANY_SOCKET:-0}" != "1" ]]; then
+  echo "persist-restore: saved state belongs to socket '$state_sock', not '$SOCK' — refusing." >&2
+  echo "                 set AGENT_FLEET_RESTORE_ANY_SOCKET=1 to rebuild it here anyway." >&2
+  exit 3
+fi
 
 # Concurrent cold boots (several terminal tabs each running `agent-fleet
 # attach` after a reboot) must not race the rebuild: the loser used to fail its

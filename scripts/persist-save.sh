@@ -29,6 +29,10 @@ mkdir -p "$CACHE" 2>/dev/null || exit 0
 tmp="$STATE.tmp.$$"
 # shellcheck disable=SC2015 # write-then-swap idiom, not if/then/else: mv failing must still clean up the temp
 {
+  # Socket this fleet lives on. The cache dir is not socket-scoped, so restore
+  # needs this to tell its own state file from another socket's.
+  printf 'S%s%s\n' "$US" "$SOCK"
+
   # Attached session (for best-effort focus on restore).
   att="$(tx list-clients -F '#{client_session}' 2>/dev/null | head -1)"
   [[ -n "$att" ]] && printf 'A%s%s\n' "$US" "$att"
