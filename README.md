@@ -14,6 +14,7 @@ The CLI is `agent-fleet` (alias `af`).
 - [Two surfaces](#two-surfaces)
 - [Quick start](#quick-start)
 - [Running the fleet remotely](#running-the-fleet-remotely)
+  - [Federating several fleets](#federating-several-fleets)
 - [Concepts](#concepts)
 - [Commands](#commands)
 - [Keybindings](#keybindings)
@@ -147,6 +148,22 @@ Because agents keep running on the host, closing your laptop doesn't stop them �
 - **Terminal size follows the most recently active client** (tmux `window-size latest`). With two clients of different sizes attached, the windows resize to whoever acted last.
 
 Several people can attach at once — the fleet tracks state per client, so each viewer gets their own rail highlight and progress bar. `tmux -L agent-fleet attach -r` attaches read-only for an observer.
+
+### Federating several fleets
+
+Running fleets on more than one machine (laptop + devbox) means two rails to watch. List the other hosts and their agents appear in this fleet's rail and picker alongside the local ones:
+
+```sh
+mkdir -p ~/.config/agent-fleet
+printf 'devbox\nbuildbox\n' > ~/.config/agent-fleet/remotes   # one host per line, '#' comments
+agent-fleet reload                                            # picks up config changes
+```
+
+Each host keeps a **complete** fleet of its own — agents, hooks, daemon, persistence. Only the snapshot travels: one poller per host copies that host's `fleet.snapshot` over SSH every `AGENT_FLEET_REMOTE_INTERVAL` seconds and qualifies its ids as `<host>/<id>`, so nothing about the local fleet changes. A host that's unreachable, or whose daemon has stopped writing, collapses to a single `(unreachable)` row rather than showing frozen states as live.
+
+⏎ on a remote row opens a tab that runs `ssh -t <host> agent-fleet goto <id>`, landing you on that exact agent. The remote fleet is then **nested** inside the pane, so its prefix needs a double tap. Use `ssh` config aliases and key auth — the poller runs `ssh -o BatchMode=yes`, so anything that prompts is treated as down.
+
+Federation is read-mostly: remote agents' states show up here, but `add`, `kill`, and layout persistence stay per-host.
 
 ---
 
@@ -283,6 +300,9 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon ticks |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents on restore (`0` = shells) |
 | `AGENT_FLEET_RESTORE_ANY_SOCKET` | `0` | Allow restoring a layout saved on a different socket |
+| `AGENT_FLEET_REMOTES` | unset | Federated hosts, space/comma separated — overrides `~/.config/agent-fleet/remotes` |
+| `AGENT_FLEET_REMOTE_INTERVAL` | `3` | Seconds between polls of each federated host |
+| `AGENT_FLEET_SSH_CMD` | `ssh` | Command used to reach federated hosts (test seam) |
 | `AGENT_FLEET_GIT_TTL` | `30` | Cached git-branch freshness (seconds) |
 | `TMUX_BIN` | `tmux` | tmux binary used by the CLI and scripts |
 

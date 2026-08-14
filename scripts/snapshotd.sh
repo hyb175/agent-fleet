@@ -130,6 +130,33 @@ progress_emit() {  # <state> <tty>
   fi
 }
 
+# Federated hosts: remote-poll.sh mirrors each one into remote/<host>.snapshot,
+# already id-qualified, so this is a concatenation rather than a parse. Prints
+# nothing at all when no host is configured — the common case must stay exactly
+# as it was. A poller that stopped writing (its own process died) is treated
+# like a host that is down, so the rail can never show frozen remote states as
+# live.
+REMOTE_DIR="$CACHE/remote"
+remote_records() {
+  local f host head fetched status now
+  [[ -d "$REMOTE_DIR" ]] || return 0
+  printf -v now '%(%s)T' -1
+  for f in "$REMOTE_DIR"/*.snapshot; do
+    [[ -e "$f" ]] || continue
+    host="$(basename "$f" .snapshot)"
+    read -r head fetched status < "$f" 2>/dev/null || continue
+    [[ "$head" == "RT" ]] || continue
+    if [[ "$status" == "ok" && "$fetched" =~ ^[0-9]+$ ]] \
+       && (( now - fetched <= INTERVAL * 3 + 7 )); then
+      tail -n +2 "$f" 2>/dev/null
+    else
+      # One row instead of stale agents: the workspace list shows the host is
+      # unreachable, and no consumer needs new code to render it.
+      printf 'S %s|none|(unreachable)\n' "$host"
+    fi
+  done
+}
+
 build() {
   local now; printf -v now '%(%s)T' -1
   # T carries the poll interval so consumers can scale their staleness
@@ -257,6 +284,11 @@ build() {
   done < <(tx list-sessions -F '#{session_name}' 2>/dev/null | sort)
 
   out+="$agents"
+  # Command substitution eats trailing newlines, and a final record without one
+  # is silently dropped by every consumer's `while read` loop — so re-add it.
+  # Empty (no hosts configured) leaves `out` untouched.
+  local remote; remote="$(remote_records)"
+  [[ -n "$remote" ]] && out+="$remote"$'\n'
   printf '%s' "$out" > "$SNAP.tmp.$$" 2>/dev/null && mv "$SNAP.tmp.$$" "$SNAP" 2>/dev/null
 }
 

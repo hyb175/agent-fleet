@@ -88,6 +88,105 @@ ensure_snapshotd() {
     nohup "$ROOT_DIR/scripts/snapshotd.sh" >/dev/null 2>&1 &
 }
 
+# Federated hosts, newest-wins: AGENT_FLEET_REMOTES (space/comma separated) for
+# a one-shot override, else one host per line in the config file ('#' comments).
+# Same precedence and location as the theme choice, for the same reason: a
+# keybind-fired CLI call runs in the server's environment, where a shell-profile
+# export never arrives.
+remotes_list() {
+  local cfg="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/remotes" line
+  if [[ -n "${AGENT_FLEET_REMOTES:-}" ]]; then
+    printf '%s\n' "${AGENT_FLEET_REMOTES//,/ }" | tr ' ' '\n' | awk 'NF'
+    return 0
+  fi
+  [[ -r "$cfg" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%%#*}"; line="${line//[[:space:]]/}"
+    [[ -n "$line" ]] && printf '%s\n' "$line"
+  done < "$cfg"
+}
+
+# One mirror process per configured host. Self-deduping on a per-host pidfile,
+# comm-checked the same way as the snapshot daemon: after an unclean shutdown a
+# recycled pid would otherwise lock the poller out forever.
+ensure_remote_pollers() {
+  local host pf p
+  while IFS= read -r host; do
+    [[ -n "$host" ]] || continue
+    pf="$AF_CACHE_DIR/remote/$host.pid"
+    p="$(cat "$pf" 2>/dev/null || true)"
+    if [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null \
+       && ps -p "$p" -o command= 2>/dev/null | grep -q remote-poll; then
+      continue
+    fi
+    mkdir -p "$AF_CACHE_DIR/remote" 2>/dev/null || continue
+    AGENT_FLEET_SOCKET="$SOCKET" AGENT_FLEET_ROOT="$ROOT_DIR" \
+      nohup "$ROOT_DIR/scripts/remote-poll.sh" "$host" >/dev/null 2>&1 &
+    echo $! > "$pf" 2>/dev/null || true
+  done < <(remotes_list)
+}
+
+# Drop pollers (and their mirrored snapshots) for hosts no longer configured, so
+# a removed host stops appearing in the rail instead of lingering as a stale row.
+stop_stale_pollers() {
+  local pf host keep p
+  [[ -d "$AF_CACHE_DIR/remote" ]] || return 0
+  keep="$(remotes_list)"
+  for pf in "$AF_CACHE_DIR/remote/"*.pid; do
+    [[ -e "$pf" ]] || continue
+    host="$(basename "$pf" .pid)"
+    grep -qxF "$host" <<<"$keep" && continue
+    p="$(cat "$pf" 2>/dev/null || true)"
+    { [[ -n "$p" ]] && ps -p "$p" -o command= 2>/dev/null | grep -q remote-poll \
+        && kill "$p" 2>/dev/null; } || true
+    rm -f "$pf" "$AF_CACHE_DIR/remote/$host.snapshot" 2>/dev/null || true
+  done
+}
+
+# Kill every poller and drop the mirrored snapshots — a stopped fleet must not
+# leave an ssh loop running, nor remote rows that nothing is refreshing.
+stop_remote_pollers() {
+  local pf p
+  [[ -d "$AF_CACHE_DIR/remote" ]] || return 0
+  for pf in "$AF_CACHE_DIR/remote/"*.pid; do
+    [[ -e "$pf" ]] || continue
+    p="$(cat "$pf" 2>/dev/null || true)"
+    { [[ -n "$p" ]] && ps -p "$p" -o command= 2>/dev/null | grep -q remote-poll \
+        && kill "$p" 2>/dev/null; } || true
+  done
+  rm -f "$AF_CACHE_DIR/remote/"*.pid "$AF_CACHE_DIR/remote/"*.snapshot 2>/dev/null || true
+}
+
+# A federated target is "<host>/<id>" where <host> is a CONFIGURED remote.
+# sanitize_name maps '/' out of session names, so no local target can ever be
+# shadowed; an unconfigured prefix falls through and stays a plain local name.
+remote_host_of() {  # <target> -> host, or non-zero
+  local h="${1%%/*}"
+  [[ "$1" == */* && -n "$h" ]] || return 1
+  remotes_list | grep -qxF "$h" || return 1
+  printf '%s' "$h"
+}
+
+# Jump to a federated target by opening a tab that ssh's into its host, where
+# the remote fleet attaches at that pane/workspace. The remote fleet then runs
+# NESTED in this pane, so its prefix needs a double tap — the alternative,
+# driving the remote non-interactively, leaves nowhere to actually type.
+remote_hop() {  # <host> <remote id>
+  # Same ssh seam as remote-poll.sh: a stub stands in for ssh so the suite never
+  # touches a network.
+  local host="$1" id="$2" ssh_cmd="${AGENT_FLEET_SSH_CMD:-ssh}" verb inner cmd win
+  case "$id" in %*) verb="goto" ;; *) verb="attach" ;; esac
+  printf -v inner 'agent-fleet %s %q' "$verb" "$id"
+  # A bare interactive shell has nothing to put a tab in — become the ssh.
+  # Keybinds and rail clicks have no tty on stdout and land in the else branch.
+  if [[ -z "${TMUX:-}" && -t 1 ]]; then
+    exec "$ssh_cmd" -t "$host" bash -lc "$inner"
+  fi
+  printf -v cmd '%q -t %q bash -lc %q' "$ssh_cmd" "$host" "$inner"
+  win="$(tx new-window -P -F '#{window_id}' -n "$host" "$cmd" 2>/dev/null)"
+  [[ -n "$win" ]] && tx select-window -t "$win" 2>/dev/null || true
+}
+
 # Guarantee a server exists with at least one session to attach to.
 ensure_server() {
   if ! server_up; then
@@ -111,6 +210,7 @@ ensure_server() {
   fi
   ensure_server_env
   ensure_snapshotd
+  ensure_remote_pollers
 }
 
 # Generate the fleet-scoped Claude settings file (hooks only). Launching an
@@ -163,7 +263,15 @@ go_to_session() {
 #   - a directory path       -> session named for its basename, cwd there
 #   - any other name         -> session with that name, cwd $HOME
 cmd_connect() {
-  local arg="${1:-$PWD}" custom="${2:-}"
+  local arg="${1:-$PWD}" custom="${2:-}" rhost
+
+  # A federated workspace lives on another machine — hop to it over ssh rather
+  # than creating a local session named after it. A real directory wins first,
+  # so a dir that happens to share a remote's name still opens locally.
+  if [[ -z "$custom" && ! -d "$arg" ]] && rhost="$(remote_host_of "$arg")"; then
+    remote_hop "$rhost" "${arg#*/}"
+    return 0
+  fi
 
   # Existing session by that name → just switch (skip when forcing a new name).
   if [[ -z "$custom" ]] && server_up && tx has-session -t "=$arg" 2>/dev/null; then
@@ -327,7 +435,11 @@ cmd_add() {
 # goto <pane_id> — used by the picker: focus the exact agent pane.
 cmd_goto() {
   local pane="${1:?usage: agent-fleet goto <pane_id>}"
-  local loc sess winid
+  local loc sess winid rhost
+  if rhost="$(remote_host_of "$pane")"; then
+    remote_hop "$rhost" "${pane#*/}"
+    return 0
+  fi
   loc="$(tx list-panes -a -F '#{pane_id} #{session_name} #{window_id}' 2>/dev/null \
         | awk -v p="$pane" '$1==p {print $2, $3; exit}')"
   if [[ -z "$loc" ]]; then
@@ -338,9 +450,12 @@ cmd_goto() {
   winid="${loc##* }"
   # Visiting a finished agent clears its 'done' badge back to idle.
   "$ROOT_DIR/scripts/status.sh" clear-done "$pane" 2>/dev/null || true
-  go_to_session "$sess"
+  # Select server-side BEFORE switching: from a bare shell go_to_session execs
+  # attach-session, so nothing after it runs — and that's exactly the path
+  # `ssh -t <host> agent-fleet goto <pane>` takes for a federated jump.
   tx select-window -t "$winid" 2>/dev/null || true
   tx select-pane -t "$pane" 2>/dev/null || true
+  go_to_session "$sess"
 }
 
 # back — jump to the previously focused pane (Prefix Tab). The focus-in hook
@@ -530,6 +645,7 @@ cmd_stop() {
   dpid="$(cat "$pf" 2>/dev/null || true)"
   { [[ -n "$dpid" ]] && ps -p "$dpid" -o command= 2>/dev/null | grep -q snapshotd \
       && kill "$dpid" 2>/dev/null; } || true
+  stop_remote_pollers
   tx kill-server
   echo "fleet stopped"
 }
@@ -671,6 +787,8 @@ cmd_uninstall() {
     tx kill-server 2>/dev/null || true
     echo "stopped the fleet."
   fi
+  # Unconditional: a poller outlives the server it was started for.
+  stop_remote_pollers
 
   # --- unlink, clear state, optional config, then the managed tree last ---
   local l
@@ -1017,6 +1135,9 @@ cmd_reload() {
   local i
   for i in $(seq 1 20); do [[ -d "$AF_CACHE_DIR/snapshotd.lock" ]] || break; sleep 0.1; done
   ensure_snapshotd
+  # Pick up hosts added to (or removed from) the remotes config since boot.
+  stop_stale_pollers
+  ensure_remote_pollers
   # Respawn each existing rail in place (`show` = kill + recreate). Windows
   # with the rail hidden are left alone.
   local w
@@ -1212,6 +1333,9 @@ Env:
   AGENT_FLEET_RESTORE_ANY_SOCKET=1
                        Let restore rebuild a layout saved on a different socket. Off by
                        default so a one-off AGENT_FLEET_SOCKET can't clone the live fleet.
+  AGENT_FLEET_REMOTES  Federated hosts (space/comma separated). Overrides the config file
+                       ~/.config/agent-fleet/remotes. Their agents show up in the rail and
+                       picker as <host>/<id>; ⏎ opens an ssh tab onto that agent.
 
 User overrides: ~/.config/agent-fleet/local.conf is sourced by the base config if present.
 EOF

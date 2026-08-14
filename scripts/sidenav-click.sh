@@ -32,6 +32,16 @@ done
 [[ -n "$client" ]] || client="$(tx list-clients -F '#{client_name}' 2>/dev/null | head -1)"
 focus_session() { tx switch-client ${client:+-c "$client"} -t "$1"; }
 
+# A federated row ("<host>/<id>") lives on another machine — tmux can't focus
+# what it doesn't own, so hand it to the CLI, which opens an ssh tab.
+if [[ "${target#*:}" == */* && -x "${AGENT_FLEET_ROOT:-}/bin/agent-fleet" ]]; then
+  case "$target" in
+    PANE:*) "$AGENT_FLEET_ROOT/bin/agent-fleet" goto    "${target#PANE:}" ;;
+    SESS:*) "$AGENT_FLEET_ROOT/bin/agent-fleet" connect "${target#SESS:}" ;;
+  esac
+  exit 0
+fi
+
 case "$target" in
   PANE:*)
     pane="${target#PANE:}"
