@@ -39,26 +39,22 @@ holder_is_snapshotd() {
   [[ -n "$hp" ]] && kill -0 "$hp" 2>/dev/null \
     && ps -p "$hp" -o command= 2>/dev/null | grep -q snapshotd
 }
-if ! mkdir "$LOCK" 2>/dev/null; then
-  holder_is_snapshotd && exit 0
-  rm -rf "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || exit 0
-fi
-echo $$ > "$LOCK/pid"
-
 cleanup() {
   # Don't leave a stale loading bar on any terminal after the fleet stops — but
   # only on ttys that are STILL LIVE. PROG_TTYS accumulates every tty this
-  # daemon ever wrote, so by shutdown most name panes that are long gone; those
-  # opens fail (ENXIO), and a recycled tty number would put escape sequences on
-  # an unrelated terminal. Intersect with what tmux reports now, and skip
-  # entirely if the server is already gone.
+  # daemon ever wrote, so by shutdown most name panes that are long gone, and a
+  # recycled tty number would put escape sequences on an unrelated terminal.
+  # Intersect with what tmux reports now, and skip entirely if the server is
+  # already gone. tty_write, not a plain redirect: a shutdown must not hang.
   local t w live
   live="$(tx list-panes -a -F '#{pane_tty}' 2>/dev/null)"
   if [[ -n "$live" ]]; then
     for t in "${!PROG_TTYS[@]}"; do
       grep -qxF "$t" <<<"$live" || continue
-      printf '\033Ptmux;\033\033]9;4;0\007\033\134' > "$t" 2>/dev/null || true  # \134 = '\' — avoids a trailing \' shellcheck (SC1003) can't tell from an escaped quote
+      tty_write "$t" $'\033Ptmux;\033\033]9;4;0\007\033\\'
     done
+    sleep 0.3        # let the clears land, then drop anything still stuck
+    progress_reap
   fi
   # …nor frozen tab glyphs: unlike the rail, the tab bar has no staleness
   # guard, so a glyph left behind would read as live forever.
@@ -70,7 +66,6 @@ cleanup() {
   rm -rf "$SNAP" "$LOCK" 2>/dev/null
   exit 0
 }
-trap cleanup INT TERM HUP
 
 # --- terminal progress bar (OSC 9;4, DCS-wrapped for tmux) ------------------
 # Claude Code doesn't emit these under tmux, so the daemon synthesizes them
@@ -87,6 +82,30 @@ PROGRESS_ON="${AGENT_FLEET_PROGRESS:-1}"
 # active window's tty, so each terminal mirrors ITS OWN view (tmux forwards a
 # pane's passthrough only to the clients where that pane is visible).
 declare -A PROG_LAST=() PROG_AGE=() PROG_TTYS=()
+
+# Opening a tty can block FOREVER: a pty whose master is gone has no carrier,
+# and open() waits for one — the daemon then stops writing snapshots and every
+# rail on the machine freezes on stale data. "A tty tmux still lists" is not a
+# sufficient guard, because tmux keeps reporting a client for a tick or two
+# after its terminal dies. So the write happens in a child and the next tick
+# kills whatever is still stuck.
+declare -a PROG_PENDING=()
+tty_write() {  # <tty> <bytes>
+  { printf '%s' "$2" > "$1"; } 2>/dev/null &
+  PROG_PENDING+=("$!")
+}
+
+# A real write finishes in microseconds, so anything alive from the last tick is
+# wedged in open(). Safe to kill by pid: these are our own children and are
+# never waited on before the kill, so the pid can't have been recycled.
+progress_reap() {
+  local p
+  for p in ${PROG_PENDING[@]+"${PROG_PENDING[@]}"}; do
+    kill -9 "$p" 2>/dev/null
+    wait "$p" 2>/dev/null
+  done
+  PROG_PENDING=()
+}
 # INVARIANT: <tty> must come from the CURRENT tick's list-panes, never from a
 # remembered one — a dead pane's tty number can be recycled by an unrelated
 # process, and writing there would paint escape sequences on someone else's
@@ -106,7 +125,7 @@ progress_emit() {  # <state> <tty>
   # terminal reattach, pane invisible at write time) can't leave the bar stale.
   PROG_AGE[$tty]=$(( ${PROG_AGE[$tty]:-0} + 1 ))
   if [[ "$st" != "${PROG_LAST[$tty]:-}" ]] || (( ${PROG_AGE[$tty]} >= 5 )); then
-    printf '%s' "$seq" > "$tty" 2>/dev/null || true
+    tty_write "$tty" "$seq"
     PROG_LAST[$tty]="$st"; PROG_AGE[$tty]=0; PROG_TTYS[$tty]=1
   fi
 }
@@ -244,14 +263,27 @@ build() {
 # Persist the session/window/pane layout to disk every SAVE_EVERY ticks, so a
 # reboot can be rebuilt by `agent-fleet attach`. Cheap (one fork per interval).
 SAVE_EVERY="${AGENT_FLEET_SAVE_INTERVAL:-15}"
-ticks=0
-while true; do
-  tx list-sessions >/dev/null 2>&1 || cleanup   # server gone → exit
-  build
-  ticks=$(( ticks + 1 ))
-  if (( ticks >= SAVE_EVERY )); then
-    ticks=0
-    AGENT_FLEET_SOCKET="$SOCK" "$ROOT/scripts/persist-save.sh" 2>/dev/null || true
+
+# Only take the lock and run when executed directly — sourcing gets the helpers
+# alone, so tests can exercise them without a second daemon claiming the lock.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    holder_is_snapshotd && exit 0
+    rm -rf "$LOCK" 2>/dev/null; mkdir "$LOCK" 2>/dev/null || exit 0
   fi
-  sleep "$INTERVAL"
-done
+  echo $$ > "$LOCK/pid"
+  trap cleanup INT TERM HUP
+
+  ticks=0
+  while true; do
+    tx list-sessions >/dev/null 2>&1 || cleanup   # server gone → exit
+    progress_reap
+    build
+    ticks=$(( ticks + 1 ))
+    if (( ticks >= SAVE_EVERY )); then
+      ticks=0
+      AGENT_FLEET_SOCKET="$SOCK" "$ROOT/scripts/persist-save.sh" 2>/dev/null || true
+    fi
+    sleep "$INTERVAL"
+  done
+fi
