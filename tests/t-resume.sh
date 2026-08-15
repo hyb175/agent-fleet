@@ -12,6 +12,17 @@ UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 mkdir -p "$CACHE/panes" "$WORK/r"
 touch "$CACHE/hooks-settings.json"
 
+# A fake `claude` keeps the respawned resume pane ALIVE deterministically:
+# with no claude on PATH (CI) the relaunch fails instantly and restore's
+# failure-fallback clears the gate/tag before the checks read them; with a
+# real one the failure latency is machine-dependent. The fake just sleeps,
+# so the re-tag/gate checks are hermetic everywhere. The tmux server (and
+# thus respawn-pane's bash -lc) inherits this PATH from the test process.
+FAKEBIN="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nsleep 300\n' > "$FAKEBIN/claude"
+chmod +x "$FAKEBIN/claude"
+export PATH="$FAKEBIN:$PATH"
+
 boot_server __boot__ "$WORK"
 tx new-session -d -s work -n work -c "$WORK/r"
 sleep 0.6
@@ -83,4 +94,5 @@ check "missing-id agent relaunches fresh claude" "grep -q 'claude' <<<\"\$fstart
 check "fresh launch is NOT a resume" "! grep -q 'claude --resume' <<<\"\$fstart\""
 check "fresh agent keeps the hooks overlay" "grep -q -- '--settings' <<<\"\$fstart\""
 check "plain shell pane does NOT become an agent" "! grep -q 'claude' <<<\"\$pstart\""
+rm -rf "$FAKEBIN"
 exit "$FAIL"

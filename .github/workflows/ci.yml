@@ -61,6 +61,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Pinned to the version the repo is kept clean against — the runner's
+      # older shellcheck (0.10) fires SC2015-info on sites 0.11 accepts, so an
+      # unpinned lint gate would red on tool drift, not on code.
+      - name: Install shellcheck 0.11.0
+        run: |
+          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v0.11.0/shellcheck-v0.11.0.linux.x86_64.tar.xz" | tar -xJ
+          sudo mv shellcheck-v0.11.0/shellcheck /usr/local/bin/shellcheck
+          shellcheck --version
+
       # Severity policy lives in .shellcheckrc (only source-following notices
       # disabled globally); everything else is fixed or carries a justified
       # per-line disable. SC2086 (quoting) stays enabled.
