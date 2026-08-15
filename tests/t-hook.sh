@@ -26,6 +26,7 @@ fire() {
   printf '{"session_id":"sess-123","hook_event_name":"Notification","message":"%s"}' "$msg" \
     | env TMUX_PANE="$PANE" AGENT_FLEET_NOTIFY=0 bash "$HOOK" "$st" "$SOCK"
 }
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings below
 st() { cat "$SF" 2>/dev/null | tr -d '\n'; }
 
 rm -f "$SF"
@@ -37,14 +38,14 @@ fire wait "Claude needs your permission to use Bash"
 check "permission Notification writes wait"     "[[ \"\$(st)\" == wait ]]"
 
 # the classic bug: turn ends (done), then the idle reminder must NOT clobber it.
-fire done ""
+fire "done" ""
 check "Stop writes done"                        "[[ \"\$(st)\" == done ]]"
 fire wait "Claude is waiting for your input"
 check "idle reminder after done leaves done"    "[[ \"\$(st)\" == done ]]"
 
 # message-independent fallback: an unknown-message 'wait' from a resting state
 # is the idle reminder (Stop already fired); from 'working' it's a real prompt.
-printf '%s\n' done > "$SF"
+printf '%s\n' "done" > "$SF"
 fire wait ""
 check "unknown-msg wait from done -> suppressed" "[[ \"\$(st)\" == done ]]"
 printf '%s\n' working > "$SF"
@@ -58,7 +59,7 @@ fire wait "Claude is waiting for your input"
 check "idle reminder on fresh agent writes nothing" "[[ ! -e \"$SF\" ]]"
 
 # session id is captured from the JSON regardless of suppression.
-check "session id captured from event JSON"     "[[ \"\$(cat "$CACHE/${PANE}.session" 2>/dev/null)\" == sess-123 ]]"
+check "session id captured from event JSON"     "[[ \"\$(cat '$CACHE/${PANE}.session' 2>/dev/null)\" == sess-123 ]]"
 
 # --- SessionStart ('start'): records identity, never touches status ---
 # It fires at launch, so an agent that is never prompted still gets a session id
@@ -71,11 +72,11 @@ start_fire() {  # <source>
 }
 rm -f "$SSF" "$CACHE/${SP}.session"
 start_fire startup
-check "SessionStart records the session id" "[[ \"\$(cat "$CACHE/${SP}.session" 2>/dev/null)\" == sess-start ]]"
+check "SessionStart records the session id" "[[ \"\$(cat '$CACHE/${SP}.session' 2>/dev/null)\" == sess-start ]]"
 check "SessionStart writes no status"       "[[ ! -e \"$SSF\" ]]"
 printf 'working\n' > "$SSF"
 start_fire compact
-check "SessionStart on compact leaves status alone" "[[ \"\$(cat "$SSF" | tr -d '\n')\" == working ]]"
+check "SessionStart on compact leaves status alone" "[[ \"\$(tr -d '\\n' < '$SSF')\" == working ]]"
 
 # The overlay must actually REGISTER SessionStart — without it the hook never
 # fires at launch and a never-prompted agent has no id to resume from.
@@ -84,4 +85,4 @@ check "overlay is valid JSON" "python3 -c 'import json,sys; json.load(open(sys.a
 check "overlay registers SessionStart -> start" \
   "python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); c=d['hooks']['SessionStart'][0]['hooks'][0]['command']; sys.exit(0 if ' start ' in c else 1)\" '$overlay' 2>/dev/null"
 
-exit $FAIL
+exit "$FAIL"

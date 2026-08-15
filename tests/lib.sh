@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # tests/lib.sh — shared harness for the agent-fleet integration tests.
 #
 # Every test runs on a THROWAWAY tmux socket and a private XDG cache, so the
@@ -12,10 +13,10 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOCK="af-test-$$"
 export AGENT_FLEET_ROOT="$REPO"
 export AGENT_FLEET_SOCKET="$SOCK"
-export XDG_CACHE_HOME="$(mktemp -d)"
+XDG_CACHE_HOME="$(mktemp -d)"; export XDG_CACHE_HOME
 # Private config too: theme resolution reads $XDG_CONFIG_HOME/agent-fleet/theme,
 # and the machine's real choice must not leak into test assertions.
-export XDG_CONFIG_HOME="$(mktemp -d)"
+XDG_CONFIG_HOME="$(mktemp -d)"; export XDG_CONFIG_HOME
 # The running fleet exports AGENT_FLEET_THEME into every pane's env; unset it so
 # a suite launched from inside a themed fleet still resolves the default.
 unset AGENT_FLEET_THEME
@@ -24,6 +25,7 @@ WORK="$(cd "$(mktemp -d)" && pwd -P)"
 tx() { tmux -L "$SOCK" "$@"; }
 
 FAIL=0
+# shellcheck disable=SC2034 # FAIL is read by every t-*.sh's `exit "$FAIL"` after sourcing
 check() {  # <label> <condition to eval>
   if eval "$2"; then echo "  PASS: $1"; else echo "  FAIL: $1"; FAIL=1; fi
 }

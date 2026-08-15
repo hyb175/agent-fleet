@@ -149,10 +149,10 @@ build() {
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" wid wn widx pane cmd tty kind sid path label st r pidx age m
+  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m
   local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
   local -A TAB_BEST=() TAB_STATE=()
-  while IFS='|' read -r s wid wn widx pane cmd tty kind sid path pidx; do
+  while IFS='|' read -r s wid wn widx pane cmd tty kind sid _ pidx; do
     [[ -z "$pane" ]] && continue
     # Track each ACTIVE window's ttys for the progress bar (rail preferred —
     # it's present in every window and always visible with it).

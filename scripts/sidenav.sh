@@ -57,8 +57,12 @@ read_height() {
   if [[ -n "${AGENT_FLEET_SIDENAV_MAX_ROWS:-}" ]]; then
     RAIL_H="$AGENT_FLEET_SIDENAV_MAX_ROWS"
   else
+    # stty reads fd 0 — the rail's own pty, already open. Never re-open
+    # /dev/tty: on a process orphaned off a dead pane that open() blocks
+    # forever in the kernel and wedges every terminal behind it (t-cli
+    # greps the tree for it).
     local sz=""
-    sz="$(stty size </dev/tty 2>/dev/null)" || sz=""
+    sz="$(stty size 2>/dev/null)" || sz=""
     RAIL_H="${sz%% *}"
   fi
   [[ "$RAIL_H" =~ ^[0-9]+$ ]] || RAIL_H=0

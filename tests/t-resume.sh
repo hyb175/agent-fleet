@@ -62,6 +62,7 @@ check "SessionStart tagged the pane for persistence" \
 check "save records the never-prompted agent's id" "grep -q '$NP' '$CACHE/fleet.state'"
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"; sleep 0.6
+# shellcheck disable=SC2034 # starts read inside the eval'd check() condition below
 starts="$(tx list-panes -t np -F '#{pane_start_command}')"
 check "never-prompted agent RESUMES its conversation" "grep -q 'claude --resume $NP' <<<\"\$starts\""
 
@@ -74,10 +75,12 @@ sleep 0.4
 "$REPO/scripts/persist-save.sh"
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"; sleep 0.6
+# shellcheck disable=SC2034 # fstart/pstart read inside the eval'd check() conditions below
 fstart="$(tx list-panes -t fresh -F '#{?@fleet-sidenav,1,0}|#{pane_start_command}' | awk -F'|' '$1 != "1" {print $2}')"
+# shellcheck disable=SC2034
 pstart="$(tx list-panes -t plain -F '#{?@fleet-sidenav,1,0}|#{pane_start_command}' | awk -F'|' '$1 != "1" {print $2}')"
 check "missing-id agent relaunches fresh claude" "grep -q 'claude' <<<\"\$fstart\""
 check "fresh launch is NOT a resume" "! grep -q 'claude --resume' <<<\"\$fstart\""
 check "fresh agent keeps the hooks overlay" "grep -q -- '--settings' <<<\"\$fstart\""
 check "plain shell pane does NOT become an agent" "! grep -q 'claude' <<<\"\$pstart\""
-exit $FAIL
+exit "$FAIL"

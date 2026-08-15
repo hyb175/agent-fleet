@@ -50,4 +50,4 @@ AGENT_FLEET_SOCKET="$SOCK" "$REPO/bin/agent-fleet" kill "$(workpane t:2)" >/dev/
 wait_for 15 "[[ \"\$(nwin)\" == '$((base - 1))' ]]"
 check "rail-only window reaped after 'agent-fleet kill' (got $(nwin), want $((base - 1)))" "[[ \"\$(nwin)\" == '$((base - 1))' ]]"
 
-exit $FAIL
+exit "$FAIL"

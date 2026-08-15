@@ -117,7 +117,7 @@ list_fleet() {
 # Subtitle = git branch + agent count, or "shell" when it has no agents.
 list_spaces() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane label st roll br order="" snap_ts=""
+  local line s wid widx wn pane st roll br order="" snap_ts=""
   declare -A NAG ROLL BR
   while IFS= read -r line; do
     case "$line" in
@@ -286,7 +286,7 @@ next_view() {
 }
 
 main() {
-  local view="${1:-fleet}" selection key scope
+  local view="${1:-fleet}" selection key
   prep_glyphs   # state glyphs, once per popup
   gc   # prune status files for dead panes, once per popup open
   while true; do
@@ -330,7 +330,9 @@ main() {
             # orphaned off a dead pane that open() blocks forever in the kernel
             # and hangs every terminal on the machine behind it.
             nm=""
-            [[ -t 0 ]] && { read -e -i "$def" -p "  workspace name: " nm || nm=""; }
+            # -r: backslashes in a typed name are literal (sanitize_name maps
+            # the odd ones anyway).
+            [[ -t 0 ]] && { read -r -e -i "$def" -p "  workspace name: " nm || nm=""; }
             "$AF" connect "${target#CONNECT:}" "${nm:-$def}"; exit 0 ;;
           PANE:*)  "$AF" goto "${target#PANE:}"; exit 0 ;;
           SESS:*)  "$AF" connect "${target#SESS:}"; exit 0 ;;
