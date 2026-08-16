@@ -23,7 +23,8 @@ check "install: observe-only (never sets output.status)" "! grep -q 'output.stat
 check "install: all three states mapped" "grep -q '\"working\"' '$PLUG' && grep -q '\"wait\"' '$PLUG' && grep -q '\"done\"' '$PLUG'"
 check "status after install: installed" "[[ \"\$(af opencode-hooks status)\" == installed* ]]"
 af opencode-hooks install >/dev/null
-check "reinstall: still exactly one plugin file" "[[ \"\$(ls '$FAKEHOME/cfg/opencode/plugins' | wc -l)\" == '1' ]]"
+# arithmetic compare: BSD wc pads its count with spaces, a string == fails on macOS
+check "reinstall: still exactly one plugin file" "(( \$(ls '$FAKEHOME/cfg/opencode/plugins' | wc -l) == 1 ))"
 
 # Valid JS? Best-effort syntax gate when node is around (CI runners have it).
 if command -v node >/dev/null 2>&1; then
