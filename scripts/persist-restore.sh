@@ -5,8 +5,8 @@
 # saved cwds, then re-renders the left rail per window. The sidenav auto-hook
 # is suppressed during the rebuild (via a throwaway scratch session that absorbs
 # the first-window race) so it can't add duplicate rails. Hooked agents are
-# relaunched by recorded kind — `claude --resume <id>` / `kimi --session <id>`
-# when a session id was saved, else a FRESH agent (`claude`/`kimi`/`codex`) in
+# relaunched by recorded kind — `claude --resume <id>` / `kimi --session <id>` /
+# `opencode --session <id>` when a session id was saved, else a FRESH agent in
 # the saved dir. A failed/expired resume drops to a shell; every non-agent pane
 # returns as a shell in its dir.
 #
@@ -204,8 +204,9 @@ for s in "${sess_order[@]}"; do
         # otherwise start the agent FRESH in the saved dir (better than a shell).
         # kimi/codex hooks are install-wide, so their fresh form takes no flag.
         case "$skind" in
-          kimi)  (( has_sid )) && rc="kimi --session $sid" || rc="kimi" ;;
-          codex) (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
+          kimi)     (( has_sid )) && rc="kimi --session $sid" || rc="kimi" ;;
+          codex)    (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
+          opencode) (( has_sid )) && rc="opencode --session $sid" || rc="opencode" ;;
           *)     (( has_sid )) && rc="claude --resume $sid" || rc="claude"
                  [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY" ;;
         esac

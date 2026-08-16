@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/hyb175/agent-fleet/actions/workflows/ci.yml/badge.svg)](https://github.com/hyb175/agent-fleet/actions/workflows/ci.yml)
 
-A tmux-native session manager for running and supervising multiple coding agents — Claude Code first-class, Kimi Code and Codex hook-tier, opencode/cursor detected. A workspace is a tmux **session**; an agent is a tmux **window**. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
+A tmux-native session manager for running and supervising multiple coding agents — Claude Code first-class, Kimi Code / Codex / opencode hook-tier, cursor detected. A workspace is a tmux **session**; an agent is a tmux **window**. Everything runs on a dedicated tmux socket, isolated from your daily tmux server and config.
 
 The CLI is `agent-fleet` (alias `af`).
 
@@ -182,6 +182,7 @@ Several people can attach at once — the fleet tracks state per client, so each
 | `agent-fleet hooks-file` | Print the generated Claude settings overlay path. |
 | `agent-fleet kimi-hooks [install\|remove\|status]` | Manage the status-hooks block in `~/.kimi/config.toml`. |
 | `agent-fleet codex-hooks [install\|remove\|status]` | Same for `~/.codex/config.toml` (codex trust-gates hooks — approve once at startup). |
+| `agent-fleet opencode-hooks [install\|remove\|status]` | Manage the fleet status plugin at `~/.config/opencode/plugins/agent-fleet.js` (no trust gate — plugins run at startup). |
 | `agent-fleet reload` | Re-source the config and respawn the daemon + rails (pick up new code/binds after an upgrade or `git pull`). |
 | `agent-fleet theme [name]` | List palettes, or switch live. See [Theming](#theming). |
 | `agent-fleet config [path\|edit]` | Show where config lives, or open your overrides (`local.conf`) in `$EDITOR`. |
@@ -228,7 +229,9 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 
 **Kimi and Codex** load hooks only from their global config, so `agent-fleet kimi-hooks` / `codex-hooks` write a fenced, removable block there (idempotent, a no-op outside fleet panes). Same event map; codex trust-gates hooks, so approve them once in its startup review.
 
-**Scrape tier (approximate).** Hand-started `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown `cursor`) are detected without hooks — extend with `AGENT_FLEET_AGENT_CMDS`. Tools without hooks (opencode, cursor) read `idle` while working. Scraped agents wear a `~` suffix on their kind in the rail (`claude~`), so an off-looking state is attributable to the heuristic tier.
+**opencode** loads JS plugins rather than shell-command hooks, so `agent-fleet opencode-hooks` installs one small, wholly-owned plugin file at `~/.config/opencode/plugins/agent-fleet.js` (remove = delete, guarded so a file the fleet didn't generate is never touched). Same state map (`chat.message`/`tool.execute.before` → working, `permission.ask` → wait, session idle → done), observe-only on permissions. Note: opencode runs plugins at startup with no trust review — the file is deliberately tiny and readable.
+
+**Scrape tier (approximate).** Hand-started `claude`, `codex`, `opencode`, `kimi`, and cursor's `agent` (shown `cursor`) are detected without hooks — extend with `AGENT_FLEET_AGENT_CMDS`. Tools without hooks (cursor) read `idle` while working. Scraped agents wear a `~` suffix on their kind in the rail (`claude~`), so an off-looking state is attributable to the heuristic tier.
 
 A single daemon (`snapshotd.sh`, one per fleet) polls tmux once a second, resolves states/branches, and writes `fleet.snapshot`. Rails and picker read that snapshot, so the number of rails adds no tmux load.
 
