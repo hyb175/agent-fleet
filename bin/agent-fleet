@@ -74,6 +74,7 @@ ensure_server_env() {
 sanitize_name() { printf '%s' "$1" | tr ':. /|' '_____'; }
 
 AF_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+AF_TASKS_DIR="$AF_CACHE_DIR/tasks"
 
 # Start the snapshot daemon (single writer the rails/picker read) if not already
 # running. Self-deduping, so a stray extra launch just exits.
@@ -207,7 +208,7 @@ ensure_server() {
     # previous boot are stale (a leftover .session gate file would block the
     # hook from capturing new session ids). persist-restore purges too, but
     # this also covers the no-state fresh-boot path.
-    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session 2>/dev/null || true
+    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session "$AF_CACHE_DIR/panes/"*.task 2>/dev/null || true
     # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
     # we have one; otherwise start a fresh home workspace.
     local rc=1
@@ -245,6 +246,44 @@ ensure_hook_settings() {
 }
 JSON
   printf '%s' "$f"
+}
+
+# ---- task records ------------------------------------------------------------
+# A task is the durable record of an agent's INTENT — it outlives the pane and
+# the fleet server. One key-value file per task under $AF_TASKS_DIR, with an
+# append-only `state <name> <epoch>` history (written by agent-status-hook.sh
+# on transitions). The pane carries the id twice: a @fleet-task pane option
+# (persist-save reads it via a format string) and a panes/<pane>.task pointer
+# file (the status hook resolves it without a tmux call).
+task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
+  local pane="$1" intent="$2" dir="$3" kind="$4" tid now
+  printf -v now '%(%s)T' -1
+  # Pane ids are unique on a live server, so epoch + pane number can't collide.
+  tid="t$now-${pane#%}"
+  mkdir -p "$AF_TASKS_DIR" "$AF_CACHE_DIR/panes" 2>/dev/null || return 0
+  intent="${intent//$'\n'/ }"
+  {
+    printf 'id %s\n'      "$tid"
+    printf 'intent %s\n'  "$intent"
+    printf 'dir %s\n'     "$dir"
+    printf 'kind %s\n'    "$kind"
+    printf 'created %s\n' "$now"
+    printf 'pane %s\n'    "$pane"
+  } > "$AF_TASKS_DIR/$tid" 2>/dev/null || return 0
+  printf '%s\n' "$tid" > "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true
+  tx set-option -p -t "$pane" @fleet-task "$tid" 2>/dev/null || true
+  printf '%s' "$tid"
+}
+
+# task_id_for <id|%pane> — resolve either form to a task id, or fail.
+task_id_for() {
+  local arg="$1" tid="$1"
+  if [[ "$arg" == %* ]]; then
+    tid="$(cat "$AF_CACHE_DIR/panes/$arg.task" 2>/dev/null || true)"
+    [[ -n "$tid" ]] || { echo "error: no task record for pane $arg" >&2; return 1; }
+  fi
+  [[ -f "$AF_TASKS_DIR/$tid" ]] || { echo "error: no such task: $tid" >&2; return 1; }
+  printf '%s' "$tid"
 }
 
 # The current session / window id, resolved from the calling pane (in-fleet).
@@ -332,13 +371,15 @@ Options:
   --new-workspace <name>    Put the agent in its own workspace (create or reuse).
   --cmd <command>           Command to run (default: $DEFAULT_AGENT_CMD).
   --dir <dir>               Working directory (default: target workspace path, else current directory).
+  --intent <text>           What this agent is for — recorded in its task record
+                            (default: the agent's name). \`agent-fleet task\` sets it.
   --focus                    Focus the new agent window.
   -h, --help                 Show this help.
 EOF
 }
 
 cmd_add() {
-  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws=""
+  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws="" intent=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)         usage_add; return 0 ;;
@@ -346,6 +387,7 @@ cmd_add() {
       --cmd)            cmd="$2"; shift 2 ;;
       --dir)            dir="$2"; shift 2 ;;
       --new-workspace)  new_ws="$2"; shift 2 ;;
+      --intent)         intent="$2"; shift 2 ;;
       --focus)          focus=1; shift ;;
       --)               shift; break ;;
       *)     if [[ -z "$name" ]]; then name="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
@@ -429,6 +471,8 @@ cmd_add() {
   # workspace renames can follow it (per-window). Value = agent kind ("claude").
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$label" 2>/dev/null || true
   tx set-option -w -t "$pane_id" @fleet-agent "$label" 2>/dev/null || true
+  # Every agent gets a task record; without an explicit intent the name stands in.
+  task_record_create "$pane_id" "${intent:-$name}" "$dir" "$label" >/dev/null || true
   # Drop the placeholder window if we created the workspace for this agent, so the
   # agent is the workspace's first tab.
   [[ -n "$ph_win" ]] && tx kill-window -t "$ph_win" 2>/dev/null || true

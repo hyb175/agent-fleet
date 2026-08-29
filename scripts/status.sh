@@ -198,11 +198,24 @@ gc() {
   local live f base
   live="$("$AF_TMUX" -L "$AF_SOCKET" list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   [[ -z "$live" ]] && return 0
-  for f in "$AF_CACHE"/*.status "$AF_CACHE"/*.ackdone "$AF_CACHE"/*.session; do
+  for f in "$AF_CACHE"/*.status "$AF_CACHE"/*.ackdone "$AF_CACHE"/*.session "$AF_CACHE"/*.task; do
     [[ -e "$f" ]] || continue
-    base="$(basename "$f")"; base="${base%.*}"   # strip .status / .ackdone / .session
+    base="$(basename "$f")"; base="${base%.*}"   # strip .status / .ackdone / .session / .task
     grep -qx "$base" <<<"$live" || rm -f "$f"
   done
+}
+
+# _task_append <pane> <state> — mirror a transition into the pane's task record
+# (the same line the status hook writes, for transitions that originate here —
+# a visit acking done→idle — rather than from an agent event).
+_task_append() {
+  local tf="$AF_CACHE/$1.task" tid rec ts
+  [[ -f "$tf" ]] || return 0
+  tid="$(cat "$tf" 2>/dev/null || true)"
+  rec="${AF_CACHE%/*}/tasks/$tid"
+  [[ -n "$tid" && -f "$rec" ]] || return 0
+  printf -v ts '%(%s)T' -1
+  printf 'state %s %s\n' "$2" "$ts" >> "$rec" 2>/dev/null || true
 }
 
 # clear_done <pane> — acknowledge a finished agent (called when you visit it via
@@ -212,10 +225,14 @@ gc() {
 clear_done() {
   local f="$AF_CACHE/$1.status"
   if [[ -f "$f" ]]; then
-    [[ "$(cat "$f" 2>/dev/null || true)" == "done" ]] && printf 'idle\n' > "$f"
+    if [[ "$(cat "$f" 2>/dev/null || true)" == "done" ]]; then
+      printf 'idle\n' > "$f"
+      _task_append "$1" idle
+    fi
   elif [[ "$(_state_capture "$1")" == "done" ]]; then
     mkdir -p "$AF_CACHE" 2>/dev/null || true
     : > "$AF_CACHE/$1.ackdone" 2>/dev/null || true
+    _task_append "$1" idle
   fi
   return 0
 }

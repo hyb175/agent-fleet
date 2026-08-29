@@ -72,6 +72,20 @@ fi
 # nonzero at EOF-without-newline even after assigning the value.
 [[ -n "$state" ]] && printf '%s\n' "$state" > "$f"
 
+# Append the transition to the pane's task record, so the task's history
+# outlives the pane. The pointer file (not a tmux call) resolves the record —
+# hooks run on the agent's own hot path. Transitions only: a working→working
+# re-fire (every PreToolUse) would bloat the history with no information.
+tf="$cache/${pane}.task"
+if [[ -n "$state" && "$state" != "$prev" && -f "$tf" ]]; then
+  tid="$(cat "$tf" 2>/dev/null || true)"
+  rec="${cache%/*}/tasks/$tid"
+  if [[ -n "$tid" && -f "$rec" ]]; then
+    printf -v ts '%(%s)T' -1
+    printf 'state %s %s\n' "$state" "$ts" >> "$rec" 2>/dev/null || true
+  fi
+fi
+
 # Capture Claude's session id once, from the event JSON, so a restored fleet can
 # `claude --resume <id>`. Gated on a per-pane file so we only parse it on the
 # first event (session id is stable for the pane's lifetime). Stored as a pane
@@ -82,6 +96,10 @@ if [[ ! -f "$sf" ]]; then
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
     command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
+    # The task record keeps the id too, so a task stays resumable by id alone.
+    tid="$(cat "$cache/${pane}.task" 2>/dev/null || true)"
+    rec="${cache%/*}/tasks/$tid"
+    { [[ -n "$tid" && -f "$rec" ]] && printf 'session %s\n' "$sid" >> "$rec"; } 2>/dev/null || true
   fi
   # Tag the pane's agent kind (hand-started agents have none yet) so the rail
   # labels it without ps-scraping and persist-restore relaunches the right CLI.

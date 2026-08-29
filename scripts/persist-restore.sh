@@ -80,14 +80,14 @@ declare -A WLAYOUT WNAME WACTIVE   # key: session US widx
 declare -A PANES                   # key: session US widx -> "pidx US rail US cwd\n"...
 declare -A SEEN
 sess_order=(); attached=""
-while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 _; do
+while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 f10 _; do
   case "$kind" in
     A) attached="$f2" ;;
     W) WLAYOUT["$f2$US$f3"]="$f5"; WNAME["$f2$US$f3"]="$f6"; WACTIVE["$f2$US$f3"]="$f4"
        [[ -z "${SEEN[$f2]:-}" ]] && { SEEN[$f2]=1; sess_order+=("$f2"); } ;;
-    # pidx, sidenav, session, cwd, agent kind (f9 empty in pre-kind state
-    # files — resolved to claude at relaunch below)
-    P) PANES["$f2$US$f3"]+="$f4$US$f5$US$f7$US$f8$US${f9:--}"$'\n' ;;
+    # pidx, sidenav, session, cwd, agent kind, task id (f9/f10 empty in older
+    # state files — kind resolves to claude at relaunch below, task to none)
+    P) PANES["$f2$US$f3"]+="$f4$US$f5$US$f7$US$f8$US${f9:--}$US${f10:--}"$'\n' ;;
   esac
 done < "$STATE"
 (( ${#sess_order[@]} )) || exit 1
@@ -96,7 +96,7 @@ done < "$STATE"
 # previous boot is stale — and a stale .session gate file would permanently
 # block the hook from capturing the new claude session id (gc only prunes files
 # for DEAD panes; recycled ids look live). Purge before any id is reused.
-rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session 2>/dev/null || true
+rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session "$CACHE/panes/"*.task 2>/dev/null || true
 
 # --- start the server (loads conf: hooks + rail-auto), then suppress the auto
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt
@@ -128,10 +128,10 @@ for s in "${sess_order[@]}"; do
     layout="${WLAYOUT[$wk]}"; wname="${WNAME[$wk]}"; wact="${WACTIVE[$wk]:-0}"
 
     # panes sorted by pane index; parallel arrays: cwd, agent session, rail
-    # flag, agent kind
-    cwds=(); sids=(); rails=(); kinds=(); while IFS="$US" read -r pidx prail psid pcwd pkind; do
+    # flag, agent kind, task id
+    cwds=(); sids=(); rails=(); kinds=(); tasks=(); while IFS="$US" read -r pidx prail psid pcwd pkind ptask; do
       [[ -z "$pidx" ]] && continue
-      cwds+=("$pcwd"); sids+=("$psid"); rails+=("$prail"); kinds+=("${pkind:--}")
+      cwds+=("$pcwd"); sids+=("$psid"); rails+=("$prail"); kinds+=("${pkind:--}"); tasks+=("${ptask:--}")
     done < <(printf '%s' "${PANES[$wk]:-}" | sort -t"$US" -k1,1n)
     (( ${#cwds[@]} )) || continue
 
@@ -193,7 +193,7 @@ for s in "${sess_order[@]}"; do
       done < <(tx list-panes -t "$win_id" -F '#{pane_id}|#{?@fleet-sidenav,1,0}|#{pane_current_path}' 2>/dev/null)
       used=" "; j=0
       while (( j < ${#sids[@]} )); do
-        sid="${sids[$j]}"; scwd="${cwds[$j]}"; skind="${kinds[$j]:--}"; j=$(( j + 1 ))
+        sid="${sids[$j]}"; scwd="${cwds[$j]}"; skind="${kinds[$j]:--}"; stask="${tasks[$j]:--}"; j=$(( j + 1 ))
         has_sid=1; [[ "$sid" == "-" || -z "$sid" ]] && has_sid=0
         # A pane with no saved session-id is only relaunched when it WAS an agent
         # (kind claude/kimi/codex) — then it starts fresh (below). A plain shell
@@ -227,6 +227,18 @@ for s in "${sess_order[@]}"; do
         esac
         tx set-option -p -t "$chosen" @fleet-agent-kind "$skind" 2>/dev/null || true
         tx set-option -w -t "$chosen" @fleet-agent "$skind" 2>/dev/null || true
+        # Re-link the task record to the pane's NEW id (pane ids restart at %0
+        # on a fresh server): re-tag the option, re-arm the pointer file, and
+        # rewrite the record's `pane` line so id<->pane stays resolvable.
+        if [[ -n "$stask" && "$stask" != "-" && -f "$CACHE/tasks/$stask" ]]; then
+          tx set-option -p -t "$chosen" @fleet-task "$stask" 2>/dev/null || true
+          mkdir -p "$CACHE/panes" 2>/dev/null || true
+          printf '%s\n' "$stask" > "$CACHE/panes/$chosen.task" 2>/dev/null || true
+          # shellcheck disable=SC2015 # write-then-swap idiom: mv failing must still clean up the temp
+          { grep -v '^pane ' "$CACHE/tasks/$stask" 2>/dev/null; printf 'pane %s\n' "$chosen"; } > "$CACHE/tasks/$stask.tmp.$$" \
+            && mv "$CACHE/tasks/$stask.tmp.$$" "$CACHE/tasks/$stask" 2>/dev/null \
+            || rm -f "$CACHE/tasks/$stask.tmp.$$" 2>/dev/null
+        fi
         if (( has_sid )); then
           # Re-arm persistence for the NEXT reboot: without these, the next
           # auto-save (~15s away) records '-' for this pane and the resumed
