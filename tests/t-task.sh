@@ -64,6 +64,12 @@ check "multi-line prompt arrives intact" \
   "[[ \"\$(tail -2 '$WORK/claude.argv' 2>/dev/null)\" == \$'multi line prompt\nsecond line here' ]]"
 check "multi-line agent pane is alive" "tx list-panes -a -F '#{pane_id}' | grep -qx '$ml_pane'"
 
+# `--` forces the create form when the prompt collides with a subcommand.
+esc_out="$("$AF" task -- "ls" --repo "$WORK/repo")"
+esc_tid="${esc_out%% *}"
+check "task -- 'ls' creates instead of listing" \
+  "[[ '$esc_tid' == t* ]] && grep -qx 'intent ls' '$CACHE/tasks/$esc_tid'"
+
 # --- hook transitions append history (once per transition) --------------------
 hook() {  # <state> [stdin]
   TMUX_PANE="$pane" AGENT_FLEET_NOTIFY=0 bash "$HOOK" "$1" "$SOCK" claude

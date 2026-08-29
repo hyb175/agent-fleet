@@ -261,7 +261,9 @@ task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
   # Pane ids are unique on a live server, so epoch + pane number can't collide.
   tid="t$now-${pane#%}"
   mkdir -p "$AF_TASKS_DIR" "$AF_CACHE_DIR/panes" 2>/dev/null || return 0
-  intent="${intent//$'\n'/ }"
+  # The record is line-oriented: a newline (or CR) smuggled into any value
+  # would forge record lines, so flatten them in every field.
+  intent="${intent//[$'\n\r']/ }"; dir="${dir//[$'\n\r']/ }"; kind="${kind//[$'\n\r']/ }"
   {
     printf 'id %s\n'      "$tid"
     printf 'intent %s\n'  "$intent"
@@ -1353,6 +1355,7 @@ cmd_restore() {
 usage_task() {
   cat <<EOF
 Usage: agent-fleet task "<prompt>" [options]
+       agent-fleet task -- "<prompt>" [options]   (force create — prompt may be 'ls'/'show'/-*)
        agent-fleet task ls
        agent-fleet task show <task-id|%pane>
 
@@ -1411,14 +1414,22 @@ task_show() {
 }
 
 cmd_task() {
+  # `task -- "<prompt>"` forces the create form — for scripted callers whose
+  # prompt could collide with a subcommand ('ls', 'show') or start with '-'.
+  local force_create=""
+  [[ "${1:-}" == "--" ]] && { force_create=1; shift; }
   local sub="${1:-}"
-  case "$sub" in
-    -h|--help) usage_task; return 0 ;;
-    "")        usage_task >&2; exit 2 ;;
-    ls)        shift; task_ls "$@"; return 0 ;;
-    show)      shift; task_show "$@"; return 0 ;;
-    -*)        echo "error: the prompt comes first: agent-fleet task \"<prompt>\" [options]" >&2; exit 2 ;;
-  esac
+  if [[ -z "$force_create" ]]; then
+    case "$sub" in
+      -h|--help) usage_task; return 0 ;;
+      "")        usage_task >&2; exit 2 ;;
+      ls)        shift; task_ls "$@"; return 0 ;;
+      show)      shift; task_show "$@"; return 0 ;;
+      -*)        echo "error: the prompt comes first: agent-fleet task \"<prompt>\" [options] (or force it with --)" >&2; exit 2 ;;
+    esac
+  elif [[ -z "$sub" ]]; then
+    usage_task >&2; exit 2
+  fi
 
   local prompt="$1" dir="" name="" focus=""
   shift
@@ -1433,7 +1444,9 @@ cmd_task() {
 
   if [[ -n "$dir" ]]; then
     [[ -d "$dir" ]] || { echo "error: no such directory: $dir" >&2; exit 1; }
-    dir="$(cd "$dir" && pwd)"
+    # CDPATH= : an exported CDPATH makes cd echo the resolved path, which the
+    # substitution would capture as a doubled, newline-joined dir.
+    dir="$(CDPATH='' cd -- "$dir" && pwd)"
   elif in_fleet_tmux && [[ -n "${TMUX_PANE:-}" ]]; then
     dir="$(tx display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
     [[ -z "$dir" ]] && dir="$PWD"
@@ -1471,8 +1484,14 @@ cmd_task() {
             --cmd "$DEFAULT_AGENT_CMD \"\$AF_TASK_PROMPT\"" \
             --env "AF_TASK_PROMPT=$prompt" --intent "$prompt" ${focus:+--focus})"
   # cmd_add ran in a command substitution, so recover the id from the pointer.
+  # '-' rather than an empty field when the record could not be written: the
+  # documented "<task-id> <pane-id>" output must stay two-field parseable.
   local tid=""
   tid="$(cat "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true)"
+  if [[ -z "$tid" ]]; then
+    echo "warning: task record could not be written (cache unwritable?) — the agent is running unrecorded" >&2
+    tid="-"
+  fi
   echo "$tid $pane"
 }
 
