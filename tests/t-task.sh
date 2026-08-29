@@ -96,6 +96,9 @@ check "restored pane re-tagged with the task" "[[ -n \"\$np\" ]]"
 check "record re-linked to the new pane" "grep -qx \"pane \$np\" '$rec'"
 check "pointer file re-armed" "grep -qx '$tid' \"$CACHE/panes/\$np.task\""
 check "history survived the reboot" "grep -q '^state working ' '$rec'"
+# The record already ended 'state idle' (the ack) — restore's own idle marker
+# must dedupe against it, not stack a second one.
+check "restore logs no duplicate idle" "[[ \"\$(grep -c '^state idle ' '$rec')\" == 1 ]]"
 
 # --- plain `add` records too; gc prunes pointers, never records ----------------
 p2="$("$AF" add helper --to repo --cmd 'sleep 300')"

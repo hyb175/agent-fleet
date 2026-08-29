@@ -195,11 +195,11 @@ for s in "${sess_order[@]}"; do
       while (( j < ${#sids[@]} )); do
         sid="${sids[$j]}"; scwd="${cwds[$j]}"; skind="${kinds[$j]:--}"; stask="${tasks[$j]:--}"; j=$(( j + 1 ))
         has_sid=1; [[ "$sid" == "-" || -z "$sid" ]] && has_sid=0
-        # A pane with no saved session-id is only relaunched when it WAS an agent
-        # (kind claude/kimi/codex) — then it starts fresh (below). A plain shell
-        # pane (kind '-' and no id) stays a shell.
+        # A pane with no saved session-id is only relaunched when it WAS an
+        # agent of a kind we know how to start — then it starts fresh (below).
+        # A plain shell pane (kind '-' and no id) stays a shell.
         if (( ! has_sid )); then
-          case "$skind" in claude|kimi|codex) : ;; *) continue ;; esac
+          case "$skind" in claude|kimi|codex|opencode) : ;; *) continue ;; esac
         fi
         # Pre-kind state files carry no kind; every hooked agent then was claude.
         [[ "$skind" == "-" || -z "$skind" ]] && skind="claude"
@@ -238,6 +238,14 @@ for s in "${sess_order[@]}"; do
           { grep -v '^pane ' "$CACHE/tasks/$stask" 2>/dev/null; printf 'pane %s\n' "$chosen"; } > "$CACHE/tasks/$stask.tmp.$$" \
             && mv "$CACHE/tasks/$stask.tmp.$$" "$CACHE/tasks/$stask" 2>/dev/null \
             || rm -f "$CACHE/tasks/$stask.tmp.$$" 2>/dev/null
+          # A relaunched agent is parked at its prompt, whatever it was doing at
+          # the last save — log the discontinuity (deduped) so `task ls` doesn't
+          # keep presenting a pre-reboot 'working' as current.
+          last_state="$(grep '^state ' "$CACHE/tasks/$stask" 2>/dev/null | tail -1)"
+          if [[ "$last_state" != "state idle "* ]]; then
+            printf -v now_ts '%(%s)T' -1
+            printf 'state idle %s\n' "$now_ts" >> "$CACHE/tasks/$stask" 2>/dev/null || true
+          fi
         fi
         if (( has_sid )); then
           # Re-arm persistence for the NEXT reboot: without these, the next
@@ -249,8 +257,11 @@ for s in "${sess_order[@]}"; do
           printf '%s\n' "$sid" > "$CACHE/panes/$chosen.session" 2>/dev/null || true
           # A failed resume (deleted/expired session) drops to a shell; clearing
           # the gate + option lets a manually-started claude capture its new id
-          # instead of every future save retrying the dead sid.
-          fb="rm -f $(printf '%q' "$CACHE/panes/$chosen.session") 2>/dev/null; $(printf '%q' "${TMUX_BIN:-tmux}") -L $(printf '%q' "$SOCK") set-option -p -u @fleet-session 2>/dev/null; exec bash -i"
+          # instead of every future save retrying the dead sid. The task pointer
+          # and @fleet-task go too: a NEW agent started in the surviving shell
+          # must not append its history and session id into the old task's
+          # record (and the next auto-save must not re-bind the old tid to it).
+          fb="rm -f $(printf '%q' "$CACHE/panes/$chosen.session") $(printf '%q' "$CACHE/panes/$chosen.task") 2>/dev/null; $(printf '%q' "${TMUX_BIN:-tmux}") -L $(printf '%q' "$SOCK") set-option -p -u @fleet-session 2>/dev/null; $(printf '%q' "${TMUX_BIN:-tmux}") -L $(printf '%q' "$SOCK") set-option -p -u @fleet-task 2>/dev/null; exec bash -i"
         else
           # Fresh agent: no id yet. Leave @fleet-session unset (clear any stale
           # gate) so the hook captures the new session's id on its first event.
