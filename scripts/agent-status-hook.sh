@@ -74,13 +74,17 @@ fi
 
 # Append the transition to the pane's task record, so the task's history
 # outlives the pane. The pointer file (not a tmux call) resolves the record —
-# hooks run on the agent's own hot path. Transitions only: a working→working
-# re-fire (every PreToolUse) would bloat the history with no information.
+# hooks run on the agent's own hot path. Transitions only, judged against the
+# RECORD's own last state, not just the .status file: the status file is purged
+# on every boot while the record persists, and comparing only against prev
+# appended a duplicate adjacent line per reboot. ($state != $prev keeps the
+# hot path fork-free: same-state re-fires never reach the grep.)
 tf="$cache/${pane}.task"
 if [[ -n "$state" && "$state" != "$prev" && -f "$tf" ]]; then
   tid="$(cat "$tf" 2>/dev/null || true)"
   rec="${cache%/*}/tasks/$tid"
-  if [[ -n "$tid" && -f "$rec" ]]; then
+  if [[ -n "$tid" && -f "$rec" ]] \
+     && [[ "$(grep '^state ' "$rec" 2>/dev/null | tail -1)" != "state $state "* ]]; then
     printf -v ts '%(%s)T' -1
     printf 'state %s %s\n' "$state" "$ts" >> "$rec" 2>/dev/null || true
   fi
@@ -96,10 +100,6 @@ if [[ ! -f "$sf" ]]; then
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
     command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
-    # The task record keeps the id too, so a task stays resumable by id alone.
-    tid="$(cat "$cache/${pane}.task" 2>/dev/null || true)"
-    rec="${cache%/*}/tasks/$tid"
-    { [[ -n "$tid" && -f "$rec" ]] && printf 'session %s\n' "$sid" >> "$rec"; } 2>/dev/null || true
   fi
   # Tag the pane's agent kind (hand-started agents have none yet) so the rail
   # labels it without ps-scraping and persist-restore relaunches the right CLI.
@@ -107,6 +107,18 @@ if [[ ! -f "$sf" ]]; then
     cur_kind="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{@fleet-agent-kind}' 2>/dev/null || true)"
     [[ -z "$cur_kind" ]] && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-agent-kind "$kind" 2>/dev/null || true
   fi
+fi
+
+# The task record's `session` line is appended INDEPENDENTLY of the .session
+# gate above: claude's SessionStart can fire before the parent has written the
+# pane's .task pointer (the gate then closes with the record still blank), so
+# retry on every event until the record has its id. Deduped by the grep, so a
+# healthy record costs one grep per event and is written once.
+tid="$(cat "$cache/${pane}.task" 2>/dev/null || true)"
+rec="${cache%/*}/tasks/$tid"
+if [[ -n "$tid" && -f "$rec" ]] && ! grep -q '^session ' "$rec" 2>/dev/null; then
+  sid="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
+  [[ -n "$sid" ]] && printf 'session %s\n' "$sid" >> "$rec" 2>/dev/null || true
 fi
 
 # (The terminal progress bar is NOT emitted here: hooks fire only on

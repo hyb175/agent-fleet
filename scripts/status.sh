@@ -207,13 +207,16 @@ gc() {
 
 # _task_append <pane> <state> — mirror a transition into the pane's task record
 # (the same line the status hook writes, for transitions that originate here —
-# a visit acking done→idle — rather than from an agent event).
+# a visit acking done→idle — rather than from an agent event). Deduped against
+# the record's last state line, keeping the history transitions-only whatever
+# path appends.
 _task_append() {
   local tf="$AF_CACHE/$1.task" tid rec ts
   [[ -f "$tf" ]] || return 0
   tid="$(cat "$tf" 2>/dev/null || true)"
   rec="${AF_CACHE%/*}/tasks/$tid"
   [[ -n "$tid" && -f "$rec" ]] || return 0
+  [[ "$(grep '^state ' "$rec" 2>/dev/null | tail -1)" == "state $2 "* ]] && return 0
   printf -v ts '%(%s)T' -1
   printf 'state %s %s\n' "$2" "$ts" >> "$rec" 2>/dev/null || true
 }
@@ -231,8 +234,13 @@ clear_done() {
     fi
   elif [[ "$(_state_capture "$1")" == "done" ]]; then
     mkdir -p "$AF_CACHE" 2>/dev/null || true
-    : > "$AF_CACHE/$1.ackdone" 2>/dev/null || true
-    _task_append "$1" idle
+    # Re-visits while the marker stands re-read 'done' from the raw scrape
+    # (only state_for_pane honors the marker) — gate on it so the record isn't
+    # appended once per visit.
+    if [[ ! -e "$AF_CACHE/$1.ackdone" ]]; then
+      : > "$AF_CACHE/$1.ackdone" 2>/dev/null || true
+      _task_append "$1" idle
+    fi
   fi
   return 0
 }

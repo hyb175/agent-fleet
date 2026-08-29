@@ -68,11 +68,18 @@ check "multi-line agent pane is alive" "tx list-panes -a -F '#{pane_id}' | grep 
 hook() {  # <state> [stdin]
   TMUX_PANE="$pane" AGENT_FLEET_NOTIFY=0 bash "$HOOK" "$1" "$SOCK" claude
 }
+# SessionStart can fire before the parent writes the pane's .task pointer —
+# the .session gate then closes with the record still blank, and a later event
+# must recover the id.
+mv "$CACHE/panes/$pane.task" "$CACHE/panes/$pane.task.hidden"
 printf '{"session_id":"%s"}' "$UUID" | hook start
-check "session id recorded in the task" "grep -qx 'session $UUID' '$rec'"
-hook working  </dev/null
+check "gate closed before the pointer: no session line yet" "! grep -q '^session ' '$rec'"
+mv "$CACHE/panes/$pane.task.hidden" "$CACHE/panes/$pane.task"
+printf '{"session_id":"%s"}' "$UUID" | hook working
+check "session id recovered on a later event" "grep -qx 'session $UUID' '$rec'"
 hook working  </dev/null      # re-fire (every PreToolUse): must not duplicate
 hook "done"   </dev/null
+check "session id recorded exactly once" "[[ \"\$(grep -c '^session ' '$rec')\" == 1 ]]"
 check "history: one working, then done" \
   "[[ \"\$(grep -c '^state working ' '$rec')\" == 1 && \"\$(tail -1 '$rec')\" == 'state done '* ]]"
 # Command substitution, not `| grep -q`: -q closing the pipe early SIGPIPEs
