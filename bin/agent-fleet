@@ -280,6 +280,18 @@ task_id_for() {
   local arg="$1" tid="$1"
   if [[ "$arg" == %* ]]; then
     tid="$(cat "$AF_CACHE_DIR/panes/$arg.task" 2>/dev/null || true)"
+    if [[ -z "$tid" ]]; then
+      # Dead pane: gc pruned the pointer but the record survives — scan records
+      # for the pane, keeping the NEWEST match (ids sort by creation epoch;
+      # a recycled pane number can appear in several historical records).
+      local f match=""
+      for f in "$AF_TASKS_DIR"/t*; do
+        [[ -e "$f" ]] || continue
+        case "$f" in *.tmp.*) continue ;; esac
+        grep -qx "pane $arg" "$f" 2>/dev/null && match="$f"
+      done
+      [[ -n "$match" ]] && tid="$(basename "$match")"
+    fi
     [[ -n "$tid" ]] || { echo "error: no task record for pane $arg" >&2; return 1; }
   fi
   [[ -f "$AF_TASKS_DIR/$tid" ]] || { echo "error: no such task: $tid" >&2; return 1; }
@@ -1361,10 +1373,20 @@ EOF
 
 task_ls() {
   [[ -d "$AF_TASKS_DIR" ]] || { echo "(no tasks)"; return 0; }
-  local live="" f k v tid intent pane st mark any=""
-  server_up && live="$(tx list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+  local f k v tid intent pane st mark any=""
+  # Liveness = the pane exists AND is tagged with THIS task's id. Pane ids
+  # restart at %0 every server generation, so a bare pane-exists check
+  # false-matches recycled ids on records restore didn't re-link.
+  local -A LIVE_T=()
+  local lp lt
+  if server_up; then
+    while read -r lp lt; do
+      [[ -n "$lp" && -n "$lt" ]] && LIVE_T[$lp]="$lt"
+    done < <(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null)
+  fi
   for f in "$AF_TASKS_DIR"/t*; do
     [[ -e "$f" ]] || continue
+    case "$f" in *.tmp.*) continue ;; esac   # a crashed rewrite's leftover temp
     any=1; tid=""; intent=""; pane=""; st=""
     while read -r k v; do
       case "$k" in
@@ -1376,7 +1398,7 @@ task_ls() {
     done < "$f"
     # A dead pane means the agent is gone but the record (by design) is not.
     mark=" (gone)"
-    [[ -n "$pane" && -n "$live" ]] && grep -qx "$pane" <<<"$live" && mark=""
+    [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]] && mark=""
     printf '%-18s %-8s %-6s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$intent"
   done
   [[ -n "$any" ]] || echo "(no tasks)"

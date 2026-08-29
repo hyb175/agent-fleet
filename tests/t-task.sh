@@ -116,6 +116,16 @@ tx kill-pane -t "$p2" 2>/dev/null; sleep 0.3
 "$REPO/scripts/status.sh" gc
 check "gc drops the dead pane's pointer" "[[ ! -f '$CACHE/panes/$p2.task' ]]"
 check "gc keeps the record" "[[ -f '$CACHE/tasks/$t2' ]]"
+check "show falls back to a record scan for the dead pane" \
+  "grep -qx 'id $t2' <<<\"\$('$AF' task show '$p2')\""
+check "ls marks the dead pane's task gone" \
+  "grep -q '$t2 .*(gone)' <<<\"\$('$AF' task ls)\""
+
+# A crashed rewrite's leftover temp must not double-list its task.
+cp "$CACHE/tasks/$t2" "$CACHE/tasks/$t2.tmp.999"
+check "ls skips rewrite temps" \
+  "[[ \"\$('$AF' task ls | grep -c \"^$t2 \")\" == 1 ]]"
+rm -f "$CACHE/tasks/$t2.tmp.999"
 
 rm -rf "$stub"
 exit "$FAIL"
