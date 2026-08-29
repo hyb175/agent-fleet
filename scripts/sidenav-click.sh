@@ -15,7 +15,8 @@ client="${3:-}"
 
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
-map="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/rows/${rail}.map"
+CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+map="$CACHE/rows/${rail}.map"
 [[ -f "$map" && -n "$y" ]] || { tx select-pane -t "$rail"; exit 0; }
 
 # Look up the clicked row, tolerating an off-by-one in the coordinate origin.
@@ -32,9 +33,12 @@ done
 [[ -n "$client" ]] || client="$(tx list-clients -F '#{client_name}' 2>/dev/null | head -1)"
 focus_session() { tx switch-client ${client:+-c "$client"} -t "$1"; }
 
-# A federated row ("<host>/<id>") lives on another machine — tmux can't focus
-# what it doesn't own, so hand it to the CLI, which opens an ssh tab.
-if [[ "${target#*:}" == */* && -x "${AGENT_FLEET_ROOT:-}/bin/agent-fleet" ]]; then
+# A federated row lives on another machine — tmux can't focus what it doesn't
+# own, so hand it to the CLI, which opens an ssh tab. Recognized by the mirror
+# file, which exists for exactly the hosts being polled; that also catches the
+# bare "<host>" row a down host collapses to, which carries no '/'.
+rhost="${target#*:}"; rhost="${rhost%%/*}"
+if [[ -f "$CACHE/remote/$rhost.snapshot" && -x "${AGENT_FLEET_ROOT:-}/bin/agent-fleet" ]]; then
   case "$target" in
     PANE:*) "$AGENT_FLEET_ROOT/bin/agent-fleet" goto    "${target#PANE:}" ;;
     SESS:*) "$AGENT_FLEET_ROOT/bin/agent-fleet" connect "${target#SESS:}" ;;

@@ -157,14 +157,21 @@ stop_remote_pollers() {
   rm -f "$AF_CACHE_DIR/remote/"*.pid "$AF_CACHE_DIR/remote/"*.snapshot 2>/dev/null || true
 }
 
-# A federated target is "<host>/<id>" where <host> is a CONFIGURED remote.
-# sanitize_name maps '/' out of session names, so no local target can ever be
-# shadowed; an unconfigured prefix falls through and stays a plain local name.
+# A federated target is "<host>/<id>", or a bare "<host>" — the row a down host
+# collapses to carries no id. Either way <host> must be a CONFIGURED remote.
+# sanitize_name maps '/' out of session names, so no qualified local target can
+# be shadowed; an unconfigured prefix stays a plain local name.
 remote_host_of() {  # <target> -> host, or non-zero
   local h="${1%%/*}"
-  [[ "$1" == */* && -n "$h" ]] || return 1
+  [[ -n "$h" ]] || return 1
   remotes_list | grep -qxF "$h" || return 1
   printf '%s' "$h"
+}
+
+# The part of a federated target after the host ("" for a bare host).
+remote_id_of() {  # <target> <host>
+  local id="${1#"$2"}"
+  printf '%s' "${id#/}"
 }
 
 # Jump to a federated target by opening a tab that ssh's into its host, where
@@ -174,9 +181,15 @@ remote_host_of() {  # <target> -> host, or non-zero
 remote_hop() {  # <host> <remote id>
   # Same ssh seam as remote-poll.sh: a stub stands in for ssh so the suite never
   # touches a network.
-  local host="$1" id="$2" ssh_cmd="${AGENT_FLEET_SSH_CMD:-ssh}" verb inner cmd win
-  case "$id" in %*) verb="goto" ;; *) verb="attach" ;; esac
-  printf -v inner 'agent-fleet %s %q' "$verb" "$id"
+  local host="$1" id="$2" ssh_cmd="${AGENT_FLEET_SSH_CMD:-ssh}" inner cmd win
+  # No id (a down host's row) — attach to whatever that fleet is showing.
+  if [[ -z "$id" ]]; then
+    inner="agent-fleet attach"
+  elif [[ "$id" == %* ]]; then
+    printf -v inner 'agent-fleet goto %q' "$id"
+  else
+    printf -v inner 'agent-fleet attach %q' "$id"
+  fi
   # A bare interactive shell has nothing to put a tab in — become the ssh.
   # Keybinds and rail clicks have no tty on stdout and land in the else branch.
   if [[ -z "${TMUX:-}" && -t 1 ]]; then
@@ -265,18 +278,18 @@ go_to_session() {
 cmd_connect() {
   local arg="${1:-$PWD}" custom="${2:-}" rhost
 
-  # A federated workspace lives on another machine — hop to it over ssh rather
-  # than creating a local session named after it. A real directory wins first,
-  # so a dir that happens to share a remote's name still opens locally.
-  if [[ -z "$custom" && ! -d "$arg" ]] && rhost="$(remote_host_of "$arg")"; then
-    remote_hop "$rhost" "${arg#*/}"
-    return 0
-  fi
-
   # Existing session by that name → just switch (skip when forcing a new name).
   if [[ -z "$custom" ]] && server_up && tx has-session -t "=$arg" 2>/dev/null; then
     ensure_server_env
     go_to_session "$arg"
+    return 0
+  fi
+
+  # A federated workspace lives on another machine — hop to it over ssh rather
+  # than creating a local session named after it. Checked after the local
+  # session and the directory, so neither is ever shadowed by a remote's name.
+  if [[ -z "$custom" && ! -d "$arg" ]] && rhost="$(remote_host_of "$arg")"; then
+    remote_hop "$rhost" "$(remote_id_of "$arg" "$rhost")"
     return 0
   fi
 
@@ -437,7 +450,7 @@ cmd_goto() {
   local pane="${1:?usage: agent-fleet goto <pane_id>}"
   local loc sess winid rhost
   if rhost="$(remote_host_of "$pane")"; then
-    remote_hop "$rhost" "${pane#*/}"
+    remote_hop "$rhost" "$(remote_id_of "$pane" "$rhost")"
     return 0
   fi
   loc="$(tx list-panes -a -F '#{pane_id} #{session_name} #{window_id}' 2>/dev/null \

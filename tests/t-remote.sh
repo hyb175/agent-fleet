@@ -88,6 +88,21 @@ check "remote agent row reaches the snapshot" \
   "grep -qx 'A devbox/api|devbox/@3|1|claude|devbox/%8|claude|wait|1' '$SNAP'"
 check "local rows still present" "grep -q '^S t|' '$SNAP'"
 
+# --- the rail actually renders them ------------------------------------------
+# The snapshot carrying remote rows proves nothing on its own: the rail is what
+# you look at, and it renders from that file.
+railwin="$(tx display-message -p -t t '#{window_id}')"
+railsrc="$(tx display-message -p -t t '#{pane_id}')"
+"$REPO/scripts/sidenav-toggle.sh" "$railwin" "$railsrc" show >/dev/null 2>&1
+wait_for 10 "tx list-panes -t '$railwin' -F '#{?@fleet-sidenav,1,0}' | grep -qx 1"
+railp="$(tx list-panes -t "$railwin" -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2=="1"{print $1; exit}')"
+check "rail pane exists" "[[ -n '$railp' ]]"
+wait_for 15 "tx capture-pane -p -t '$railp' 2>/dev/null | grep -q devbox"
+rail_text="$(tx capture-pane -p -t "$railp" 2>/dev/null)"
+check "rail shows the remote host's workspace" "grep -q devbox <<<\"\$rail_text\""
+check "rail still shows the local workspace" "grep -q ' t\b\|^t\b\|t ' <<<\"\$rail_text\""
+[[ "$rail_text" == *devbox* ]] || { echo "--- rail ---"; printf '%s\n' "$rail_text"; }
+
 # A poller that died leaves its last mirror behind, still marked ok; the merge
 # judges it by the fetched-at stamp, so it must not serve it as live data.
 { printf 'RT %s ok\n' "$(( now - 600 ))"; tail -n +2 "$mirror"; } > "$mirror.old" \
@@ -110,8 +125,9 @@ sleep 0.5
 check "no bogus local session created" "! tx has-session -t '=devbox_api' 2>/dev/null"
 check "ssh tab opened, named for the host" \
   "tx list-windows -a -F '#{window_name}' | grep -qx devbox"
-# The command is %q-quoted for tmux, so compare with the escaping stripped.
-unq() { local s; s="$(tx list-panes -a -F '#{pane_start_command}' | grep -- "$1" | head -1)"; printf '%s' "${s//\\/}"; }
+# The command is %q-quoted for tmux, and tmux wraps its own output in quotes —
+# strip both so the assertions read like the command actually run.
+unq() { local s; s="$(tx list-panes -a -F '#{pane_start_command}' | grep -- "$1" | head -1)"; s="${s//\\/}"; printf '%s' "${s//\"/}"; }
 cmdline="$(unq hang-ssh)"
 check "workspace target attaches on the remote (got: $cmdline)" \
   "[[ \"\$cmdline\" == *'-t devbox bash -lc'* && \"\$cmdline\" == *'agent-fleet attach api'* ]]"
@@ -122,10 +138,28 @@ cmdline="$(unq goto)"
 check "pane target resolves to goto on the remote (got: $cmdline)" \
   "[[ \"\$cmdline\" == *'agent-fleet goto %8'* ]]"
 
+# The row a DOWN host collapses to is a bare "<host>" with no id. It must hop
+# too — otherwise selecting it creates a local workspace named after the host.
+af connect devbox >/dev/null 2>&1
+sleep 0.5
+check "down-host row creates no local session" "! tx has-session -t '=devbox' 2>/dev/null"
+cmdline="$(unq 'attach"$')"
+check "down-host row attaches to that host's fleet (got: $cmdline)" \
+  "[[ \"\$cmdline\" == *'-t devbox bash -lc agent-fleet attach' ]]"
+
+# A LOCAL workspace of the same name still wins — federation must not shadow it.
+tx new-session -d -s devbox -c "$WORK"
+before_wins="$(tx list-windows -a | wc -l | tr -d ' ')"
+af connect devbox >/dev/null 2>&1
+sleep 0.4
+check "an existing local workspace wins over a same-named remote" \
+  "[[ \"\$(tx list-windows -a | wc -l | tr -d ' ')\" == '$before_wins' ]]"
+tx kill-session -t devbox 2>/dev/null
+
 # An unconfigured prefix is NOT a remote: it stays a plain local workspace name.
 AGENT_FLEET_REMOTES=devbox AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" \
   "$REPO/bin/agent-fleet" connect other/api >/dev/null 2>&1
 sleep 0.3
 check "unconfigured prefix stays local" "tx has-session -t '=other_api' 2>/dev/null"
 
-exit $FAIL
+exit "$FAIL"
