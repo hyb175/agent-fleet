@@ -373,13 +373,15 @@ Options:
   --dir <dir>               Working directory (default: target workspace path, else current directory).
   --intent <text>           What this agent is for — recorded in its task record
                             (default: the agent's name). \`agent-fleet task\` sets it.
+  --env <NAME=VALUE>        Set one variable in the window's environment (via tmux,
+                            bypassing the shell — safe for arbitrary text).
   --focus                    Focus the new agent window.
   -h, --help                 Show this help.
 EOF
 }
 
 cmd_add() {
-  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws="" intent=""
+  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws="" intent="" env_kv=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)         usage_add; return 0 ;;
@@ -388,6 +390,7 @@ cmd_add() {
       --dir)            dir="$2"; shift 2 ;;
       --new-workspace)  new_ws="$2"; shift 2 ;;
       --intent)         intent="$2"; shift 2 ;;
+      --env)            env_kv="$2"; shift 2 ;;
       --focus)          focus=1; shift ;;
       --)               shift; break ;;
       *)     if [[ -z "$name" ]]; then name="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
@@ -472,8 +475,11 @@ cmd_add() {
     fi
   fi
 
+  # --env NAME=VALUE lands in the window's environment via tmux itself, so the
+  # value never passes through the default-shell parse of the window command —
+  # the only quoting-proof way to hand an agent arbitrary text (see cmd_task).
   local pane_id
-  pane_id="$(tx new-window -P -F '#{pane_id}' -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
+  pane_id="$(tx new-window -P -F '#{pane_id}' ${env_kv:+-e "$env_kv"} -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
   # Mark the agent so the sidenav lists it (per-pane, focus-independent) and so
   # workspace renames can follow it (per-window). Value = agent kind ("claude").
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$label" 2>/dev/null || true
@@ -1429,16 +1435,19 @@ cmd_task() {
   fi
 
   ensure_server
-  local ws pane qprompt
+  local ws pane
   ws="$(sanitize_name "$(basename "$dir")")"
-  # %q so the prompt survives tmux's `sh -c` intact; cmd_add slots --settings
-  # between the binary and this positional.
-  printf -v qprompt '%q' "$prompt"
-  if tx has-session -t "=$ws" 2>/dev/null; then
-    pane="$(cmd_add "$name" --to "$ws" --dir "$dir" --cmd "$DEFAULT_AGENT_CMD $qprompt" --intent "$prompt" ${focus:+--focus})"
-  else
-    pane="$(cmd_add "$name" --new-workspace "$ws" --dir "$dir" --cmd "$DEFAULT_AGENT_CMD $qprompt" --intent "$prompt" ${focus:+--focus})"
-  fi
+  # The prompt reaches the agent as "$AF_TASK_PROMPT", set on the window via
+  # tmux -e (cmd_add --env) — it never passes through a shell parser, so no
+  # quoting can mangle it. tmux runs window commands under default-shell, and
+  # bash %q output broke there: fish rejects $'…' outright (the pane died while
+  # `task` reported success) and dash passes it through literally. The plain
+  # "$VAR" form below reads identically in every sh-family shell and fish.
+  local add_args=(--to "$ws")
+  tx has-session -t "=$ws" 2>/dev/null || add_args=(--new-workspace "$ws")
+  pane="$(cmd_add "$name" "${add_args[@]}" --dir "$dir" \
+            --cmd "$DEFAULT_AGENT_CMD \"\$AF_TASK_PROMPT\"" \
+            --env "AF_TASK_PROMPT=$prompt" --intent "$prompt" ${focus:+--focus})"
   # cmd_add ran in a command substitution, so recover the id from the pointer.
   local tid=""
   tid="$(cat "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true)"

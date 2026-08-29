@@ -17,9 +17,16 @@ HOOK="$REPO/scripts/agent-status-hook.sh"
 UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 mkdir -p "$WORK/repo"
 
-# Stub claude: stays alive so the pane survives; the suite never runs the real CLI.
+# Stub claude: records its argv (so prompt-integrity is asserted on what the
+# agent actually RECEIVED, after the default-shell parse — not on the command
+# string handed to tmux) and stays alive so the pane survives.
 stub="$(mktemp -d)"
-printf '#!/bin/sh\nexec sleep 300\n' > "$stub/claude"; chmod +x "$stub/claude"
+cat > "$stub/claude" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" > "$WORK/claude.argv"
+exec sleep 300
+SH
+chmod +x "$stub/claude"
 export PATH="$stub:$PATH"
 
 boot_server __boot__ "$WORK"
@@ -37,10 +44,25 @@ check "workspace named for the repo" "tx has-session -t '=repo' 2>/dev/null"
 check "@fleet-task tagged on the pane" "[[ \"\$(tx display-message -p -t $pane '#{@fleet-task}')\" == '$tid' ]]"
 check "pointer file resolves pane->task" "grep -qx '$tid' '$CACHE/panes/$pane.task'"
 starts="$(tx list-panes -a -F '#{pane_id} #{pane_start_command}' | grep "^$pane ")"
-check "prompt submitted to the agent" "grep -q 'flaky' <<<\"\$starts\""
 check "status hooks attached" "grep -q -- '--settings' <<<\"\$starts\""
-[[ "$starts" == *flaky* ]] || { echo "--- start command ---"; printf '%s\n' "$starts"; }
+wait_for 10 "grep -q 'flaky' '$WORK/claude.argv'"
+check "prompt received by the agent verbatim" \
+  "grep -qx 'Fix the flaky parser test' '$WORK/claude.argv'"
+[[ -f "$WORK/claude.argv" ]] || { echo "--- start command ---"; printf '%s\n' "$starts"; }
 check "task show resolves by pane id" "'$AF' task show '$pane' | grep -qx 'id $tid'"
+
+# --- a multi-line prompt survives the default-shell parse ---------------------
+# The prompt travels as a window environment variable, so no shell (sh, dash,
+# fish as default-shell) ever parses its content.
+rm -f "$WORK/claude.argv"
+ml_out="$("$AF" task "$(printf 'multi line prompt\nsecond line here')" --repo "$WORK/repo")"
+ml_pane="${ml_out##* }"
+wait_for 10 "grep -q 'second line here' '$WORK/claude.argv' 2>/dev/null"
+# The prompt is the last argv entry (after --settings <path>), so its two lines
+# are the file's last two.
+check "multi-line prompt arrives intact" \
+  "[[ \"\$(tail -2 '$WORK/claude.argv' 2>/dev/null)\" == \$'multi line prompt\nsecond line here' ]]"
+check "multi-line agent pane is alive" "tx list-panes -a -F '#{pane_id}' | grep -qx '$ml_pane'"
 
 # --- hook transitions append history (once per transition) --------------------
 hook() {  # <state> [stdin]
@@ -53,7 +75,9 @@ hook working  </dev/null      # re-fire (every PreToolUse): must not duplicate
 hook "done"   </dev/null
 check "history: one working, then done" \
   "[[ \"\$(grep -c '^state working ' '$rec')\" == 1 && \"\$(tail -1 '$rec')\" == 'state done '* ]]"
-check "task ls shows current state" "'$AF' task ls | grep -q '$tid  *done'"
+# Command substitution, not `| grep -q`: -q closing the pipe early SIGPIPEs
+# task ls under pipefail once the listing has more than one row.
+check "task ls shows current state" "grep -q '$tid  *done' <<<\"\$('$AF' task ls)\""
 
 # Visiting a done agent acks it — the flip is logged as an idle transition.
 "$REPO/scripts/status.sh" clear-done "$pane"
