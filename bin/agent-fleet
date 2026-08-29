@@ -460,9 +460,16 @@ cmd_add() {
     # BASENAME being claude — the hooks (and the --settings flag itself) are
     # claude-specific, so a non-claude AGENT_FLEET_CMD (codex, opencode, …)
     # must not get the overlay. Any other command runs verbatim (no hooks).
+    # The flag goes right after the binary, ahead of any positional prompt
+    # (`agent-fleet task` appends one) — never trailing, where a variadic
+    # prompt could swallow it.
     local hooks_file
     hooks_file="$(ensure_hook_settings)"
-    cmd="$cmd --settings '$hooks_file'"
+    if [[ "$cmd" == *" "* ]]; then
+      cmd="${cmd%% *} --settings '$hooks_file' ${cmd#* }"
+    else
+      cmd="$cmd --settings '$hooks_file'"
+    fi
   fi
 
   local pane_id
@@ -1321,6 +1328,123 @@ cmd_restore() {
   fi
 }
 
+# task — intent-level verbs over agents. The create form goes from a prompt to
+# a live INTERACTIVE agent in one step: resolve the repo's workspace, spawn a
+# hooked claude with the prompt as its positional argument (a real TUI you can
+# attach to mid-conversation — never a headless run), and record the intent.
+usage_task() {
+  cat <<EOF
+Usage: agent-fleet task "<prompt>" [options]
+       agent-fleet task ls
+       agent-fleet task show <task-id|%pane>
+
+Spawn an interactive agent from an intent. Creates (or reuses) the workspace
+for the target directory, starts a hooked $DEFAULT_AGENT_CMD agent with the
+prompt submitted, and writes a task record that outlives the agent process.
+Prints "<task-id> <pane-id>".
+
+Options (create form):
+  --repo <dir>   Directory to work in (default: current fleet pane's dir, else \$PWD).
+  --name <name>  Agent/tab name (default: a slug of the prompt's first words).
+  --focus        Jump to the new agent.
+  -h, --help     Show this help.
+
+Records live in $AF_TASKS_DIR (one file per task, with a state history).
+EOF
+}
+
+task_ls() {
+  [[ -d "$AF_TASKS_DIR" ]] || { echo "(no tasks)"; return 0; }
+  local live="" f k v tid intent pane st mark any=""
+  server_up && live="$(tx list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
+  for f in "$AF_TASKS_DIR"/t*; do
+    [[ -e "$f" ]] || continue
+    any=1; tid=""; intent=""; pane=""; st=""
+    while read -r k v; do
+      case "$k" in
+        id)     tid="$v" ;;
+        intent) intent="$v" ;;
+        pane)   pane="$v" ;;
+        state)  st="${v%% *}" ;;   # last one wins: current state
+      esac
+    done < "$f"
+    # A dead pane means the agent is gone but the record (by design) is not.
+    mark=" (gone)"
+    [[ -n "$pane" && -n "$live" ]] && grep -qx "$pane" <<<"$live" && mark=""
+    printf '%-18s %-8s %-6s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$intent"
+  done
+  [[ -n "$any" ]] || echo "(no tasks)"
+}
+
+task_show() {
+  local tid
+  tid="$(task_id_for "${1:?usage: agent-fleet task show <task-id|%pane>}")" || exit 1
+  cat "$AF_TASKS_DIR/$tid"
+}
+
+cmd_task() {
+  local sub="${1:-}"
+  case "$sub" in
+    -h|--help) usage_task; return 0 ;;
+    "")        usage_task >&2; exit 2 ;;
+    ls)        shift; task_ls "$@"; return 0 ;;
+    show)      shift; task_show "$@"; return 0 ;;
+    -*)        echo "error: the prompt comes first: agent-fleet task \"<prompt>\" [options]" >&2; exit 2 ;;
+  esac
+
+  local prompt="$1" dir="" name="" focus=""
+  shift
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--dir) dir="$2"; shift 2 ;;
+      --name)       name="$2"; shift 2 ;;
+      --focus)      focus=1; shift ;;
+      *) echo "error: unexpected arg: $1" >&2; usage_task >&2; exit 2 ;;
+    esac
+  done
+
+  if [[ -n "$dir" ]]; then
+    [[ -d "$dir" ]] || { echo "error: no such directory: $dir" >&2; exit 1; }
+    dir="$(cd "$dir" && pwd)"
+  elif in_fleet_tmux && [[ -n "${TMUX_PANE:-}" ]]; then
+    dir="$(tx display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+    [[ -z "$dir" ]] && dir="$PWD"
+  else
+    dir="$PWD"
+  fi
+
+  # Default name: a slug of the prompt's first four words. read -ra, not a bare
+  # word split — an unquoted $prompt would glob ("fix *.py" picks up files).
+  if [[ -z "$name" ]]; then
+    local w slug="" count=0
+    local -a words=()
+    read -ra words <<<"$prompt" || true
+    for w in ${words[@]+"${words[@]}"}; do
+      w="$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+      [[ -n "$w" ]] || continue
+      slug+="${slug:+-}$w"
+      count=$(( count + 1 )); (( count >= 4 )) && break
+    done
+    name="${slug:-task}"
+  fi
+
+  ensure_server
+  local ws pane qprompt
+  ws="$(sanitize_name "$(basename "$dir")")"
+  # %q so the prompt survives tmux's `sh -c` intact; cmd_add slots --settings
+  # between the binary and this positional.
+  printf -v qprompt '%q' "$prompt"
+  if tx has-session -t "=$ws" 2>/dev/null; then
+    pane="$(cmd_add "$name" --to "$ws" --dir "$dir" --cmd "$DEFAULT_AGENT_CMD $qprompt" --intent "$prompt" ${focus:+--focus})"
+  else
+    pane="$(cmd_add "$name" --new-workspace "$ws" --dir "$dir" --cmd "$DEFAULT_AGENT_CMD $qprompt" --intent "$prompt" ${focus:+--focus})"
+  fi
+  # cmd_add ran in a command substitution, so recover the id from the pointer.
+  local tid=""
+  tid="$(cat "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true)"
+  echo "$tid $pane"
+}
+
 # pick — open the fzf popup (when called from inside the fleet), else attach.
 cmd_pick() {
   ensure_server
@@ -1347,6 +1471,12 @@ Verbs:
                                    Add an agent window (default cmd: claude; hooks attach when the
                                    command is claude). --new-workspace puts it in its own workspace
                                    instead of a tab. --focus jumps to it (Prefix C). Prints its pane id.
+  agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--focus]
+                                   Spawn an interactive agent from an intent: workspace resolved
+                                   from the repo dir, prompt submitted at launch, intent recorded
+                                   in a task record. Prints "<task-id> <pane-id>".
+  agent-fleet task ls              List task records with their current state.
+  agent-fleet task show <id|%pane> Print a task record (intent, dir, state history).
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
   agent-fleet back                 Jump to the previously focused pane (bound to Prefix Tab).
   agent-fleet hooks-file           Print (and regenerate) the claude status-hooks overlay path.
@@ -1405,6 +1535,7 @@ main() {
     connect|c)  cmd_connect "$@" ;;
     attach|a)   cmd_attach "$@" ;;
     add)        cmd_add "$@" ;;
+    task)       cmd_task "$@" ;;
     goto)       cmd_goto "$@" ;;
     back)       cmd_back "$@" ;;
     rename-workspace|rename-ws) cmd_rename_workspace "$@" ;;

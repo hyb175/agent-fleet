@@ -173,9 +173,12 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | --- | --- | --- |
 | workspace | tmux **session** | named for a directory's basename, or a custom name |
 | agent | tmux **window** running `claude` | the window tab is the agent |
+| task | a record file (no tmux object) | the agent's intent + state history; outlives the pane |
 | tab | native tmux window tab | no extra concept |
 | pane | a PTY | agent owns its window; split (`\|` / `-`) for sidecars |
 | fleet | tmux server on socket `agent-fleet` | isolated from daily tmux |
+
+**Task records.** Every agent created through the fleet gets a task record — one file under `~/.cache/agent-fleet/tasks/` holding its intent, directory, agent kind, Claude session id, and a timestamped state history appended by the status hooks. `agent-fleet task "<prompt>"` sets the intent explicitly and starts the agent with the prompt already submitted; plain `add` records the agent's name as the intent. Records outlive the agent pane and survive reboots — restore re-links each one to its respawned pane. Read them with `agent-fleet task ls` / `task show`.
 
 **Status** shows as a glyph — hook-launched agents report it directly, hand-started ones are scraped (see [Status detection](#status-detection)). **Visiting a done agent clears it:** opening it via picker, `Prefix Space`, `Prefix Tab`, or rail click marks it seen and drops it to idle; it returns to done on new output.
 
@@ -188,6 +191,9 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | `agent-fleet attach [workspace]` | Boot and attach (or switch, if inside). Default when run with no subcommand. |
 | `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Create or switch to a workspace. Defaults to `$PWD`; a name overrides the directory basename. Names are sanitized (`:`, `.`, space, `/`, `\|` → `_`). |
 | `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (claude), current/first workspace, name after the workspace. Launches with fleet status hooks. `--new-workspace` gives it its own workspace; `--focus` jumps to it (used by `Prefix C`). |
+| `agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--focus]` | Spawn an interactive agent from an intent: resolves (or creates) the workspace for the directory, starts a hooked `claude` with the prompt as its argument, and writes a task record. Prints `<task-id> <pane-id>`. |
+| `agent-fleet task ls` | List task records with their current state; dead panes show `(gone)`. |
+| `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, state history). |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (`Prefix Tab`); toggles between two. |
 | `agent-fleet rename-workspace [<old>] <new>` | Rename a workspace; agents named after it follow. |
