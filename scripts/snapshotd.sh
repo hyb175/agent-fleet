@@ -11,9 +11,11 @@
 #   C <client>|<session>|<window_id>                           active view, ONE PER
 #                                                              CLIENT ("-" headless)
 #   S <session>|<rollup_state>|<branch>                        one per workspace
-#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>
+#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>|<intent>
 #     age = seconds the current state has been held (hooked agents only, from
-#     the status file's mtime; "-" when unknown). Renderers show it for wait.
+#     the status file's mtime; "-" when unknown). Renderers show it for
+#     wait/done. intent = the task record's intent ("-" when the pane has no
+#     task); renderers title the row with it.
 
 set -uo pipefail
 
@@ -195,7 +197,7 @@ build() {
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m
+  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent tid trec
   local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
   local -A TAB_BEST=() TAB_STATE=()
   while IFS='|' read -r s wid wn widx pane cmd tty kind sid _ pidx; do
@@ -213,21 +215,35 @@ build() {
     # Scrape-tier agents (no hook status file) get a "~" label suffix so a
     # wrong state in the rail/picker is attributable to the heuristic tier.
     [[ -f "$AF_CACHE/$pane.status" ]] || label="$label~"
-    # State age from the status file's mtime — computed only for wait (the
-    # one state renderers show it for), so the stat fork stays rare.
+    # State age from the status file's mtime — computed only for the states
+    # renderers show it for (wait/done), so the stat fork stays rare.
     age="-"
-    if [[ "$st" == "wait" && -f "$AF_CACHE/$pane.status" ]]; then
+    if [[ ( "$st" == "wait" || "$st" == "done" ) && -f "$AF_CACHE/$pane.status" ]]; then
       m="$(stat -c %Y "$AF_CACHE/$pane.status" 2>/dev/null || stat -f %m "$AF_CACHE/$pane.status" 2>/dev/null || echo '')"
       [[ "$m" =~ ^[0-9]+$ ]] && age=$(( now - m ))
     fi
+    # Task intent for the row title: pane pointer file -> task record's intent
+    # line. Builtin reads only — no forks added to the tick path. tid MUST
+    # reset per pane: if gc deletes the pointer between the -r test and the
+    # read, a stale tid would title this pane with another agent's intent.
+    intent="-"; tid=""
+    if [[ -r "$AF_CACHE/$pane.task" ]]; then
+      { read -r tid < "$AF_CACHE/$pane.task"; } 2>/dev/null || true
+      if [[ -n "${tid:-}" && -r "$CACHE/tasks/$tid" ]]; then
+        while IFS= read -r trec; do
+          case "$trec" in "intent "*) intent="${trec#intent }"; break ;; esac
+        done < "$CACHE/tasks/$tid"
+      fi
+    fi
     # '|' is this file's field delimiter; window names are user-controlled
-    # (rename-window), so swap it for a lookalike in display fields. Session
-    # names are already sanitized at creation by the CLI.
-    wn="${wn//|/¦}"
-    # Trailing pane_index/age let renderers disambiguate shared windows
-    # ("name.2") and show wait duration; readers of older short rows parse
-    # the missing fields as empty (fields grow at the END — CONTRIBUTING #7).
-    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age"$'\n'
+    # (rename-window) and intents are user-typed, so swap it for a lookalike
+    # in display fields. Session names are sanitized at creation by the CLI.
+    wn="${wn//|/¦}"; intent="${intent//|/¦}"; [[ -n "$intent" ]] || intent="-"
+    # Trailing pane_index/age/intent let renderers disambiguate shared windows
+    # ("name.2"), show wait/done duration, and title rows by what the agent is
+    # FOR; readers of older short rows parse the missing fields as empty
+    # (fields grow at the END — CONTRIBUTING #7).
+    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age|$intent"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
     # Most-urgent agent state per active window drives that window's bar.

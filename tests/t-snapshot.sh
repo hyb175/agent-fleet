@@ -45,24 +45,43 @@ wait_opt() {  # <glyph> — up to ~6s
 check "tab glyph: working -> ⠿"        "wait_opt ⠿"
 
 # Wait state: the record grows a numeric trailing age (from the file's mtime,
-# backdated here so the age is unambiguously non-zero).
+# backdated here so the age is unambiguously non-zero) and the task intent.
+mkdir -p "$XDG_CACHE_HOME/agent-fleet/tasks"
+TID="t1-testtask"
+printf 'id %s\nintent fix the auth|bug\npane %s\n' "$TID" "$hp" > "$XDG_CACHE_HOME/agent-fleet/tasks/$TID"
+printf '%s\n' "$TID" > "$PANES/$hp.task"
 printf 'wait\n' > "$PANES/$hp.status"
 touch -d '@'"$(( $(date +%s) - 240 ))" "$PANES/$hp.status" 2>/dev/null \
   || touch -t "$(date -v-4M '+%Y%m%d%H%M.%S' 2>/dev/null)" "$PANES/$hp.status" 2>/dev/null
-check "wait record carries age"        "wait_snap 'claude|wait|[0-9]*|2[0-9][0-9]\$'"
+check "wait record carries age"        "wait_snap 'claude|wait|[0-9]*|2[0-9][0-9]|'"
+check "record carries intent, | scrubbed" "wait_snap '|fix the auth¦bug\$'"
 check "tab glyph: wait wins -> ◆"      "wait_opt ◆"
+
+# Done state carries age too (same mtime source).
+printf 'done\n' > "$PANES/$hp.status"
+touch -d '@'"$(( $(date +%s) - 7200 ))" "$PANES/$hp.status" 2>/dev/null \
+  || touch -t "$(date -v-2H '+%Y%m%d%H%M.%S' 2>/dev/null)" "$PANES/$hp.status" 2>/dev/null
+check "done record carries age"        "wait_snap 'claude|done|[0-9]*|7[0-9][0-9][0-9]|'"
 
 kill "$(cat "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
 # The dying daemon's cleanup rm's the snapshot — wait for the lock release
 # BEFORE fabricating snapshots, or cleanup deletes them from under the checks.
 for _ in $(seq 1 30); do [[ -d "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock" ]] || break; sleep 0.2; done
 
-# Picker renders the age humanized, from a fabricated snapshot.
-printf 'T %s 1\nA ws|@9|1|api|%%20|claude|wait|1|247\n' "$(date +%s)" > "$SNAPF"
-# shellcheck disable=SC2034 # rows read inside the eval'd check() condition below
+# Picker renders ages humanized, titles rows by intent, and breaks rank ties
+# by LONGEST wait first — all from a fabricated snapshot.
+{ printf 'T %s 1\n' "$(date +%s)"
+  printf 'A ws|@9|1|api|%%20|claude|wait|1|247|-\n'
+  printf 'A ws|@8|2|slow|%%21|claude|wait|1|900|refactor the parser end to end\n'
+  printf 'A ws|@7|3|done1|%%22|claude|done|1|7300|-\n'
+} > "$SNAPF"
+# shellcheck disable=SC2034 # rows read inside the eval'd check() conditions below
 rows="$(AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" bash -c \
   'source "'"$REPO"'/scripts/status.sh"; source "'"$REPO"'/scripts/pick.sh"; prep_glyphs; list_fleet' 2>/dev/null)"
 check "picker shows humanized wait age" "grep -q 'wait 4m' <<<\"\$rows\""
+check "picker shows done age"           "grep -q 'done 2h' <<<\"\$rows\""
+check "picker titles the row by intent (capped)" "grep -q 'refactor the parser end' <<<\"\$rows\""
+check "longest wait sorts first" "[[ \"\$(grep -n 'wait 15m' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'wait 4m' <<<\"\$rows\" | cut -d: -f1)\" ]]"
 
 # Rail overflow: 10 agents, 12 usable lines -> a "+N more" row, not silence.
 # Reclaim the agent panes' rows first — the 80x24 test window can run out of

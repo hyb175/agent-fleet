@@ -262,8 +262,9 @@ task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
   tid="t$now-${pane#%}"
   mkdir -p "$AF_TASKS_DIR" "$AF_CACHE_DIR/panes" 2>/dev/null || return 0
   # The record is line-oriented: a newline (or CR) smuggled into any value
-  # would forge record lines, so flatten them in every field.
-  intent="${intent//[$'\n\r']/ }"; dir="${dir//[$'\n\r']/ }"; kind="${kind//[$'\n\r']/ }"
+  # would forge record lines, so flatten them in every field. Tabs too — the
+  # snapshot's consumers use tab-delimited sort keys and tty-width renders.
+  intent="${intent//[$'\n\r\t']/ }"; dir="${dir//[$'\n\r\t']/ }"; kind="${kind//[$'\n\r\t']/ }"
   {
     printf 'id %s\n'      "$tid"
     printf 'intent %s\n'  "$intent"

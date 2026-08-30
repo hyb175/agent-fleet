@@ -85,7 +85,10 @@ read_snapshot() {
             [[ "${_cw:-}" == "$RAIL_WIN" ]] && VISIBLE=1 ;;
       S\ *) SPACES+=("${line#S }") ;;
       A\ *) AGENTS+=("${line#A }")
-            case "$line" in *'|working'|*'|working|'*) ANIMATE=1 ;; esac ;;
+            # No end-anchored alternative: the record now ends in the
+            # user-typed intent, and `af task working` must not spin the rail.
+            # Every current writer emits >=9 fields, so state is never last.
+            case "$line" in *'|working|'*) ANIMATE=1 ;; esac ;;
     esac
   done < "$SNAP"
   # focus.now (written by the pane-focus-in hook) is fresher than the daemon's
@@ -134,7 +137,7 @@ blank() { printf '\033[K\n'; }
 draw() {
   local frame="$1"; home
   local line=0; local -a map=()
-  local rec s roll br wid wn pane label st GLYPH sel pidx age sub
+  local rec s roll br wid wn pane label st GLYPH sel pidx age sub intent
   # Agents per window: names get a ".pane" suffix only where a window holds
   # more than one agent, so same-window agents are tellable apart.
   local -A NWIN=()
@@ -189,17 +192,22 @@ draw() {
         break
       fi
       shown=$((shown+1))
-      IFS='|' read -r s wid _ wn pane label st pidx age <<<"$rec"
+      IFS='|' read -r s wid _ wn pane label st pidx age intent <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
+      # Title = the task intent when the agent has one (what it's FOR beats
+      # what it's called); trunc() in row() caps it. Else the window name.
+      # Intent first, .pidx after — same-window agents stay tellable apart
+      # even when they share an intent.
+      [[ -n "$intent" && "$intent" != "-" ]] && wn="$intent"
       (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
       # Subtitle = workspace + agent kind (claude/codex/opencode…) so same-named
       # tabs are distinguishable and you can tell the tools apart; the glyph
-      # already shows state (working/wait/done/idle). Waiting agents append
-      # how long they've waited — the triage question the rail exists to answer.
+      # already shows state (working/wait/done/idle). wait/done append time in
+      # state — the triage question the rail exists to answer.
       sub="$s · $label"
-      if [[ "$st" == "wait" && "$age" =~ ^[0-9]+$ ]]; then
+      if [[ ( "$st" == "wait" || "$st" == "done" ) && "$age" =~ ^[0-9]+$ ]]; then
         fmt_age "$age"; sub+=" · $AGE"
       fi
       row "$sel" "$GLYPH" "$wn" "$sub"

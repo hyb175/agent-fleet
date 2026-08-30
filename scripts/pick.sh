@@ -68,7 +68,7 @@ stale_row() {
 # name so same-workspace agents differ) then agentless workspaces.
 list_fleet() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx age sub
+  local line s wid widx wn pane st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx age sub intent asort
   # First pass: agents per window, so same-window agents get ".pane" suffixes.
   declare -A NWIN
   while IFS= read -r line; do
@@ -80,19 +80,25 @@ list_fleet() {
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
       A\ *)
-        IFS='|' read -r s wid widx wn pane _ st pidx age <<<"${line#A }"
+        IFS='|' read -r s wid widx wn pane _ st pidx age intent <<<"${line#A }"
         glyph="$(glyph_of "$st")"
+        # Title = task intent when present (capped — fzf rows are one line),
+        # else the window name. Intent first, .pidx after, cap last — so
+        # same-window agents sharing an intent stay tellable apart.
+        [[ -n "$intent" && "$intent" != "-" ]] && wn="$intent"
         (( ${NWIN[$wid]:-1} > 1 )) && [[ -n "$pidx" ]] && wn="$wn.$pidx"
-        # Waiting agents show how long they've waited (the triage sort key,
-        # humanized) — ages come from the snapshot's trailing age field.
-        sub="$st"
-        if [[ "$st" == "wait" && "$age" =~ ^[0-9]+$ ]]; then
-          fmt_age "$age"; sub="wait $AGE"
+        (( ${#wn} > 24 )) && wn="${wn:0:23}…"
+        # wait/done show time in state (the triage sort key, humanized) —
+        # ages come from the snapshot's trailing age field.
+        sub="$st"; asort=0
+        if [[ ( "$st" == "wait" || "$st" == "done" ) && "$age" =~ ^[0-9]+$ ]]; then
+          fmt_age "$age"; sub="$st $AGE"
+          [[ "$st" == "wait" ]] && asort="$age"
         fi
         printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$sub"
-        # Prefix a (rank, idx) sort key so the most urgent agents float to the
-        # top; idx keeps it stable within a rank. Stripped after sorting, below.
-        agents+="$(state_rank "$st")"$'\t'"$idx"$'\t'"$line"$'\n'
+        # Sort key (rank asc, wait-age desc, idx asc): most urgent rank first,
+        # LONGEST-waiting first within it, arrival order as the stable tail.
+        agents+="$(state_rank "$st")"$'\t'"$asort"$'\t'"$idx"$'\t'"$line"$'\n'
         idx=$(( idx + 1 ))
         ;;
       S\ *)
@@ -104,9 +110,10 @@ list_fleet() {
         ;;
     esac
   done < "$SNAP"
-  # Sort agents by urgency (wait → working → done → idle), then drop the sort key.
+  # Sort agents by urgency (wait → working → done → idle), longest wait first
+  # within a rank, then drop the sort keys.
   if [[ -n "$agents" ]]; then
-    agents="$(printf '%s' "$agents" | sort -t$'\t' -k1,1n -k2,2n | cut -f3-)"$'\n'
+    agents="$(printf '%s' "$agents" | sort -t$'\t' -k1,1n -k2,2nr -k3,3n | cut -f4-)"$'\n'
   fi
   stale_row "$snap_ts"
   printf '%s%s' "$agents" "$spaces"
