@@ -18,7 +18,9 @@ XDG_CACHE_HOME="$(mktemp -d)"; export XDG_CACHE_HOME
 # and the machine's real choice must not leak into test assertions.
 XDG_CONFIG_HOME="$(mktemp -d)"; export XDG_CONFIG_HOME
 # Private state too: task worktrees live under $XDG_STATE_HOME/agent-fleet.
-XDG_STATE_HOME="$(mktemp -d)"; export XDG_STATE_HOME
+# pwd -P like WORK: macOS mktemp yields /var/folders/… which tmux reports
+# physically as /private/var/… — unresolved, every cwd comparison fails there.
+XDG_STATE_HOME="$(cd "$(mktemp -d)" && pwd -P)"; export XDG_STATE_HOME
 # The running fleet exports AGENT_FLEET_THEME into every pane's env; unset it so
 # a suite launched from inside a themed fleet still resolves the default.
 unset AGENT_FLEET_THEME
