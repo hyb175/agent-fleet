@@ -308,6 +308,41 @@ task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
   printf '%s' "$tid"
 }
 
+# Worktree-per-task (#4): a branch + worktree per task, so parallel agents on
+# one repo can't collide in a single checkout. Worktrees live OUTSIDE the repo
+# at a predictable spot: $XDG_STATE_HOME/agent-fleet/worktrees/<repo>-<hash>/
+# <slug> (the 4-digit path hash keeps same-named repos apart). State dir, not
+# cache: a cache is deletable by contract, and these hold real work.
+AF_WORKTREES_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-fleet/worktrees"
+
+task_worktree_create() {  # <repo-dir> <slug> -> "path<TAB>branch" (empty = degrade)
+  local dir="$1" slug="$2" base hash root branch path n=1
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || return 0
+  # Sanitize the slug like the repo base: --name is user text, and a '/' in
+  # it would nest the worktree below task_orphans' scan depth (an invalid ref
+  # would just degrade to the shared checkout with a misleading note).
+  slug="${slug//[^A-Za-z0-9._-]/_}"; [[ -n "$slug" ]] || slug="task"
+  base="$(basename "$dir")"; base="${base//[^A-Za-z0-9._-]/_}"
+  hash="$(printf '%s' "$dir" | cksum | awk '{printf "%04d", $1 % 10000}')"
+  root="$AF_WORKTREES_DIR/$base-$hash"
+  # A registered-but-deleted worktree with the same path would fail the add;
+  # prune first so leftovers from hand-rm'd trees can't block creation.
+  git -C "$dir" worktree prune >/dev/null 2>&1 || true
+  branch="af/task/$slug"; path="$root/$slug"
+  # Suffix past collisions: an existing branch OR a leftover dir both count.
+  while git -C "$dir" show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null \
+        || [[ -e "$path" ]]; do
+    n=$(( n + 1 )); branch="af/task/$slug-$n"; path="$root/$slug-$n"
+  done
+  mkdir -p "$root" 2>/dev/null || return 0
+  # Keep git's own words on failure — "not a git repo" was a lie for the
+  # race/invalid-ref cases, and the user is about to run UNisolated.
+  local err=""
+  err="$(git -C "$dir" worktree add -b "$branch" "$path" 2>&1 >/dev/null)" \
+    || { echo "note: worktree add failed: ${err%%$'\n'*}" >&2; return 0; }
+  printf '%s\t%s' "$path" "$branch"
+}
+
 # task_id_for <id|%pane> — resolve either form to a task id, or fail.
 task_id_for() {
   local arg="$1" tid="$1"
@@ -1394,9 +1429,11 @@ cmd_restore() {
 usage_task() {
   cat <<EOF
 Usage: agent-fleet task "<prompt>" [options]
-       agent-fleet task -- "<prompt>" [options]   (force create — prompt may be 'ls'/'show'/-*)
+       agent-fleet task -- "<prompt>" [options]   (force create — prompt may be a subcommand or -*)
        agent-fleet task ls
        agent-fleet task show <task-id|%pane>
+       agent-fleet task done|drop <task-id|%pane>
+       agent-fleet task clean [<task-id|%pane>] [--dry-run] [--force] [--keep-branch]
 
 Spawn an interactive agent from an intent. Creates (or reuses) the workspace
 for the target directory, starts a hooked $DEFAULT_AGENT_CMD agent with the
@@ -1406,10 +1443,18 @@ Prints "<task-id> <pane-id>".
 Options (create form):
   --repo <dir>   Directory to work in (default: current fleet pane's dir, else \$PWD).
   --name <name>  Agent/tab name (default: a slug of the prompt's first words).
+  --isolated     Git repos: branch af/task/<name> + a private worktree; the agent
+                 works there, so parallel tasks on one repo can't collide.
+                 (Default via AGENT_FLEET_TASK_ISOLATED=1; --no-isolated opts out.)
   --focus        Jump to the new agent.
   -h, --help     Show this help.
 
-Records live in $AF_TASKS_DIR (one file per task, with a state history).
+Lifecycle: 'done' (merged) / 'drop' (abandoned) mark a task terminal; 'clean'
+reclaims terminal tasks' worktrees and branches — refusing dirty trees and
+unmerged branches unless --force. 'ls' shows [branch] with * dirty, ^ unmerged,
+and lists orphaned worktrees.
+
+Records live in $AF_TASKS_DIR; worktrees under $AF_WORKTREES_DIR.
 EOF
 }
 
@@ -1440,16 +1485,193 @@ task_ls() {
     done < "$f"
     # A dead pane means the agent is gone but the record (by design) is not.
     mark=" (gone)"
-    [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]] && mark=""
-    printf '%-18s %-8s %-6s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$intent"
+    if [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]]; then mark=""; fi
+    # Worktree column (#5): branch plus * (dirty) / ^ (unmerged) — the two
+    # signals clean's safety rails key on, surfaced before you reach for it.
+    local wtcol=""
+    task_record_get "$tid" || true
+    if [[ -n "$TASK_BRANCH" ]]; then
+      wtcol="  [$TASK_BRANCH"
+      if [[ -d "$TASK_WORKTREE" ]] \
+         && [[ -n "$(git -C "$TASK_WORKTREE" status --porcelain 2>/dev/null | head -1)" ]]; then
+        wtcol+="*"
+      fi
+      if [[ -n "$TASK_REPO" ]] \
+         && git -C "$TASK_REPO" show-ref --verify --quiet "refs/heads/$TASK_BRANCH" 2>/dev/null \
+         && ! git -C "$TASK_REPO" merge-base --is-ancestor "$TASK_BRANCH" HEAD 2>/dev/null; then
+        wtcol+="^"
+      fi
+      wtcol+="]"
+    fi
+    printf '%-18s %-9s %-6s%s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$wtcol" "$intent"
   done
   [[ -n "$any" ]] || echo "(no tasks)"
+  task_orphans
 }
 
 task_show() {
   local tid
   tid="$(task_id_for "${1:?usage: agent-fleet task show <task-id|%pane>}")" || exit 1
   cat "$AF_TASKS_DIR/$tid"
+}
+
+# task_record_get <tid> — fill TASK_<FIELD> vars from a record (last state wins).
+task_record_get() {
+  local f="$AF_TASKS_DIR/$1" k v
+  TASK_STATE=""; TASK_WORKTREE=""; TASK_BRANCH=""; TASK_REPO=""
+  [[ -f "$f" ]] || return 1
+  while read -r k v; do
+    case "$k" in
+      state)    TASK_STATE="${v%% *}" ;;
+      worktree) TASK_WORKTREE="$v" ;;
+      branch)   TASK_BRANCH="$v" ;;
+      repo)     TASK_REPO="$v" ;;
+    esac
+  done < "$f"
+  return 0
+}
+
+# task done|drop — terminal states (#5). The review flow (#9) will call these;
+# until then they're the explicit hand-off from "agent finished" to "worktree
+# reclaimable".
+task_mark() {  # <id|%pane> <merged|abandoned>
+  local tid now
+  tid="$(task_id_for "$1")" || exit 1
+  # A cleaned task's worktree/branch are gone — resurrecting it would make
+  # the next sweep reprocess a ghost (failed branch delete, bogus counts).
+  task_record_get "$tid" || true
+  if [[ "$TASK_STATE" == "cleaned" ]]; then
+    echo "error: $tid is already cleaned — start a new task instead" >&2; exit 1
+  fi
+  printf -v now '%(%s)T' -1
+  printf 'state %s %s\n' "$2" "$now" >> "$AF_TASKS_DIR/$tid" || exit 1
+  echo "task $tid -> $2"
+  if grep -q '^worktree ' "$AF_TASKS_DIR/$tid" 2>/dev/null; then
+    echo "worktree recorded — reclaim it with: agent-fleet task clean $tid"
+  fi
+}
+
+# task clean — reclaim worktrees/branches of TERMINAL tasks only (#5).
+# Safety is layered: `git worktree remove` itself refuses a dirty tree
+# without --force, and we refuse an unmerged branch without --force — so
+# unreviewed work is never eaten by a typo. --dry-run prints the plan.
+task_clean() {
+  local target="" dry="" force="" keepbr="" f tid now
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run)     dry=1; shift ;;
+      --force)       force=1; shift ;;
+      --keep-branch) keepbr=1; shift ;;
+      -*) echo "error: unexpected arg: $1" >&2; exit 2 ;;
+      *)  target="$1"; shift ;;
+    esac
+  done
+  local -a tids=()
+  if [[ -n "$target" ]]; then
+    tid="$(task_id_for "$target")" || exit 1
+    tids=("$tid")
+  else
+    for f in "$AF_TASKS_DIR"/t*; do
+      [[ -e "$f" ]] || continue
+      case "$f" in *.tmp.*) continue ;; esac
+      tids+=("$(basename "$f")")
+    done
+  fi
+  # Pane-liveness map (same discipline as task_ls): a task whose pane is
+  # still running its agent is never swept out from under it without --force.
+  local -A LIVE_T=()
+  local lp lt
+  if server_up; then
+    while read -r lp lt; do
+      if [[ -n "$lp" && -n "$lt" ]]; then LIVE_T[$lp]="$lt"; fi
+    done < <(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null)
+  fi
+  local cleaned=0 skipped=0 failed=0 rec_pane
+  for tid in ${tids[@]+"${tids[@]}"}; do
+    task_record_get "$tid" || continue
+    # State gate FIRST: "mark it terminal" is the actionable answer for a
+    # non-terminal task, whether or not its agent is also still alive.
+    case "$TASK_STATE" in
+      merged|abandoned) ;;
+      cleaned) continue ;;                      # already reclaimed
+      *) # a named target deserves an explanation; the sweep stays quiet
+         if [[ -n "$target" ]]; then
+           echo "skip $tid: state '$TASK_STATE' is not terminal — mark it first (agent-fleet task done|drop $tid)"
+           skipped=$(( skipped + 1 ))
+         fi
+         continue ;;
+    esac
+    rec_pane="$(awk '$1=="pane"{print $2; exit}' "$AF_TASKS_DIR/$tid" 2>/dev/null || true)"
+    if [[ -z "$force" && -n "$rec_pane" && "${LIVE_T[$rec_pane]:-}" == "$tid" ]]; then
+      echo "refuse $tid: its agent is still running in $rec_pane (kill it, or --force)"
+      failed=$(( failed + 1 )); continue
+    fi
+    if [[ -z "$TASK_WORKTREE" ]]; then
+      if [[ -n "$target" ]]; then
+        echo "skip $tid: no worktree recorded"; skipped=$(( skipped + 1 ))
+      fi
+      continue
+    fi
+    local repo="${TASK_REPO:-}"
+    if [[ -z "$repo" || ! -d "$repo" ]]; then
+      echo "skip $tid: repo dir missing ($repo)"; skipped=$(( skipped + 1 )); continue
+    fi
+    # Unmerged commits are the "never eat unreviewed work" line: refuse
+    # without --force regardless of merged/abandoned state.
+    if [[ -n "$TASK_BRANCH" && -z "$force" ]] \
+       && git -C "$repo" show-ref --verify --quiet "refs/heads/$TASK_BRANCH" 2>/dev/null \
+       && ! git -C "$repo" merge-base --is-ancestor "$TASK_BRANCH" HEAD 2>/dev/null; then
+      local _cur; _cur="$(git -C "$repo" branch --show-current 2>/dev/null || echo 'HEAD')"
+      echo "refuse $tid: $TASK_BRANCH not merged into ${_cur:-HEAD} (merge it, check out the merge target, or --force)"
+      failed=$(( failed + 1 )); continue
+    fi
+    if [[ -n "$dry" ]]; then
+      echo "would remove: worktree $TASK_WORKTREE${keepbr:+ (keeping branch)}${TASK_BRANCH:+, branch $TASK_BRANCH}"
+      continue
+    fi
+    if [[ -e "$TASK_WORKTREE" ]]; then
+      if ! git -C "$repo" worktree remove ${force:+--force} "$TASK_WORKTREE" >/dev/null 2>&1; then
+        echo "refuse $tid: worktree $TASK_WORKTREE not removable (dirty? --force to override)"
+        failed=$(( failed + 1 )); continue
+      fi
+    else
+      git -C "$repo" worktree prune >/dev/null 2>&1 || true
+    fi
+    if [[ -z "$keepbr" && -n "$TASK_BRANCH" ]]; then
+      local delflag="-d"
+      if [[ -n "$force" ]]; then delflag="-D"; fi
+      git -C "$repo" branch "$delflag" "$TASK_BRANCH" >/dev/null 2>&1 \
+        || echo "note: branch $TASK_BRANCH not deleted (unmerged? --force, or clean up by hand)"
+    fi
+    printf -v now '%(%s)T' -1
+    printf 'state cleaned %s\n' "$now" >> "$AF_TASKS_DIR/$tid" 2>/dev/null || true
+    echo "cleaned $tid: $TASK_WORKTREE"
+    cleaned=$(( cleaned + 1 ))
+  done
+  if [[ -z "$dry" ]]; then echo "cleaned $cleaned, skipped $skipped, refused $failed"; fi
+  # A failed reclaim exits nonzero so scripts notice; skips don't.
+  (( failed == 0 )) || exit 1
+  return 0
+}
+
+# Orphaned worktrees: dirs under the worktree root no task record points at
+# (record deleted by hand, or a pre-record crash). Listed, never auto-removed.
+task_orphans() {
+  [[ -d "$AF_WORKTREES_DIR" ]] || return 0
+  local -A KNOWN=()
+  local f w any=""
+  for f in "$AF_TASKS_DIR"/t*; do
+    [[ -e "$f" ]] || continue
+    w="$(awk '$1=="worktree"{sub(/^worktree /,""); print; exit}' "$f" 2>/dev/null || true)"
+    if [[ -n "$w" ]]; then KNOWN[$w]=1; fi
+  done
+  for w in "$AF_WORKTREES_DIR"/*/*; do
+    [[ -d "$w" ]] || continue
+    if [[ -z "${KNOWN[$w]:-}" ]]; then
+      [[ -n "$any" ]] || { echo "orphaned worktrees (no task record — remove with git worktree remove):"; any=1; }
+      echo "  $w"
+    fi
+  done
 }
 
 cmd_task() {
@@ -1464,19 +1686,24 @@ cmd_task() {
       "")        usage_task >&2; exit 2 ;;
       ls)        shift; task_ls "$@"; return 0 ;;
       show)      shift; task_show "$@"; return 0 ;;
+      done)      shift; task_mark "${1:?usage: agent-fleet task done <task-id|%pane>}" merged; return 0 ;;
+      drop)      shift; task_mark "${1:?usage: agent-fleet task drop <task-id|%pane>}" abandoned; return 0 ;;
+      clean)     shift; task_clean "$@"; return 0 ;;
       -*)        echo "error: the prompt comes first: agent-fleet task \"<prompt>\" [options] (or force it with --)" >&2; exit 2 ;;
     esac
   elif [[ -z "$sub" ]]; then
     usage_task >&2; exit 2
   fi
 
-  local prompt="$1" dir="" name="" focus=""
+  local prompt="$1" dir="" name="" focus="" isolated="${AGENT_FLEET_TASK_ISOLATED:-}"
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo|--dir) dir="$2"; shift 2 ;;
       --name)       name="$2"; shift 2 ;;
       --focus)      focus=1; shift ;;
+      --isolated)   isolated=1; shift ;;
+      --no-isolated) isolated=""; shift ;;   # per-invocation opt-out of the env default
       *) echo "error: unexpected arg: $1" >&2; usage_task >&2; exit 2 ;;
     esac
   done
@@ -1508,9 +1735,24 @@ cmd_task() {
     name="${slug:-task}"
   fi
 
+  # Isolation (#4): branch + worktree per task; the agent starts IN the
+  # worktree. The workspace keeps the ORIGINAL repo's name (all of a repo's
+  # tasks group under one workspace, isolated or not). Non-git dirs degrade
+  # to the shared checkout, with a note.
+  local repo_dir="$dir" wt="" wt_path="" wt_branch=""
+  if [[ "$isolated" == "1" ]]; then
+    wt="$(task_worktree_create "$dir" "$name")"
+    if [[ -n "$wt" ]]; then
+      wt_path="${wt%%$'\t'*}"; wt_branch="${wt#*$'\t'}"
+      dir="$wt_path"
+    else
+      echo "note: $dir is not a git repo (or worktree add failed) — running in the shared checkout" >&2
+    fi
+  fi
+
   ensure_server
   local ws pane
-  ws="$(sanitize_name "$(basename "$dir")")"
+  ws="$(sanitize_name "$(basename "$repo_dir")")"
   # The prompt reaches the agent as "$AF_TASK_PROMPT", set on the window via
   # tmux -e (cmd_add --env) — it never passes through a shell parser, so no
   # quoting can mangle it. tmux runs window commands under default-shell, and
@@ -1530,6 +1772,19 @@ cmd_task() {
   if [[ -z "$tid" ]]; then
     echo "warning: task record could not be written (cache unwritable?) — the agent is running unrecorded" >&2
     tid="-"
+  fi
+  # Record the isolation facts so ls/clean can find the worktree later. The
+  # record's `dir` line holds the worktree (the agent's cwd); `repo` holds the
+  # original checkout — clean runs git against the repo, not the worktree.
+  if [[ -n "$wt_path" && "$tid" != "-" && -f "$AF_TASKS_DIR/$tid" ]]; then
+    # Same flatten invariant as task_record_create: a control char smuggled
+    # into a value (repo comes from --repo) would forge record lines — e.g. a
+    # fake 'state merged' that bypasses clean's terminal gate.
+    {
+      printf 'worktree %s\n' "${wt_path//[$'\n\r\t']/ }"
+      printf 'branch %s\n'   "${wt_branch//[$'\n\r\t']/ }"
+      printf 'repo %s\n'     "${repo_dir//[$'\n\r\t']/ }"
+    } >> "$AF_TASKS_DIR/$tid" 2>/dev/null || true
   fi
   echo "$tid $pane"
 }

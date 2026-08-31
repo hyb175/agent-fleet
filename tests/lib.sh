@@ -17,6 +17,8 @@ XDG_CACHE_HOME="$(mktemp -d)"; export XDG_CACHE_HOME
 # Private config too: theme resolution reads $XDG_CONFIG_HOME/agent-fleet/theme,
 # and the machine's real choice must not leak into test assertions.
 XDG_CONFIG_HOME="$(mktemp -d)"; export XDG_CONFIG_HOME
+# Private state too: task worktrees live under $XDG_STATE_HOME/agent-fleet.
+XDG_STATE_HOME="$(mktemp -d)"; export XDG_STATE_HOME
 # The running fleet exports AGENT_FLEET_THEME into every pane's env; unset it so
 # a suite launched from inside a themed fleet still resolves the default.
 unset AGENT_FLEET_THEME
@@ -52,7 +54,7 @@ boot_server() {  # [session] [dir]
 
 _lib_cleanup() {
   tx kill-server 2>/dev/null
-  rm -rf "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$WORK" 2>/dev/null
+  rm -rf "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$WORK" 2>/dev/null
   rm -f "/private/tmp/tmux-$(id -u)/$SOCK" 2>/dev/null
 }
 trap _lib_cleanup EXIT

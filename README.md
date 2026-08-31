@@ -191,9 +191,11 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | `agent-fleet attach [workspace]` | Boot and attach (or switch, if inside). Default when run with no subcommand. |
 | `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Create or switch to a workspace. Defaults to `$PWD`; a name overrides the directory basename. Names are sanitized (`:`, `.`, space, `/`, `\|` → `_`). |
 | `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (claude), current/first workspace, name after the workspace. Launches with fleet status hooks. `--new-workspace` gives it its own workspace; `--focus` jumps to it (used by `Prefix C`). |
-| `agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--focus]` | Spawn an interactive agent from an intent: resolves (or creates) the workspace for the directory, starts a hooked `claude` with the prompt as its argument, and writes a task record. Prints `<task-id> <pane-id>`. |
-| `agent-fleet task ls` | List task records with their current state; dead panes show `(gone)`. |
-| `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, state history). |
+| `agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--isolated] [--focus]` | Spawn an interactive agent from an intent: resolves (or creates) the workspace for the directory, starts a hooked `claude` with the prompt as its argument, and writes a task record. `--isolated` gives the task its own branch (`af/task/<name>`) and git worktree, so parallel tasks on one repo can't collide (`AGENT_FLEET_TASK_ISOLATED=1` makes it the default; `--no-isolated` opts out; non-git dirs degrade to the shared checkout). Prints `<task-id> <pane-id>`. |
+| `agent-fleet task ls` | List task records with state, `[branch]` (`*` dirty, `^` unmerged), dead panes as `(gone)`, and any orphaned worktrees. |
+| `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, worktree/branch, state history). |
+| `agent-fleet task done\|drop <id\|%pane>` | Mark a task terminal (merged / abandoned) — the gate `clean` requires. |
+| `agent-fleet task clean [<id\|%pane>] [--dry-run] [--force] [--keep-branch]` | Reclaim terminal tasks' worktrees and branches. Refuses dirty trees and unmerged branches without `--force` — unreviewed work is never eaten silently. |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (`Prefix Tab`); toggles between two. |
 | `agent-fleet rename-workspace [<old>] <new>` | Rename a workspace; agents named after it follow. |
@@ -291,6 +293,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
 | `AGENT_FLEET_CMD` | `claude` | Default command for `add`; hooks attach only when it's `claude` |
+| `AGENT_FLEET_TASK_ISOLATED` | unset | `1` makes `task` default to worktree isolation (per-task branch + worktree under `~/.local/state/agent-fleet/worktrees/`); `--no-isolated` overrides per call |
 | `AGENT_FLEET_THEME` | unset | One-shot palette override — see [Theming](#theming) |
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping (space-separated) |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created on first boot |
