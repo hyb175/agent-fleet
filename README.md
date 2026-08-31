@@ -270,7 +270,7 @@ The fleet also drives a **terminal progress bar** (OSC 9;4 — Ghostty 1.2+, iTe
 
 ## Persistence (survives reboot)
 
-tmux is in-memory, so a reboot ends the fleet. agent-fleet saves the layout to `~/.cache/agent-fleet/fleet.state` and rebuilds it on the next attach.
+tmux is in-memory, so a reboot ends the fleet. agent-fleet saves the layout to `~/.cache/agent-fleet/<socket>/fleet.state` and rebuilds it on the next attach.
 
 **Restored** — sessions, tabs (names + order), the exact split layout, each pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind and relaunches `claude --resume <id>`, `kimi --session <id>`, or `codex resume <id>`. This covers `add` / `Prefix C`, hand-typed `claude` / `claude -r`, and hand-typed `kimi` / `codex`.
 
@@ -280,7 +280,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 
 **When** — saved every `AGENT_FLEET_SAVE_INTERVAL` daemon ticks (≈15s), on `stop`, and on `save`; restored automatically on `attach` after a stop, or manually via `restore`. To boot at login, run `agent-fleet attach` from your shell profile or a launchd/systemd unit.
 
-**Socket-scoped** — the state file records the socket it was saved on, and restore refuses to rebuild it anywhere else. The cache dir is shared across sockets, so without this a throwaway `AGENT_FLEET_SOCKET=scratch agent-fleet attach` would clone the live fleet and `--resume` every agent a second time — two processes appending to one transcript. If you deliberately renamed your socket, `AGENT_FLEET_RESTORE_ANY_SOCKET=1 agent-fleet restore` moves the layout over.
+**Socket-scoped** — the cache dir (and this state file with it) is scoped per socket, and the state file also records the socket it was saved on as a second, in-band check; restore refuses to rebuild it anywhere else. Without this a throwaway `AGENT_FLEET_SOCKET=scratch agent-fleet attach` would clone the live fleet and `--resume` every agent a second time — two processes appending to one transcript. If you deliberately renamed your socket, `AGENT_FLEET_RESTORE_ANY_SOCKET=1 agent-fleet restore` moves the layout over.
 
 ---
 
@@ -312,7 +312,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_GIT_TTL` | `30` | Cached git-branch freshness (seconds) |
 | `TMUX_BIN` | `tmux` | tmux binary used by the CLI and scripts |
 
-Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet`. The tmux option `@fleet-sidenav-auto` (default `on`) auto-opens the rail on new windows/attach; set `off` to opt out (`Prefix b` still toggles).
+Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/<socket>` (per-socket, so two fleets on different `AGENT_FLEET_SOCKET`s never share or corrupt each other's records); `theme.conf` alone stays at the shared parent. The tmux option `@fleet-sidenav-auto` (default `on`) auto-opens the rail on new windows/attach; set `off` to opt out (`Prefix b` still toggles).
 
 ### Theming
 

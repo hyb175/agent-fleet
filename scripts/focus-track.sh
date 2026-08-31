@@ -21,7 +21,9 @@ pane="${1:-}"; is_rail="${2:-}"; sess="${3:-}"; win="${4:-}"
 [[ -z "$pane" ]] && exit 0
 [[ "$is_rail" == "1" ]] && exit 0     # never record the sidenav as "previous"
 
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
+CACHE="$AF_CACHE_DIR"
 mkdir -p "$CACHE" 2>/dev/null || exit 0
 cur="$CACHE/focus.cur"; prev="$CACHE/focus.prev"
 

@@ -33,7 +33,7 @@ AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
   bash "$REPO/scripts/focus-track.sh" "$beta_work" 0 beta "$beta_win"
 sleep 1
 
-check "focus.now records the new view" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/focus.now')\" == 'beta|$beta_win' ]]"
+check "focus.now records the new view" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/$SOCK/focus.now')\" == 'beta|$beta_win' ]]"
 check "rails survive SIGUSR1 (trap installed)" "[[ \"\$(rails_alive)\" == '$n0' ]]"
 # The push must NOT move alpha's highlight: another client's (or window's)
 # focus is not this rail's view.
@@ -45,6 +45,6 @@ check "alpha's rail does not highlight beta" "! grep -aq '▎.*beta' <<<\"\$cap_
 # rapid double-signal safety
 AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
   bash "$REPO/scripts/focus-track.sh" "$alpha_rail" 1 alpha "@0"   # rail focus: must be ignored
-check "rail focus is ignored (focus.now unchanged)" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/focus.now')\" == 'beta|$beta_win' ]]"
+check "rail focus is ignored (focus.now unchanged)" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/$SOCK/focus.now')\" == 'beta|$beta_win' ]]"
 check "rails still alive" "[[ \"\$(rails_alive)\" == '$n0' ]]"
 exit "$FAIL"

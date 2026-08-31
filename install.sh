@@ -101,11 +101,14 @@ else
   say "note: 'af' already taken by $af_existing — skipping the shortcut"
 fi
 
-# Live-status cache. Status hooks are fleet-scoped (applied per-agent via
-# `claude --settings`), so your global ~/.claude/settings.json is untouched.
+# Live-status cache, scoped per tmux socket (default socket: agent-fleet).
+# Status hooks are fleet-scoped (applied per-agent via `claude --settings`),
+# so your global ~/.claude/settings.json is untouched. Provisioning the
+# SCOPED dir matters: a root-level panes/ would read as a pre-scoping layout
+# and trip a phantom migration on first boot.
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
-mkdir -p "$CACHE_DIR/panes"
-say "provisioned: $CACHE_DIR/panes (per-agent status cache)"
+mkdir -p "$CACHE_DIR/agent-fleet/panes"
+say "provisioned: $CACHE_DIR/agent-fleet/panes (per-agent status cache)"
 
 # --- dependency check (non-fatal) ------------------------------------------
 command -v tmux >/dev/null 2>&1 \

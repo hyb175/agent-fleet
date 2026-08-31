@@ -28,7 +28,9 @@ tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 # Ensure the snapshot daemon (single writer the rail/picker read) is running.
 # Cheap pid check on the common path; only launch when absent.
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$ROOT/scripts/cache.sh"
+CACHE="$AF_CACHE_DIR"
 ensure_daemon() {
   local pf="$CACHE/snapshotd.lock/pid" p
   p="$(cat "$pf" 2>/dev/null || true)"

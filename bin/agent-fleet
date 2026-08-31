@@ -73,8 +73,19 @@ ensure_server_env() {
 # into session names would shift every consumer's parse.
 sanitize_name() { printf '%s' "$1" | tr ':. /|' '_____'; }
 
-AF_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# Socket-scoped cache dir (scripts/cache.sh) — two fleets on different sockets
+# used to share one cache dir and could corrupt each other's pane/task/layout
+# state (a fresh boot on one socket purging another's live panes, or restore
+# resuming another socket's saved agents).
+source "$ROOT_DIR/scripts/cache.sh"
 AF_TASKS_DIR="$AF_CACHE_DIR/tasks"
+
+# One-time migration of a pre-scoping install's cache layout into the default
+# socket's scoped dir (see cache_migrate_default). Gated on no server being up
+# on this socket yet: a live server already resolved the old unscoped paths
+# for its own lifetime, so migrating under it would split a running fleet's
+# state across two layouts instead of upgrading a stopped one.
+server_up || cache_migrate_default
 
 # Start the snapshot daemon (single writer the rails/picker read) if not already
 # running. Self-deduping, so a stray extra launch just exits.
@@ -156,6 +167,25 @@ stop_remote_pollers() {
         && kill "$p" 2>/dev/null; } || true
   done
   rm -f "$AF_CACHE_DIR/remote/"*.pid "$AF_CACHE_DIR/remote/"*.snapshot 2>/dev/null || true
+}
+
+# One-time legacy sweep: daemons/pollers started by PRE-SCOPING code keep their
+# pidfiles at the cache ROOT. stop/reload must reach them too — otherwise the
+# first post-upgrade reload starts a SECOND snapshotd (glyph/progress fights)
+# and orphaned ssh pollers outlive the fleet, writing snapshots nobody reads.
+legacy_daemon_sweep() {
+  local p pf
+  p="$(cat "$AF_CACHE_ROOT/snapshotd.lock/pid" 2>/dev/null || true)"
+  if [[ -n "$p" ]] && ps -p "$p" -o command= 2>/dev/null | grep -q snapshotd; then
+    kill "$p" 2>/dev/null || true
+  fi
+  for pf in "$AF_CACHE_ROOT"/remote/*.pid; do
+    [[ -e "$pf" ]] || continue
+    p="$(cat "$pf" 2>/dev/null || true)"
+    { [[ -n "$p" ]] && ps -p "$p" -o command= 2>/dev/null | grep -q remote-poll \
+        && kill "$p" 2>/dev/null; } || true
+  done
+  rm -rf "$AF_CACHE_ROOT/remote" "$AF_CACHE_ROOT/snapshotd.lock" 2>/dev/null || true
 }
 
 # A federated target is "<host>/<id>", or a bare "<host>" — the row a down host
@@ -731,6 +761,7 @@ cmd_stop() {
   { [[ -n "$dpid" ]] && ps -p "$dpid" -o command= 2>/dev/null | grep -q snapshotd \
       && kill "$dpid" 2>/dev/null; } || true
   stop_remote_pollers
+  legacy_daemon_sweep
   tx kill-server
   echo "fleet stopped"
 }
@@ -874,11 +905,14 @@ cmd_uninstall() {
   fi
   # Unconditional: a poller outlives the server it was started for.
   stop_remote_pollers
+  legacy_daemon_sweep
 
   # --- unlink, clear state, optional config, then the managed tree last ---
+  # The whole cache ROOT goes: every socket's scoped dir, the shared
+  # theme.conf, and any pre-scoping leftovers — uninstall leaves nothing.
   local l
   if ((${#links[@]})); then for l in "${links[@]}"; do rm -f "$l" && echo "unlinked: $l"; done; fi
-  [[ -d "$AF_CACHE_DIR" ]] && rm -rf "$AF_CACHE_DIR" && echo "cleared: $AF_CACHE_DIR"
+  [[ -d "$AF_CACHE_ROOT" ]] && rm -rf "$AF_CACHE_ROOT" && echo "cleared: $AF_CACHE_ROOT"
   [[ -n "$purge" && -d "$cfg_dir" ]] && rm -rf "$cfg_dir" && echo "removed: $cfg_dir"
   if ((managed)); then
     rm -rf "$ROOT_DIR" && echo "removed: $ROOT_DIR"
@@ -1215,6 +1249,10 @@ cmd_reload() {
   dpid="$(cat "$pf" 2>/dev/null || true)"
   { [[ -n "$dpid" ]] && ps -p "$dpid" -o command= 2>/dev/null | grep -q snapshotd \
       && kill "$dpid" 2>/dev/null; } || true
+  # Reach daemons a PRE-SCOPING fleet left at the cache root too — without
+  # this, the first post-upgrade reload starts a second snapshotd next to the
+  # legacy one and orphans its ssh pollers.
+  legacy_daemon_sweep
   # Let the old daemon's cleanup trap release the lock before relaunching, so
   # the new daemon doesn't lose the takeover race and exit as a duplicate.
   local i
@@ -1299,7 +1337,7 @@ cmd_config() {
       printf 'base config:    %s\n' "$CONF"
       printf 'your overrides: %s%s\n' "$local_conf" "$mark"
       printf 'theme choice:   %s\n' "$cfg_dir/theme"
-      printf 'generated:      %s  (do not edit)\n' "${AGENT_FLEET_THEME_CONF:-$AF_CACHE_DIR/theme.conf}"
+      printf 'generated:      %s  (do not edit)\n' "${AGENT_FLEET_THEME_CONF:-$AF_CACHE_ROOT/theme.conf}"
       ;;
     edit)
       mkdir -p "$cfg_dir"

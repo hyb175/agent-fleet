@@ -15,13 +15,15 @@
 
 set -uo pipefail
 
-AF_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/panes"
-AF_CACHE2="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/cache"
 AF_SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
 AF_TMUX="${TMUX_BIN:-tmux}"
 
 # Palette (AF_THEME_* hex + T_* SGR escapes), resolved from AGENT_FLEET_THEME.
 source "$(dirname "${BASH_SOURCE[0]}")/theme.sh"
+# Socket-scoped cache dir (scripts/cache.sh).
+source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
+AF_CACHE="$AF_CACHE_DIR/panes"
+AF_CACHE2="$AF_CACHE_DIR/cache"
 
 mkdir -p "$AF_CACHE2" 2>/dev/null || true
 

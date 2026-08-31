@@ -26,7 +26,7 @@ sleep 1.5
 check "split keeps the window's name" "[[ \"\$(tx display-message -p -t '$awid' '#{window_name}')\" == keepme ]]"
 
 # picker disambiguation from a fabricated snapshot (8-field A records)
-SNAPDIR="$XDG_CACHE_HOME/agent-fleet"; mkdir -p "$SNAPDIR"
+SNAPDIR="$XDG_CACHE_HOME/agent-fleet/$SOCK"; mkdir -p "$SNAPDIR"
 now="$(date +%s)"
 printf 'T %s 1\nA ws|@9|1|api|%%20|claude|working|1\nA ws|@9|1|api|%%21|claude|idle|2\nA ws|@8|2|solo|%%30|claude|idle|1\n' "$now" \
   > "$SNAPDIR/fleet.snapshot"

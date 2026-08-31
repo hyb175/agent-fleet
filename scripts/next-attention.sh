@@ -13,7 +13,9 @@ set -uo pipefail
 
 SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
 ROOT="${AGENT_FLEET_ROOT:?AGENT_FLEET_ROOT not set}"
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$ROOT/scripts/cache.sh"
+CACHE="$AF_CACHE_DIR"
 SNAP="$CACHE/fleet.snapshot"
 AF="$ROOT/bin/agent-fleet"
 

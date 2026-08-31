@@ -18,7 +18,9 @@
 set -uo pipefail
 
 SOCK="${AGENT_FLEET_SOCKET:-agent-fleet}"
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
+CACHE="$AF_CACHE_DIR"
 STATE="$CACHE/fleet.state"
 US=$'\t'
 
@@ -29,8 +31,10 @@ mkdir -p "$CACHE" 2>/dev/null || exit 0
 tmp="$STATE.tmp.$$"
 # shellcheck disable=SC2015 # write-then-swap idiom, not if/then/else: mv failing must still clean up the temp
 {
-  # Socket this fleet lives on. The cache dir is not socket-scoped, so restore
-  # needs this to tell its own state file from another socket's.
+  # Socket this fleet lives on. The cache dir is socket-scoped now (cache.sh),
+  # so a stray cross-socket read of this file is already unlikely — this is a
+  # second, in-band check: restore still refuses to rebuild a state file saved
+  # by a different socket even if it somehow ended up in the wrong place.
   printf 'S%s%s\n' "$US" "$SOCK"
 
   # Attached session (for best-effort focus on restore).

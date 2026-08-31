@@ -15,7 +15,7 @@ cat > "$FAKEBIN/claude" <<EOF
 printf '%s\n' "\$@" > "$WORK/argv"
 EOF
 chmod +x "$FAKEBIN/claude"
-OVERLAY_DIR="$XDG_CACHE_HOME/agent-fleet"; mkdir -p "$OVERLAY_DIR"
+OVERLAY_DIR="$XDG_CACHE_HOME/agent-fleet/$SOCK"; mkdir -p "$OVERLAY_DIR"
 printf '{}\n' > "$OVERLAY_DIR/hooks-settings.json"
 OVERLAY="$OVERLAY_DIR/hooks-settings.json"
 

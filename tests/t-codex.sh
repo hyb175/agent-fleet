@@ -33,7 +33,7 @@ rm -f "$CONF"
 check "install without config errors" "! af codex-hooks install 2>/dev/null"
 
 # --- hook kind-tagging + save/restore round trip -----------------------------
-CACHE="$XDG_CACHE_HOME/agent-fleet"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 UUID="abababab-cdcd-efef-1212-343434343434"
 mkdir -p "$WORK/x"
 

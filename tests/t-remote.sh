@@ -10,7 +10,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-remote:"
-CACHE="$XDG_CACHE_HOME/agent-fleet"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 mkdir -p "$CACHE" "$WORK/bin"
 
 # A stub ssh: prints the remote's clock, then whatever we've staged as that

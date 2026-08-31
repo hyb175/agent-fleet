@@ -25,8 +25,10 @@ INTERVAL="${AGENT_FLEET_SNAP_INTERVAL:-1}"
 
 # shellcheck source=status.sh
 source "$ROOT/scripts/status.sh"
+# shellcheck source=cache.sh
+source "$ROOT/scripts/cache.sh"
 
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+CACHE="$AF_CACHE_DIR"
 SNAP="$CACHE/fleet.snapshot"
 LOCK="$CACHE/snapshotd.lock"
 mkdir -p "$CACHE" 2>/dev/null || exit 0

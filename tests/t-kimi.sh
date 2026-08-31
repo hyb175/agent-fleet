@@ -34,7 +34,7 @@ rm -f "$CONF"
 check "install without config errors" "! af kimi-hooks install 2>/dev/null"
 
 # --- hook kind-tagging + save/restore round trip -----------------------------
-CACHE="$XDG_CACHE_HOME/agent-fleet"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 UUID="12121212-3434-5656-7878-909090909090"
 mkdir -p "$WORK/k"
 

@@ -19,6 +19,8 @@ AF="$ROOT/bin/agent-fleet"
 
 # shellcheck source=status.sh
 source "$ROOT/scripts/status.sh"
+# shellcheck source=cache.sh
+source "$ROOT/scripts/cache.sh"
 
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
@@ -30,7 +32,7 @@ fi
 
 # Row format: <KEY>\t<DISPLAY...>   (KEY hidden from fzf via --with-nth=2..)
 
-SNAP="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/fleet.snapshot"
+SNAP="$AF_CACHE_DIR/fleet.snapshot"
 
 # State glyphs, prepared once per popup (the picker is a one-shot render, so the
 # spinner frame is fixed at open time). Shared by every view. Colors come from

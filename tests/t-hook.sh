@@ -14,7 +14,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "t-hook:"
 
 HOOK="$REPO/scripts/agent-status-hook.sh"
-CACHE="$XDG_CACHE_HOME/agent-fleet/panes"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK/panes"
 PANE="%hooktest"
 SF="$CACHE/${PANE}.status"
 

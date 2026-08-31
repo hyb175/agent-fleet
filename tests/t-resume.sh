@@ -7,7 +7,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-resume:"
-CACHE="$XDG_CACHE_HOME/agent-fleet"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 mkdir -p "$CACHE/panes" "$WORK/r"
 touch "$CACHE/hooks-settings.json"

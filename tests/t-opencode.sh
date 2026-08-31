@@ -38,7 +38,7 @@ check "remove refuses a non-fleet file" "! af opencode-hooks remove 2>/dev/null"
 check "user file survives" "[[ -f '$PLUG' ]]"
 
 # --- hook kind-tagging + save/restore round trip -----------------------------
-CACHE="$XDG_CACHE_HOME/agent-fleet"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 UUID="0c0c0c0c-1d1d-2e2e-3f3f-4a4a4a4a4a4a"
 mkdir -p "$WORK/x"
 

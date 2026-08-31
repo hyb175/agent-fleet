@@ -89,13 +89,13 @@ check "config edit scaffolds local.conf" "[[ -f '$cfgh/agent-fleet/local.conf' ]
 check "scaffold is tmux config" "grep -q 'set -g @fleet-sidenav-auto' '$cfgh/agent-fleet/local.conf'"
 
 # back with empty prev
-mkdir -p "$XDG_CACHE_HOME/agent-fleet"; : > "$XDG_CACHE_HOME/agent-fleet/focus.prev"
+mkdir -p "$XDG_CACHE_HOME/agent-fleet/$SOCK"; : > "$XDG_CACHE_HOME/agent-fleet/$SOCK/focus.prev"
 "$AF" back; check "back with empty prev is a clean no-op" "[[ $? -eq 0 ]]"
 
 # stop: stale pidfile naming a live NON-daemon process
-mkdir -p "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock"
+mkdir -p "$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock"
 sleep 300 & victim=$!
-echo "$victim" > "$XDG_CACHE_HOME/agent-fleet/snapshotd.lock/pid"
+echo "$victim" > "$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock/pid"
 out="$("$AF" stop 2>&1)"; rc=$?
 check "stop succeeds ('$out')" "[[ $rc -eq 0 && '$out' == *'fleet stopped'* ]]"
 check "server down" "! tx list-sessions >/dev/null 2>&1"

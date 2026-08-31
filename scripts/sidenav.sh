@@ -24,7 +24,9 @@ TICK="${AGENT_FLEET_SIDENAV_TICK:-0.1}"            # spinner frame interval (s)
 DATA_EVERY="${AGENT_FLEET_SIDENAV_DATA_EVERY:-12}" # re-read snapshot every N ticks
 WIDTH="${AGENT_FLEET_SIDENAV_WIDTH:-30}"
 
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# Socket-scoped cache dir (scripts/cache.sh).
+source "$ROOT/scripts/cache.sh"
+CACHE="$AF_CACHE_DIR"
 SNAP="$CACHE/fleet.snapshot"
 ROWS_DIR="$CACHE/rows"
 mkdir -p "$ROWS_DIR" 2>/dev/null || true

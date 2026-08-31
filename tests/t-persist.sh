@@ -56,16 +56,26 @@ rails_running() {
 }
 check "restored rails are RUNNING the rail" "rails_running"
 
-# The cache isn't socket-scoped: a one-off AGENT_FLEET_SOCKET must not rebuild
-# (and re-resume) the live fleet on a throwaway socket.
+# Socket-scoped cache: a one-off AGENT_FLEET_SOCKET can't even SEE the live
+# fleet's state (separate scoped dir), so it must not rebuild anything.
 OTHER="$SOCK-other"
 AGENT_FLEET_SOCKET="$OTHER" "$REPO/scripts/persist-restore.sh" 2>/dev/null; rc_other=$?
-check "restore refuses a foreign socket" "[[ $rc_other -eq 3 ]]"
+# -eq 1 exactly ("nothing to restore"): rc 3 here would mean the foreign
+# socket could SEE our state — the scoping regression this check exists for.
+check "foreign socket sees no state to restore" "[[ $rc_other -eq 1 ]]"
 check "nothing booted on the foreign socket" "! tmux -L '$OTHER' list-sessions >/dev/null 2>&1"
+# The in-band S-record guard is the second line of defense: state manually
+# copied into another socket's scoped dir still refuses (rc 3) unless forced.
+OTHER_DIR="$XDG_CACHE_HOME/agent-fleet/$OTHER"
+mkdir -p "$OTHER_DIR"
+cp "$XDG_CACHE_HOME/agent-fleet/$SOCK/fleet.state" "$OTHER_DIR/fleet.state"
+AGENT_FLEET_SOCKET="$OTHER" "$REPO/scripts/persist-restore.sh" 2>/dev/null; rc_copied=$?
+check "copied foreign state still refused in-band" "[[ $rc_copied -eq 3 ]]"
 AGENT_FLEET_SOCKET="$OTHER" AGENT_FLEET_RESTORE_ANY_SOCKET=1 \
   "$REPO/scripts/persist-restore.sh" >/dev/null 2>&1; rc_forced=$?
 check "AGENT_FLEET_RESTORE_ANY_SOCKET overrides the refusal" "[[ $rc_forced -eq 0 ]]"
 tmux -L "$OTHER" kill-server 2>/dev/null
+rm -rf "$OTHER_DIR" 2>/dev/null
 rm -f "/private/tmp/tmux-$(id -u)/$OTHER" 2>/dev/null
 
 # Geometry-immunity: restore under a different rail width — the old

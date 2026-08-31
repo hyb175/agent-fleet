@@ -13,7 +13,7 @@ echo "t-ttywrite:"
 # Source the daemon for its helpers only — no lock, no loop (see snapshotd.sh).
 AGENT_FLEET_ROOT="$REPO" source "$REPO/scripts/snapshotd.sh"
 
-check "sourcing does not start a daemon" "[[ ! -d '$XDG_CACHE_HOME/agent-fleet/snapshotd.lock' ]]"
+check "sourcing does not start a daemon" "[[ ! -d '$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock' ]]"
 
 blocking="$WORK/blocking.fifo"
 mkfifo "$blocking"

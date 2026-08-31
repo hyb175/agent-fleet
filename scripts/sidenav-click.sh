@@ -15,7 +15,9 @@ client="${3:-}"
 
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
+CACHE="$AF_CACHE_DIR"
 map="$CACHE/rows/${rail}.map"
 [[ -f "$map" && -n "$y" ]] || { tx select-pane -t "$rail"; exit 0; }
 

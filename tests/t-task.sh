@@ -11,7 +11,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-task:"
-CACHE="$XDG_CACHE_HOME/agent-fleet"
+CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 AF="$REPO/bin/agent-fleet"
 HOOK="$REPO/scripts/agent-status-hook.sh"
 UUID="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"

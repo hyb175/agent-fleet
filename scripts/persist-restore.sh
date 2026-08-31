@@ -27,7 +27,9 @@ export AGENT_FLEET_CONF="$CONF"   # the conf's Prefix r reload expands this at p
 # $AGENT_FLEET_THEME_CONF (exported by theme.sh) at parse time.
 source "$ROOT/scripts/theme.sh"
 theme_write_conf
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$ROOT/scripts/cache.sh"
+CACHE="$AF_CACHE_DIR"
 STATE="$CACHE/fleet.state"
 US=$'\t'   # matches persist-save; every field is non-empty so tab won't collapse
 RESTORE_AGENTS="${AGENT_FLEET_RESTORE_AGENTS:-1}"   # relaunch claude with --resume
@@ -36,12 +38,13 @@ OVERLAY="$CACHE/hooks-settings.json"                # status-hooks settings over
 [[ -f "$STATE" ]] || exit 1
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
 
-# The cache isn't socket-scoped, so the live fleet's state file is visible to
-# any `AGENT_FLEET_SOCKET=throwaway agent-fleet attach`, which would rebuild the
-# whole fleet on that socket and `claude --resume` every agent a second time —
-# two processes appending to one transcript. Only rebuild onto the socket that
-# saved the state; state files predating the S record carry no socket and are
-# restored as before.
+# The cache dir is socket-scoped (cache.sh), so this state file already lives
+# under the socket that saved it — but this in-band check stays as a second
+# guard (e.g. AF_CACHE_ROOT copied/shared some other way would otherwise
+# rebuild the whole fleet a second time and `claude --resume` every agent
+# twice — two processes appending to one transcript). Only rebuild onto the
+# socket that saved the state; state files predating the S record carry no
+# socket and are restored as before.
 state_sock="$(awk -F"$US" '$1=="S"{print $2; exit}' "$STATE" 2>/dev/null)"
 if [[ -n "$state_sock" && "$state_sock" != "$SOCK" \
       && "${AGENT_FLEET_RESTORE_ANY_SOCKET:-0}" != "1" ]]; then

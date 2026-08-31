@@ -26,7 +26,12 @@ pane="${TMUX_PANE:-}"
 # Nothing to do if we don't know the state or which pane we're in.
 [[ -z "$state" || -z "$pane" ]] && exit 0
 
-cache="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/panes"
+# Socket-scoped cache dir, resolved from THIS event's own socket arg — not the
+# ambient AGENT_FLEET_SOCKET. This hook runs inside the AGENT's own process
+# (it's the cross-fleet writer the socket-scoping issue exists to stop), which
+# may not share the fleet server's environment.
+AGENT_FLEET_SOCKET="$socket" source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
+cache="$AF_CACHE_DIR/panes"
 mkdir -p "$cache" 2>/dev/null || exit 0
 f="$cache/${pane}.status"
 

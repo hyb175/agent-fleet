@@ -24,7 +24,9 @@
 set -uo pipefail
 
 host="${1:?usage: remote-poll.sh <host>}"
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
+# shellcheck source=cache.sh
+source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
+CACHE="$AF_CACHE_DIR"
 OUT_DIR="$CACHE/remote"
 OUT="$OUT_DIR/$host.snapshot"
 INTERVAL="${AGENT_FLEET_REMOTE_INTERVAL:-3}"
@@ -41,8 +43,11 @@ ssh_opts=(-o BatchMode=yes -o ConnectTimeout=5
 
 # The remote prints its clock, then its snapshot. `cat` failing (no fleet there)
 # still yields the clock line, which we report as 'down' rather than an error.
+# Federation has no way to name the remote's socket, so — like the rest of this
+# script — it assumes the remote fleet runs on the default socket, whose cache
+# now lives one level deeper under cache.sh's scoping.
 # shellcheck disable=SC2016 # expands on the REMOTE shell — deliberately single-quoted
-REMOTE_CMD='date +%s; cat "${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/fleet.snapshot" 2>/dev/null'
+REMOTE_CMD='date +%s; cat "${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/agent-fleet/fleet.snapshot" 2>/dev/null'
 
 write_out() {  # stdin -> $OUT, atomically (same idiom as snapshotd)
   # shellcheck disable=SC2015 # write-then-swap idiom: mv failing must still clean up the temp
