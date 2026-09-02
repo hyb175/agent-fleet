@@ -136,20 +136,10 @@ fi
 if [[ -n "$state" && "${AGENT_FLEET_NOTIFY:-1}" == "1" && "$state" != "$prev" ]]; then
   case "$state" in
     wait|done)
-      label="$pane"
-      if command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
-        l="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#S/#W' 2>/dev/null || true)"
-        [[ -n "$l" ]] && label="$l"
-      fi
       if [[ "$state" == "wait" ]]; then msg="needs your input"; else msg="finished"; fi
-      # The label lands inside a double-quoted AppleScript literal: strip the
-      # two characters that can break out of it (window names are user-typed).
-      label="${label//\\/}"; label="${label//\"/}"
-      if command -v osascript >/dev/null 2>&1; then          # macOS
-        osascript -e "display notification \"${label} ${msg}\" with title \"agent-fleet\"" >/dev/null 2>&1 || true
-      elif command -v notify-send >/dev/null 2>&1; then       # Linux
-        notify-send "agent-fleet" "${label} ${msg}" >/dev/null 2>&1 || true
-      fi
+      # notify.sh owns the platform routing (clickable jump where supported)
+      # and leads the body with the task intent.
+      bash "$(dirname "${BASH_SOURCE[0]}")/notify.sh" "$socket" "$pane" "$msg" >/dev/null 2>&1 || true
       ;;
   esac
 fi

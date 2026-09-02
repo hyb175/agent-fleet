@@ -116,6 +116,12 @@ progress_reap() {
 # terminal (see cleanup above).
 # Last tab glyph pushed per window (see build) — change-detection state.
 declare -A WOPT_LAST=()
+# Wait-escalation (#8): at most ONE re-notification per wait episode. The mark
+# is set when a wait crosses the threshold and cleared the moment the pane
+# leaves wait. AGENT_FLEET_NOTIFY_ESCALATE = seconds; 0/unset = off.
+ESCALATE="${AGENT_FLEET_NOTIFY_ESCALATE:-0}"
+[[ "$ESCALATE" =~ ^[0-9]+$ ]] || ESCALATE=0
+declare -A ESC_DONE=()
 progress_emit() {  # <state> <tty>
   [[ "$PROGRESS_ON" == "1" ]] || return 0
   local st="$1" tty="$2" seq
@@ -236,6 +242,18 @@ build() {
           case "$trec" in "intent "*) intent="${trec#intent }"; break ;; esac
         done < "$CACHE/tasks/$tid"
       fi
+    fi
+    # One escalation per wait episode: re-notify once past the threshold,
+    # re-arm when the pane leaves wait.
+    if [[ "$st" == "wait" ]]; then
+      if (( ESCALATE > 0 )) && [[ "$age" =~ ^[0-9]+$ ]] && (( age >= ESCALATE )) \
+         && [[ -z "${ESC_DONE[$pane]:-}" ]]; then
+        ESC_DONE[$pane]=1
+        AGENT_FLEET_NOTIFY="${AGENT_FLEET_NOTIFY:-1}" \
+          bash "$ROOT/scripts/notify.sh" "$SOCK" "$pane" "still waiting ($(( age / 60 ))m)" >/dev/null 2>&1 &
+      fi
+    elif [[ -n "${ESC_DONE[$pane]:-}" ]]; then
+      unset "ESC_DONE[$pane]"
     fi
     # '|' is this file's field delimiter; window names are user-controlled
     # (rename-window) and intents are user-typed, so swap it for a lookalike
