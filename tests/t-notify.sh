@@ -30,7 +30,7 @@ notify() { AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
 
 notify "$SOCK" %7 "needs your input"
 check "body leads with the task intent" "grep -q 'review the login flow — ' '$NLOG'"
-check "click action jumps to the pane" "grep -q \"goto '%7'\" '$NLOG'"
+check "click action jumps to the pane" "grep -q 'goto %7' '$NLOG'"
 check "message text present" "grep -q 'needs your input' '$NLOG'"
 
 : > "$NLOG"

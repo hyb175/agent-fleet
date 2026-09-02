@@ -66,6 +66,13 @@ printf '%s\n' "$TID" > "$CACHE/panes/%12.task"
 dprev="$(inbox --preview 'PANE:%12|done')"
 check "done preview shows the diffstat" "grep -q 'newfile.txt' <<<\"\$dprev\""
 
+# The normal done flow COMMITS its work — the diffstat must still show it
+# (diff vs merge-base with the repo branch, not vs the worktree's own HEAD).
+git -C "$WORK/wt" -c user.email=t@t -c user.name=t commit -qm probe
+# shellcheck disable=SC2034
+dprev2="$(inbox --preview 'PANE:%12|done')"
+check "committed task work still previews" "grep -q 'newfile.txt' <<<\"\$dprev2\""
+
 # --- inline answers (#7) -----------------------------------------------------
 # A pane genuinely blocked on read(1): approve sends Enter, text sends a reply.
 ap="$(tx split-window -d -P -F '#{pane_id}' -t t: \
@@ -85,9 +92,9 @@ inbox --answer approve "$akey" >/dev/null
 for _ in $(seq 1 20); do [[ -s "$WORK/ans1" ]] && break; sleep 0.2; done
 check "approve keyed the waiting pane" "[[ \"\$(cat '$WORK/ans1' 2>/dev/null)\" == 'answered:' ]]"
 
-inbox --answer text "$tkey" "yes please" >/dev/null
+inbox --answer text "$tkey" "yes please;" >/dev/null
 for _ in $(seq 1 20); do [[ -s "$WORK/ans2" ]] && break; sleep 0.2; done
-check "free-text reply reached the pane" "[[ \"\$(cat '$WORK/ans2' 2>/dev/null)\" == 'answered:yes please' ]]"
+check "free-text reply arrives whole (incl. trailing ;)" "[[ \"\$(cat '$WORK/ans2' 2>/dev/null)\" == 'answered:yes please;' ]]"
 
 # Staleness guardrail: content changed under the row -> refused, nothing sent.
 sp2="$(tx split-window -d -P -F '#{pane_id}' -t t: \

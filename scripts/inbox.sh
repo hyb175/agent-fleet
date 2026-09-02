@@ -37,12 +37,15 @@ tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 SNAP="$AF_CACHE_DIR/fleet.snapshot"
 
-# Fingerprint of what the user is looking at: the pane tail, whitespace-
-# normalized. Claude's wait prompts are static (no live timer), so a changed
-# fingerprint means the context moved on.
+# Fingerprint of what the user is looking at: the FULL visible pane,
+# whitespace-normalized. Full, not a tail — permission dialogs share their
+# last lines (options + hint), so a tail hash would false-pass across two
+# different questions of the same shape. Claude's wait prompts are static
+# (no live timer), so a changed fingerprint means the context moved on.
 pane_fp() {  # <pane> -> checksum, empty when uncapturable
-  tx capture-pane -p -t "$1" 2>/dev/null | sed -e 's/[[:space:]]*$//' | tail -6 \
-    | cksum 2>/dev/null | awk '{print $1}' || true
+  local cap=""
+  cap="$(tx capture-pane -p -t "$1" 2>/dev/null)" || { printf ''; return 0; }
+  printf '%s' "$cap" | sed -e 's/[[:space:]]*$//' | cksum | awk '{print $1}'
 }
 
 # Row key: PANE:<pane>|<state>|<fingerprint>. '|' is safe — pane ids, states
@@ -95,6 +98,9 @@ answer() {  # <approve|deny|text> <key> [reply]
     approve) tx send-keys -t "$pane" Enter ;;
     deny)    tx send-keys -t "$pane" Escape ;;
     text)    [[ -n "$reply" ]] || refuse "empty reply"
+             # tmux strips an unescaped trailing ';' from an argv element (it
+             # terminates the command) — escape it so the reply arrives whole.
+             [[ "$reply" == *';' ]] && reply="${reply%;}\;"
              tx send-keys -t "$pane" -l -- "$reply" && tx send-keys -t "$pane" Enter ;;
     *)       refuse "unknown answer '$how'" ;;
   esac
@@ -127,8 +133,24 @@ preview() {  # <key: PANE:<pane>|<state>|<fp>>
       wt="$(awk '$1=="worktree"{print $2; exit}' "$AF_CACHE_DIR/tasks/$tid" 2>/dev/null || true)"
     fi
     if [[ -n "$wt" && -d "$wt" ]]; then
-      printf '\033[1mdiff vs %s\033[0m\n' "$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null || echo '?')"
-      git -C "$wt" diff --stat HEAD 2>/dev/null | tail -20
+      # The task's WHOLE delta: committed work diffed from the merge-base
+      # with the repo's current branch (an agent that commits at the end —
+      # the normal done state — would show an empty vs-HEAD stat), plus any
+      # uncommitted leftovers.
+      local repo="" branch="" mb="" base_label="HEAD"
+      repo="$(awk '$1=="repo"{sub(/^repo /,""); print; exit}' "$AF_CACHE_DIR/tasks/$tid" 2>/dev/null || true)"
+      branch="$(awk '$1=="branch"{sub(/^branch /,""); print; exit}' "$AF_CACHE_DIR/tasks/$tid" 2>/dev/null || true)"
+      if [[ -n "$repo" && -n "$branch" ]]; then
+        mb="$(git -C "$repo" merge-base "$branch" HEAD 2>/dev/null || true)"
+        base_label="$(git -C "$repo" branch --show-current 2>/dev/null || echo 'base')"
+      fi
+      if [[ -n "$mb" ]]; then
+        printf '\033[1mdiff vs %s\033[0m\n' "$base_label"
+        git -C "$wt" diff --stat "$mb" 2>/dev/null | tail -20
+      else
+        printf '\033[1muncommitted changes\033[0m\n'
+        git -C "$wt" diff --stat HEAD 2>/dev/null | tail -20
+      fi
       local unc; unc="$(git -C "$wt" status --porcelain 2>/dev/null | head -5)"
       if [[ -n "$unc" ]]; then printf '\033[2muncommitted:\033[0m\n%s\n' "$unc"; fi
       return 0

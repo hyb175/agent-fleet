@@ -50,7 +50,9 @@ body="${intent:+$intent — }$label $msg"
 # characters that can break out of it (intents and window names are user-typed).
 body="${body//\\/}"; body="${body//\"/}"
 
-jump="env AGENT_FLEET_SOCKET='$socket' '$AF' goto '$pane'"
+# %q, not hand-rolled quotes: socket and the checkout path are user-
+# controlled, and this string runs under sh (-execute) or eval (action path).
+printf -v jump 'env AGENT_FLEET_SOCKET=%q %q goto %q' "$socket" "$AF" "$pane"
 
 if command -v terminal-notifier >/dev/null 2>&1; then
   terminal-notifier -title "agent-fleet" -message "$body" -execute "$jump" >/dev/null 2>&1 || true
