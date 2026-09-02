@@ -88,6 +88,8 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Picker** (`Prefix o`) — fzf popup to jump to an agent, switch workspaces, or spawn one in a directory. `Prefix w` opens the workspace switcher.
 
+**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach.
+
 **Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place.
 
 ```
@@ -226,6 +228,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 | Key | Action |
 | --- | --- |
 | `Prefix o` | Open the picker (fleet/spaces/connect; `Tab` cycles, `^f`/`^s`/`^z` jump). Fleet view lists agents most-urgent-first. |
+| `Prefix i` | Open the inbox — every `wait`/`done` agent ranked longest-suffering-first, with the pane's actual question (or the task's diffstat) previewed. `⏎` attaches, `^r` refreshes. |
 | `Prefix w` | Quick workspace switch (picker → spaces view) |
 | `Prefix f` | Picker → connect view: recent folders + unvisited siblings (git repos first). `Enter` spawns a shell workspace, `^a` with a claude agent, `^r` names it. |
 | `Prefix b` | Toggle the sidenav rail |
