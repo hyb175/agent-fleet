@@ -34,8 +34,10 @@ check "wait ranks above done" \
   "[[ \"\$(grep -n 'short wait' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'finished thing' <<<\"\$rows\" | cut -d: -f1)\" ]]"
 
 # --- previews ---------------------------------------------------------------
+# shellcheck disable=SC2034 # rprev read inside the eval'd check() condition below
+rprev="$(inbox --preview 'PANE:devbox/%9|wait')"
 check "remote preview shows the reduced-context note" \
-  "inbox --preview 'PANE:devbox/%9|wait' | grep -q 'remote agent on devbox'"
+  "grep -q 'remote agent on devbox' <<<\"\$rprev\""
 
 # wait preview = live pane tail.
 boot_server t "$WORK"
@@ -46,8 +48,10 @@ kill "$(cat "$CACHE/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null || true
 for _ in $(seq 1 30); do [[ -d "$CACHE/snapshotd.lock" ]] || break; sleep 0.2; done
 wp="$(tx split-window -d -P -F '#{pane_id}' -t t: 'bash -c "echo may I run rm -rf scratch?; sleep 60"')"
 sleep 0.5
+# shellcheck disable=SC2034 # wprev read inside the eval'd check() condition below
+wprev="$(inbox --preview "PANE:$wp|wait")"
 check "wait preview shows the pane question" \
-  "inbox --preview 'PANE:$wp|wait' | grep -q 'may I run rm -rf scratch?'"
+  "grep -q 'may I run rm -rf scratch?' <<<\"\$wprev\""
 
 # done preview = worktree diffstat when the task has one.
 REPODIR="$WORK/repo"; mkdir -p "$REPODIR"

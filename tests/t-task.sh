@@ -49,7 +49,9 @@ wait_for 10 "grep -q 'flaky' '$WORK/claude.argv'"
 check "prompt received by the agent verbatim" \
   "grep -qx 'Fix the flaky parser test' '$WORK/claude.argv'"
 [[ -f "$WORK/claude.argv" ]] || { echo "--- start command ---"; printf '%s\n' "$starts"; }
-check "task show resolves by pane id" "'$AF' task show '$pane' | grep -qx 'id $tid'"
+# shellcheck disable=SC2034 # shown read inside the eval'd check() condition below
+shown="$(AGENT_FLEET_SOCKET="$SOCK" "$AF" task show "$pane")"
+check "task show resolves by pane id" "grep -qx 'id $tid' <<<\"\$shown\""
 
 # --- a multi-line prompt survives the default-shell parse ---------------------
 # The prompt travels as a window environment variable, so no shell (sh, dash,

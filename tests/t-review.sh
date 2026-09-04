@@ -55,9 +55,15 @@ check "send-back to a dead session refused" "[[ $rc -ne 0 ]] && grep -q 'agent s
 
 # --- merge --------------------------------------------------------------------
 af review "$T1" --merge >/dev/null 2>&1
-check "merge landed on main" "git -C '$REPODIR' log --oneline -3 | grep -q 'feature'"
+# Captured, not piped: grep -q on a live git-log pipe SIGPIPEs under pipefail
+# (CONTRIBUTING #3 — this exact check flaked on the slower macOS runner).
+# shellcheck disable=SC2034 # mlog read inside the eval'd check() condition below
+mlog="$(git -C "$REPODIR" log --oneline -3)"
+check "merge landed on main" "grep -q 'feature' <<<\"\$mlog\""
 check "task marked merged" "grep -q '^state merged ' '$REC'"
-check "clean hint printed on mark" "af task show '$T1' | grep -q 'worktree'"
+# shellcheck disable=SC2034 # shown read inside the eval'd check() condition below
+shown="$(af task show "$T1")"
+check "clean hint printed on mark" "grep -q 'worktree' <<<\"\$shown\""
 
 # Merged task now cleans (branch merged, agent dead).
 af task clean "$T1" >/dev/null
