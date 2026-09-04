@@ -88,7 +88,7 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Picker** (`Prefix o`) — fzf popup to jump to an agent, switch workspaces, or spawn one in a directory. `Prefix w` opens the workspace switcher.
 
-**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach.
+**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), or `^v` a done task straight into review.
 
 **Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place.
 
@@ -198,6 +198,7 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, worktree/branch, state history). |
 | `agent-fleet task done\|drop <id\|%pane>` | Mark a task terminal (merged / abandoned) — the gate `clean` requires. |
 | `agent-fleet task clean [<id\|%pane>] [--dry-run] [--force] [--keep-branch]` | Reclaim terminal tasks' worktrees and branches. Refuses dirty trees and unmerged branches without `--force` — unreviewed work is never eaten silently. |
+| `agent-fleet review <id\|%pane> [--diff-only\|--pr\|--merge\|--send <notes>]` | Review a done task's diff (vs its merge-base, `delta` when installed), then act: open a PR from the task branch (records non-terminal state `pr` — mark `done` after it merges), merge locally (marks `merged`, feeding `clean`), or send notes back into the live agent session. No flag: diff + interactive menu. Also `^v` on a done inbox row. |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (`Prefix Tab`); toggles between two. |
 | `agent-fleet rename-workspace [<old>] <new>` | Rename a workspace; agents named after it follow. |

@@ -116,6 +116,19 @@ ask() {  # <key> — free-text prompt inside the popup, then send
   answer text "$key" "$reply"
 }
 
+review() {  # <key> — route a done row into `af review` (diff + action menu)
+  local key="${1#PANE:}" pane state _fp
+  IFS='|' read -r pane state _fp <<<"$key"
+  refuse() { echo "no review: $1"; sleep 1.5; exit 1; }
+  [[ "$pane" == */* ]] && refuse "remote task — review it on ${pane%%/*}"
+  [[ "$state" == "done" ]] || refuse "reviews are for done tasks (this row is '$state')"
+  # No exec: outcomes (PR URL, refusals, merge errors) must survive until the
+  # user has read them — fzf repaints the instant this returns.
+  "$AF" review "$pane" || true
+  printf '\n  press any key to return to the inbox… '
+  IFS= read -r -n1 -s _ || true
+}
+
 preview() {  # <key: PANE:<pane>|<state>|<fp>>
   local key="${1#PANE:}" pane state _fp
   IFS='|' read -r pane state _fp <<<"$key"
@@ -167,6 +180,7 @@ case "${1:-}" in
   --preview) preview "${2:-}"; exit 0 ;;
   --answer)  answer "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
   --ask)     ask "${2:-}"; exit 0 ;;
+  --review)  review "${2:-}"; exit 0 ;;
 esac
 
 if ! command -v fzf >/dev/null 2>&1; then
@@ -178,7 +192,7 @@ fi
 sel="$(rows | fzf \
   --ansi --no-sort --reverse --cycle --no-scrollbar \
   --delimiter=$'\t' --with-nth=2.. \
-  --header='inbox · ⏎ attach · ^y approve · ^n deny · ^t reply · ^r refresh' \
+  --header='inbox · ⏎ attach · ^y approve · ^n deny · ^t reply · ^v review · ^r refresh' \
   --prompt='◆ ' \
   --preview="'$0' --preview {1}" \
   --preview-window=down,55%,border-top \
@@ -186,6 +200,7 @@ sel="$(rows | fzf \
   --bind="ctrl-y:execute('$0' --answer approve {1})+reload('$0' --rows)" \
   --bind="ctrl-n:execute('$0' --answer deny {1})+reload('$0' --rows)" \
   --bind="ctrl-t:execute('$0' --ask {1})+reload('$0' --rows)" \
+  --bind="ctrl-v:execute('$0' --review {1})+reload('$0' --rows)" \
   --color="bg+:$AF_THEME_HL,fg+:$AF_THEME_FG,hl:$AF_THEME_ACCENT,hl+:$AF_THEME_ACCENT,pointer:$AF_THEME_ACCENT,prompt:$AF_THEME_ACCENT,info:$AF_THEME_MUTED,header:$AF_THEME_MUTED,border:$AF_THEME_MUTED,gutter:-1")" \
   || exit 0
 [[ -z "$sel" ]] && exit 0
