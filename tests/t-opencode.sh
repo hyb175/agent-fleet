@@ -68,7 +68,8 @@ check "save records kind opencode" "grep -q 'opencode' '$CACHE/fleet.state'"
 
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"
-sleep 0.6
+# Poll, don't nap: respawn-pane lands whenever the slow runner schedules it.
+poll_until 20 "tx list-panes -t xwork -F '#{pane_start_command}' 2>/dev/null | grep -c 'opencode --session'"
 # shellcheck disable=SC2034 # starts read inside the eval'd check() conditions below
 starts="$(tx list-panes -t xwork -F '#{pane_start_command}')"
 check "restore relaunches opencode --session" "grep -q 'opencode --session $UUID' <<<\"\$starts\""

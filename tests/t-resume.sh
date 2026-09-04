@@ -39,7 +39,7 @@ tx kill-server; sleep 0.4
 printf 'junk\n'      > "$CACHE/panes/%0.status"
 printf 'stale-sid\n' > "$CACHE/panes/%1.session"
 "$REPO/scripts/persist-restore.sh"
-sleep 0.6
+poll_until 20 "tx list-panes -t work -F '#{pane_start_command}' 2>/dev/null | grep -c 'claude --resume'"
 check "stale decoys purged on boot" "[[ ! -f '$CACHE/panes/%0.status' && ! -f '$CACHE/panes/%1.session' ]]"
 starts="$(tx list-panes -t work -F '#{pane_start_command}')"   # buffered: see t-staleness pipefail note
 check "respawned with claude --resume" "grep -q 'claude --resume $UUID' <<<\"\$starts\""

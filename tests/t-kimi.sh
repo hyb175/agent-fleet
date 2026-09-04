@@ -58,7 +58,7 @@ check "save records the session id" "grep -q '$UUID' '$CACHE/fleet.state'"
 
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"
-sleep 0.6
+poll_until 20 "tx list-panes -t kwork -F '#{pane_start_command}' 2>/dev/null | grep -c 'kimi --session'"
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions below
 starts="$(tx list-panes -t kwork -F '#{pane_start_command}')"
 check "restore relaunches kimi --session" "grep -q 'kimi --session $UUID' <<<\"\$starts\""

@@ -55,7 +55,7 @@ check "save records kind codex" "grep -q 'codex' '$CACHE/fleet.state'"
 
 tx kill-server; sleep 0.4
 "$REPO/scripts/persist-restore.sh"
-sleep 0.6
+poll_until 20 "tx list-panes -t xwork -F '#{pane_start_command}' 2>/dev/null | grep -c 'codex resume'"
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions below
 starts="$(tx list-panes -t xwork -F '#{pane_start_command}')"
 check "restore relaunches codex resume" "grep -q 'codex resume $UUID' <<<\"\$starts\""

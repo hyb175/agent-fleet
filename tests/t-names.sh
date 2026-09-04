@@ -12,17 +12,18 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 echo "t-names:"
 boot_server t "$WORK"
 
-# fresh window -> shell name
+# fresh window -> shell name (poll: pane-shell's rename lands whenever the
+# launcher gets scheduled — a fixed nap flaked twice on slow macOS runners)
 wid="$(tx new-window -d -P -F '#{window_id}' -t t:)"
-sleep 1.5
-wname="$(tx display-message -p -t "$wid" '#{window_name}')"
 want="$(basename "${SHELL:-sh}")"
+poll_until 20 "[[ \"\$(tx display-message -p -t '$wid' '#{window_name}')\" == '$want' ]]"
+wname="$(tx display-message -p -t "$wid" '#{window_name}')"
 check "new window named after the shell (got: $wname)" "[[ '$wname' == '$want' ]]"
 
 # split inside a named window keeps the name
 awid="$(tx new-window -d -P -F '#{window_id}' -t t: -n keepme 'sleep 30')"
 tx split-window -d -t "$awid"
-sleep 1.5
+sleep 1.5   # nothing to poll FOR — the assertion is that the name does NOT change
 check "split keeps the window's name" "[[ \"\$(tx display-message -p -t '$awid' '#{window_name}')\" == keepme ]]"
 
 # picker disambiguation from a fabricated snapshot (8-field A records)

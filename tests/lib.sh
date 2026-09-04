@@ -46,6 +46,19 @@ wait_for() {  # <secs> <cond>
   return 1
 }
 
+# poll_until [timeout_s] "<condition>" — re-eval a condition until true.
+# Slow CI runners (macOS especially) outrun fixed sleeps; poll instead of
+# napping wherever a check waits on the server/agents to catch up.
+poll_until() {
+  local t="${1:-10}"; shift
+  local cond="$1" i
+  for (( i = 0; i < t * 5; i++ )); do
+    if eval "$cond" >/dev/null 2>&1; then return 0; fi
+    sleep 0.2
+  done
+  eval "$cond" >/dev/null 2>&1
+}
+
 # Boot a conf-loaded server with the fleet env pushed (most tests want this).
 boot_server() {  # [session] [dir]
   tmux -L "$SOCK" -f "$REPO/conf/agent-fleet.conf" new-session -d -s "${1:-t}" -c "${2:-$WORK}"
