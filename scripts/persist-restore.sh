@@ -199,11 +199,16 @@ for s in "${sess_order[@]}"; do
       while (( j < ${#sids[@]} )); do
         sid="${sids[$j]}"; scwd="${cwds[$j]}"; skind="${kinds[$j]:--}"; stask="${tasks[$j]:--}"; j=$(( j + 1 ))
         has_sid=1; [[ "$sid" == "-" || -z "$sid" ]] && has_sid=0
+        # The id lands inside a shell-parsed relaunch string; every supported
+        # CLI mints ids from [A-Za-z0-9._-] (hermes: [0-9a-f_]), and hermes'
+        # upstream explicitly does NOT validate ids arriving via its API
+        # server — an out-of-charset id starts the agent fresh instead.
+        [[ "$sid" == *[!A-Za-z0-9._-]* ]] && has_sid=0
         # A pane with no saved session-id is only relaunched when it WAS an
         # agent of a kind we know how to start — then it starts fresh (below).
         # A plain shell pane (kind '-' and no id) stays a shell.
         if (( ! has_sid )); then
-          case "$skind" in claude|kimi|codex|opencode) : ;; *) continue ;; esac
+          case "$skind" in claude|kimi|codex|opencode|hermes) : ;; *) continue ;; esac
         fi
         # Pre-kind state files carry no kind; every hooked agent then was claude.
         [[ "$skind" == "-" || -z "$skind" ]] && skind="claude"
@@ -226,6 +231,7 @@ for s in "${sess_order[@]}"; do
           kimi)     (( has_sid )) && rc="kimi --session $sid" || rc="kimi" ;;
           codex)    (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
           opencode) (( has_sid )) && rc="opencode --session $sid" || rc="opencode" ;;
+          hermes)   (( has_sid )) && rc="hermes --resume $sid" || rc="hermes" ;;
           *)     (( has_sid )) && rc="claude --resume $sid" || rc="claude"
                  # Sandbox-rung task (#11): relaunch with ITS overlay (hooks +
                  # sandbox superset) so a reboot never quietly drops the rung.

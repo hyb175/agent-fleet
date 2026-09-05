@@ -1295,6 +1295,154 @@ manage_hooks_block() {  # <tool> <conf> <install|remove|status> [post-install no
   esac
 }
 
+# hermes-hooks (#15) — hermes' shell hooks in ~/.hermes/config.yaml. UNLIKE
+# the TOML tiers there is NO fenced block: hermes re-serializes config.yaml
+# through PyYAML on many ordinary actions ("allow permanently" at an approval,
+# the model picker, `hermes update`), stripping every comment — a fence would
+# not survive the first rewrite. Identity therefore lives in the DATA: each
+# entry's command string carries agent-status-hook.sh, which is also exactly
+# what hermes' consent allowlist keys on (event, command).
+# Event map (source-verified, hermes v0.19.0): on_session_start -> start
+# (identity only; does not fire on --resume), pre_llm_call + pre_tool_call ->
+# working, pre_approval_request -> wait (observer — hermes ignores its
+# output), on_session_end -> done (fires at every turn end: hermes' Stop).
+# The status hook prints nothing on stdout, so the pre_tool_call handler can
+# never emit a block decision. Hooks inherit the parent env (TMUX_PANE rides
+# through) and read snake_case JSON with session_id on stdin — the same
+# contract the hook already speaks.
+hermes_hooks_yaml() {
+  local hook="$ROOT_DIR/scripts/agent-status-hook.sh" ev st
+  echo "hooks:"
+  for ev in "on_session_start start" "pre_llm_call working" "pre_tool_call working" \
+            "pre_approval_request wait" "on_session_end done"; do
+    st="${ev##* }"; ev="${ev%% *}"
+    printf '  %s:\n    - command: "%s %s %s hermes"\n      timeout: 10\n' \
+      "$ev" "$hook" "$st" "$SOCKET"
+  done
+}
+
+# Strip fleet-owned entries from a hermes config: drop each list item whose
+# command mentions the status hook (plus its more-indented continuation
+# lines), then any event key left without items, then a bare hooks: — all
+# computed structurally, because a PyYAML rewrite may have changed quoting,
+# key order, and indentation since install. Only the command string is
+# stable identity. Emits the filtered config on stdout.
+hermes_hooks_strip() {
+  # The identity regex is built with -v so a single-quote char class can live
+  # inside the single-quoted program: the hook path must be the command
+  # values FIRST token (optionally PyYAML-quoted) — a user wrapper that only
+  # passes our hook as an ARGUMENT must never be stripped.
+  awk -v sq="'" '
+    function ind(l,  n) { n = 0; while (substr(l, n + 1, 1) == " ") n++; return n }
+    BEGIN {
+      skip = -1
+      pat = "-[[:space:]]*command:[[:space:]]*[\"" sq "]?[^ \"" sq "]*agent-status-hook\\.sh([\"" sq "]|[[:space:]]|$)"
+    }
+    {
+      n = ind($0)
+      if (skip >= 0) {
+        if ($0 ~ /^[[:space:]]*$/ || n > skip) next
+        skip = -1
+      }
+      if ($0 ~ pat) { skip = n; next }
+      lines[++cnt] = $0
+    }
+    END {
+      # The hooks: span on the FILTERED lines.
+      hstart = 0; hend = 0
+      for (i = 1; i <= cnt; i++) if (lines[i] ~ /^hooks:[[:space:]]*$/) { hstart = i; break }
+      if (hstart) {
+        hend = cnt
+        for (i = hstart + 1; i <= cnt; i++) {
+          if (lines[i] ~ /^[[:space:]]*$/) continue
+          if (ind(lines[i]) == 0) { hend = i - 1; break }
+        }
+      }
+      # Bottom-up: a key-only line inside the span (or hooks: itself) with no
+      # kept child below it has lost everything — drop. A child is a deeper-
+      # indented line, OR a "- " list item at the SAME indent: PyYAML dumps
+      # block sequences at the parent keys own indent level. (No apostrophes
+      # in these comments — the whole program sits in single quotes.)
+      nextind = -1; nextitem = 0
+      for (i = cnt; i >= 1; i--) {
+        drop = 0
+        if (hstart && i >= hstart && i <= hend \
+            && lines[i] ~ /^[[:space:]]*[A-Za-z0-9_]+:[[:space:]]*(#.*)?$/) {
+          n = ind(lines[i])
+          if (!(nextind > n || (nextind == n && nextitem))) drop = 1
+        }
+        if (!drop) {
+          keepflag[i] = 1
+          if (lines[i] !~ /^[[:space:]]*$/) {
+            nextind = ind(lines[i])
+            nextitem = (lines[i] ~ /^[[:space:]]*-/) ? 1 : 0
+          }
+        }
+      }
+      for (i = 1; i <= cnt; i++) if (keepflag[i]) print lines[i]
+    }
+  ' "$1"
+}
+
+cmd_hermes_hooks() {
+  local sub="${1:-install}"
+  local conf="${HERMES_HOME:-$HOME/.hermes}/config.yaml"
+  local tmp="$conf.af.$$"
+  case "$sub" in
+    status)
+      if [[ -f "$conf" ]] && grep -q 'agent-status-hook.sh' "$conf"; then
+        echo "installed ($conf)"
+      else
+        echo "not installed"
+      fi
+      return 0 ;;
+    remove)
+      [[ -f "$conf" ]] || { echo "nothing to remove ($conf not found)"; return 0; }
+      grep -q 'agent-status-hook.sh' "$conf" || { echo "no fleet hooks in $conf"; return 0; }
+      # shellcheck disable=SC2015 # chained error trap: strip OR mv failing must hit the handler
+      hermes_hooks_strip "$conf" > "$tmp" && mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
+      if grep -q 'agent-status-hook.sh' "$conf"; then
+        echo "warning: some fleet entries survived (unexpected layout) — 'hermes hooks list' shows what's left" >&2
+      fi
+      echo "hermes hooks removed from $conf"
+      return 0 ;;
+    install) ;;
+    *) echo "usage: agent-fleet hermes-hooks [install|remove|status]" >&2; exit 2 ;;
+  esac
+  if [[ ! -f "$conf" ]]; then
+    echo "error: $conf not found — run hermes once so it creates its config, then retry" >&2
+    exit 1
+  fi
+  # Idempotent re-install: strip our entries first (also migrates the block
+  # when the repo path or socket changed).
+  hermes_hooks_strip "$conf" > "$tmp" || { rm -f "$tmp"; exit 1; }
+  # An EMPTY inline section (hooks: {} / hooks: null — PyYAML dumps an
+  # emptied map that way) is absence, not foreign config: replace it.
+  if grep -Eq '^hooks:[[:space:]]*(\{\}|null)[[:space:]]*$' "$tmp"; then
+    # shellcheck disable=SC2015 # chained error trap: sed OR mv failing must hit the handler
+    sed -E '/^hooks:[[:space:]]*(\{\}|null)[[:space:]]*$/d' "$tmp" > "$tmp.2" && mv "$tmp.2" "$tmp" \
+      || { rm -f "$tmp" "$tmp.2"; exit 1; }
+  fi
+  if grep -Eq '^hooks:' "$tmp"; then
+    # A hooks: section we don't own. Merging foreign YAML from bash risks
+    # corrupting the user's config — refuse, print the entries to add by hand.
+    rm -f "$tmp"
+    echo "error: $conf already has a hooks: section — merge these entries into it yourself" >&2
+    echo "(stale fleet entries? run: agent-fleet hermes-hooks remove first):" >&2
+    hermes_hooks_yaml >&2
+    exit 1
+  fi
+  if [[ -s "$tmp" && "$(tail -c1 "$tmp")" != "" ]]; then echo >> "$tmp"; fi
+  if [[ -s "$tmp" && -n "$(tail -n1 "$tmp")" ]]; then echo >> "$tmp"; fi
+  hermes_hooks_yaml >> "$tmp"
+  mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
+  echo "hermes hooks installed in $conf (remove with: agent-fleet hermes-hooks remove)"
+  echo "note: hermes trust-gates shell hooks — these stay INERT until you approve each"
+  echo "      (event, command) pair: hermes prompts at the next interactive session;"
+  echo "      'hermes hooks list' shows pending/approved. Do NOT set hooks_auto_accept"
+  echo "      unless you want every future hook trusted wholesale."
+}
+
 # kimi-hooks — kimi's flat [[hooks]] entries in ~/.kimi/config.toml.
 # Events: UserPromptSubmit/PreToolUse/PermissionResult -> working,
 # PermissionRequest -> wait, Stop -> done.
@@ -2376,6 +2524,11 @@ Verbs:
                                    Manage the fleet status plugin at
                                    ~/.config/opencode/plugins/agent-fleet.js (opencode runs
                                    plugins at startup — no trust gate; the file is tiny, read it).
+  agent-fleet hermes-hooks [install|remove|status]
+                                   Manage the fleet shell-hook entries in ~/.hermes/config.yaml
+                                   (data-anchored, no fence — hermes rewrites its config).
+                                   Hermes trust-gates hooks: approve each pair at its next
+                                   interactive session; 'hermes hooks list' shows status.
   agent-fleet reload               Re-source the config and respawn the snapshot daemon and rails (pick up new code/binds after a pull).
   agent-fleet theme [name]         List palettes, or switch to one live (persists in ~/.config/agent-fleet/theme).
   agent-fleet config [path|edit]   Show where config lives, or open your overrides (local.conf) in \$EDITOR.
@@ -2428,6 +2581,7 @@ main() {
     pick)       cmd_pick "$@" ;;
     hooks-file) cmd_hooks_file "$@" ;;
     kimi-hooks)  cmd_kimi_hooks "$@" ;;
+    hermes-hooks) cmd_hermes_hooks "$@" ;;
     codex-hooks) cmd_codex_hooks "$@" ;;
     opencode-hooks) cmd_opencode_hooks "$@" ;;
     reload)     cmd_reload "$@" ;;
