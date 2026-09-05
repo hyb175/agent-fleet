@@ -74,4 +74,4 @@ jobs:
       # disabled globally); everything else is fixed or carries a justified
       # per-line disable. SC2086 (quoting) stays enabled.
       - name: Lint shell sources
-        run: shellcheck bin/agent-fleet scripts/*.sh shims/* tests/*.sh
+        run: shellcheck bin/agent-fleet scripts/*.sh shims/* tests/*.sh docker/*.sh

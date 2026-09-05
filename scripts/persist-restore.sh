@@ -219,6 +219,29 @@ for s in "${sess_order[@]}"; do
         fi
         [[ -z "$chosen" ]] && continue
         used+="$chosen "
+        # Container-rung task (#12): relaunching claude on the HOST would
+        # silently drop the container boundary the record still claims. Leave
+        # the pane as a shell in the right dir until container re-link lands
+        # (#13) — a shell is honest; an unboxed agent is not.
+        riso=""
+        if [[ -n "$stask" && "$stask" != "-" ]]; then
+          riso="$(awk '$1=="isolation"{print $2; exit}' "$CACHE/tasks/$stask" 2>/dev/null || true)"
+        fi
+        if [[ "$riso" == "container" ]]; then
+          # Still re-link the record to its (shell) pane and log the
+          # discontinuity — otherwise task ls presents the pre-reboot
+          # 'working' against a recycled pane id forever.
+          # shellcheck disable=SC2015 # write-then-swap idiom: mv failing must still clean up the temp
+          { grep -v '^pane ' "$CACHE/tasks/$stask" 2>/dev/null; printf 'pane %s\n' "$chosen"; } > "$CACHE/tasks/$stask.tmp.$$" \
+            && mv "$CACHE/tasks/$stask.tmp.$$" "$CACHE/tasks/$stask" 2>/dev/null \
+            || rm -f "$CACHE/tasks/$stask.tmp.$$" 2>/dev/null
+          last_state="$(grep '^state ' "$CACHE/tasks/$stask" 2>/dev/null | tail -1)"
+          if [[ "$last_state" != "state idle "* ]]; then
+            printf -v now_ts '%(%s)T' -1
+            printf 'state idle %s\n' "$now_ts" >> "$CACHE/tasks/$stask" 2>/dev/null || true
+          fi
+          continue
+        fi
         # Relaunch command by kind: resume the saved session when we have an id,
         # otherwise start the agent FRESH in the saved dir (better than a shell).
         # kimi/codex hooks are install-wide, so their fresh form takes no flag.

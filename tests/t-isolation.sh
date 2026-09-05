@@ -29,6 +29,7 @@ printf '#!/usr/bin/env bash\nsleep 300\n' > "$FAKEBIN/fakedex"
 printf '#!/bin/sh\nexit 0\n' > "$FAKEBIN/bwrap"
 printf '#!/bin/sh\nexit 0\n' > "$FAKEBIN/socat"
 printf '#!/bin/sh\nexit 0\n' > "$FAKEBIN/sandbox-exec"
+printf '#!/bin/sh\nexit 1\n' > "$FAKEBIN/docker"    # daemon "down": container degrades here
 chmod +x "$FAKEBIN"/*
 export PATH="$FAKEBIN:$PATH"
 
@@ -98,9 +99,9 @@ out="$(AGENT_FLEET_CMD=fakedex af task "not claude" --repo "$REPODIR" --isolatio
 check "non-claude agent: claude-only note" "grep -q 'claude-only' '$WORK/deg1.err'"
 check "non-claude agent: record says worktree" "[[ \"\$(rec_of isolation $T)\" == 'worktree' ]]"
 
-out="$(af task "container someday" --repo "$REPODIR" --isolation container 2>"$WORK/deg2.err")"; T="${out%% *}"
-check "container: not-built note" "grep -q 'not built yet' '$WORK/deg2.err'"
-check "container: degrades to sandbox" "[[ \"\$(rec_of isolation $T)\" == 'sandbox' ]]"
+out="$(af task "no docker here" --repo "$REPODIR" --isolation container 2>"$WORK/deg2.err")"; T="${out%% *}"
+check "container without docker: note" "grep -q 'docker is not available' '$WORK/deg2.err'"
+check "container without docker: degrades to sandbox" "[[ \"\$(rec_of isolation $T)\" == 'sandbox' ]]"
 
 # Missing OS deps -> worktree with a note. Linux-only: macOS Seatbelt is
 # built-in, so the deps-missing branch is unreachable there in reality too.

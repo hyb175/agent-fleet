@@ -24,6 +24,11 @@ XDG_STATE_HOME="$(cd "$(mktemp -d)" && pwd -P)"; export XDG_STATE_HOME
 # The running fleet exports AGENT_FLEET_THEME into every pane's env; unset it so
 # a suite launched from inside a themed fleet still resolves the default.
 unset AGENT_FLEET_THEME
+# Pin the default-shell for test servers: window commands run under it, and a
+# login fish rebuilds PATH (93db864) — dropping the fake claude/docker stubs a
+# test put ahead of the real binaries. /bin/sh preserves the inherited PATH, so
+# stubs stay stubs. Tests about shell behavior (t-shim) pin SHELL per call.
+export SHELL=/bin/sh
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 
 tx() { tmux -L "$SOCK" "$@"; }
