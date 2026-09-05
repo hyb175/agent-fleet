@@ -1558,6 +1558,7 @@ Usage: agent-fleet task "<prompt>" [options]
        agent-fleet task show <task-id|%pane>
        agent-fleet task done|drop <task-id|%pane>
        agent-fleet task clean [<task-id|%pane>] [--dry-run] [--force] [--keep-branch]
+       agent-fleet task history   (alias: agent-fleet history)
 
 Spawn an interactive agent from an intent. Creates (or reuses) the workspace
 for the target directory, starts a hooked $DEFAULT_AGENT_CMD agent with the
@@ -1576,7 +1577,9 @@ Options (create form):
 Lifecycle: 'done' (merged) / 'drop' (abandoned) mark a task terminal; 'clean'
 reclaims terminal tasks' worktrees and branches — refusing dirty trees and
 unmerged branches unless --force. 'ls' shows [branch] with * dirty, ^ unmerged,
-and lists orphaned worktrees.
+and lists orphaned worktrees. 'history' lists finished tasks (newest first,
+grouped per day) with duration, total wait time, and outcome — merged /
+abandoned / pr; abandoned~ marks an agent killed without an outcome.
 
 Records live in $AF_TASKS_DIR; worktrees under $AF_WORKTREES_DIR.
 EOF
@@ -1799,6 +1802,106 @@ task_orphans() {
   done
 }
 
+# task history (#10): what ran and what came of it, read entirely from task
+# records — so it survives fleet restarts and reboots, and needs no server.
+task_history() {
+  [[ $# -eq 0 ]] || { echo "error: unexpected arg: $1 (task history takes none)" >&2; exit 2; }
+  [[ -d "$AF_TASKS_DIR" ]] || { echo "(no completed tasks)"; return 0; }
+  # Liveness (same discipline as task_ls: pane exists AND is tagged with THIS
+  # id — restore rewrites the record's pane line, so the key stays valid across
+  # reboots). A non-terminal record with a dead pane was killed without an
+  # outcome: history shows it as abandoned~ rather than losing it.
+  local -A LIVE_T=()
+  local lp lt
+  if server_up; then
+    while read -r lp lt; do
+      [[ -n "$lp" && -n "$lt" ]] && LIVE_T[$lp]="$lt"
+    done < <(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null)
+  fi
+  local f k v tid intent dir pane created
+  local sname sepoch prev pepoch term tepoch prepoch postpr lastepoch
+  local outcome ended wsum dur day wcol repob
+  local -a rows=()
+  local -A DAY_N=() DAY_M=()
+  for f in "$AF_TASKS_DIR"/t*; do
+    [[ -e "$f" ]] || continue
+    case "$f" in *.tmp.*) continue ;; esac
+    tid=""; intent=""; dir=""; pane=""; created=""
+    prev=""; pepoch=0; term=""; tepoch=0; prepoch=0; postpr=""; lastepoch=0; wsum=0
+    while read -r k v; do
+      case "$k" in
+        id)      tid="$v" ;;
+        intent)  intent="$v" ;;
+        dir)     dir="$v" ;;
+        pane)    pane="$v" ;;
+        created) created="$v" ;;
+        state)
+          sname="${v%% *}"; sepoch="${v##* }"
+          [[ -z "$sepoch" || "$sepoch" == *[!0-9]* ]] && sepoch=0
+          # Wait total: close the open wait at the NEXT transition. Restore
+          # appends 'state idle' on reboot, so a straddling wait closes there.
+          # A coerced-to-0 epoch (corrupt line) is unknown, not 1970 — never
+          # let it open or close an interval.
+          if [[ "$prev" == "wait" ]] && (( pepoch > 0 && sepoch > pepoch )); then
+            wsum=$(( wsum + sepoch - pepoch ))
+          fi
+          prev="$sname"; pepoch="$sepoch"
+          (( sepoch > lastepoch )) && lastepoch="$sepoch"
+          # Outcome = the LAST merged/abandoned in the walk (task_mark can
+          # re-mark). 'cleaned' is housekeeping, never the outcome; 'pr' is
+          # an outcome only when nothing terminal ever landed. Activity AFTER
+          # a pr (send-back resumed the agent) clears its finished-ness.
+          case "$sname" in
+            merged|abandoned) term="$sname"; tepoch="$sepoch" ;;
+            pr)               prepoch="$sepoch"; postpr="" ;;
+            working|wait)     postpr=1 ;;
+          esac
+          ;;
+      esac
+    done < "$f"
+    [[ -n "$tid" ]] || continue
+    [[ -z "$created" || "$created" == *[!0-9]* ]] && created=0
+    if [[ -n "$term" ]]; then
+      outcome="$term"; ended="$tepoch"
+    elif (( prepoch > 0 )) && { [[ -z "$postpr" ]] || [[ "${LIVE_T[$pane]:-}" != "$tid" ]]; }; then
+      # An open PR is the outcome — unless the agent resumed after it (send-
+      # back) and is still alive: that's current work, not history.
+      outcome="pr"; ended="$prepoch"
+    elif [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]]; then
+      continue   # live and non-terminal: current work (task ls), not history
+    else
+      outcome="abandoned~"; ended="$lastepoch"
+    fi
+    # Corrupt outcome epochs coerce to 0: fall back to the best real signal
+    # rather than filing the row under 1970-01-01.
+    (( ended > 0 )) || ended="$lastepoch"
+    (( ended > 0 )) || ended="$created"
+    dur="-"
+    if (( created > 0 && ended >= created )); then
+      fmt_age "$(( ended - created ))"; dur="$AGE"
+    fi
+    wcol="-"
+    if (( wsum > 0 )); then fmt_age "$wsum"; wcol="w:$AGE"; fi
+    repob="${dir%/}"; repob="${repob##*/}"; [[ -n "$repob" ]] || repob="-"
+    printf -v day '%(%Y-%m-%d)T' "$ended"
+    DAY_N[$day]=$(( ${DAY_N[$day]:-0} + 1 ))
+    [[ "$outcome" == "merged" ]] && DAY_M[$day]=$(( ${DAY_M[$day]:-0} + 1 ))
+    rows+=("$(printf '%s\t%s\t  %-18s %-10s %5s %-6s %-14s %s' \
+      "$ended" "$day" "$tid" "$outcome" "$dur" "$wcol" "$repob" "${intent:--}")")
+  done
+  (( ${#rows[@]} )) || { echo "(no completed tasks)"; return 0; }
+  local line lastday="" rday rrest
+  while IFS= read -r line; do
+    rday="${line#*$'\t'}"; rday="${rday%%$'\t'*}"
+    rrest="${line#*$'\t'*$'\t'}"
+    if [[ "$rday" != "$lastday" ]]; then
+      printf '%s  %s tasks, %s merged\n' "$rday" "${DAY_N[$rday]}" "${DAY_M[$rday]:-0}"
+      lastday="$rday"
+    fi
+    printf '%s\n' "$rrest"
+  done < <(printf '%s\n' "${rows[@]}" | sort -s -t $'\t' -k1,1nr)
+}
+
 cmd_task() {
   # `task -- "<prompt>"` forces the create form — for scripted callers whose
   # prompt could collide with a subcommand ('ls', 'show') or start with '-'.
@@ -1811,6 +1914,7 @@ cmd_task() {
       "")        usage_task >&2; exit 2 ;;
       ls)        shift; task_ls "$@"; return 0 ;;
       show)      shift; task_show "$@"; return 0 ;;
+      history)   shift; task_history "$@"; return 0 ;;
       done)      shift; task_mark "${1:?usage: agent-fleet task done <task-id|%pane>}" merged; return 0 ;;
       drop)      shift; task_mark "${1:?usage: agent-fleet task drop <task-id|%pane>}" abandoned; return 0 ;;
       clean)     shift; task_clean "$@"; return 0 ;;
@@ -1947,6 +2051,7 @@ Verbs:
   agent-fleet task ls              List task records with their current state.
   agent-fleet task show <id|%pane> Print a task record (intent, dir, state history).
   agent-fleet task done|drop|clean Lifecycle: mark terminal, reclaim worktrees (see task -h).
+  agent-fleet history              Finished tasks per day: duration, wait time, outcome (task history).
   agent-fleet review <id|%pane>    Diff a done task vs its base; PR / merge / send-back (see review -h).
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
   agent-fleet back                 Jump to the previously focused pane (bound to Prefix Tab).
@@ -2007,6 +2112,7 @@ main() {
     attach|a)   cmd_attach "$@" ;;
     add)        cmd_add "$@" ;;
     task)       cmd_task "$@" ;;
+    history)    task_history "$@" ;;
     review)     cmd_review "$@" ;;
     goto)       cmd_goto "$@" ;;
     back)       cmd_back "$@" ;;
