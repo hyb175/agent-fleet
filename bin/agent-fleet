@@ -400,7 +400,8 @@ container_available() {
 task_container_stop() {
   command -v docker >/dev/null 2>&1 || return 0
   local cn cdir ids
-  cn="$(awk '$1=="container"{print $2; exit}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
+  # LAST container line wins: a restore-resume appends a fresh name (#13).
+  cn="$(awk '$1=="container"{v=$2} END{print v}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
   [[ -n "$cn" ]] && docker stop -t 2 "$cn" >/dev/null 2>&1 || true
   cdir="$(awk '$1=="containerdir"{sub(/^containerdir /,""); print; exit}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
   if [[ -n "$cdir" ]]; then
@@ -409,6 +410,69 @@ task_container_stop() {
     [[ -n "$ids" ]] && docker stop -t 2 $ids >/dev/null 2>&1 || true
   fi
   return 0
+}
+
+# build_container_cmd <name> <dir> <repo_dir> <wt_path> <agent_tail> — build
+# the container window command (#12), shared by task creation and restore's
+# _container-resume (#13). Sets CCMD (the command), CNAME (docker name; empty
+# on the devcontainer path) and CDIR_REC (devcontainer workspace to record).
+# The string runs under the user's default-shell — keep it fish/sh-compatible:
+# no $( ), no arrays, plain "quoted" expansions only.
+build_container_cmd() {
+  local name="$1" dir="$2" repo_dir="$3" wt_path="$4" agent_tail="$5"
+  local _cnow _cn
+  CCMD=""; CNAME=""; CDIR_REC=""
+  printf -v _cnow '%(%s)T' -1
+  # Docker name charset is [A-Za-z0-9_.-]; --name is raw user text and the
+  # socket is env-controlled — a space would break the ccmd parse AND the
+  # whitespace-split record line task_container_stop reads.
+  _cn="$(printf '%s' "${SOCKET}-${name}" | tr -c 'A-Za-z0-9_.-' '_')"
+  CNAME="af-${_cn}-${_cnow}"
+  if [[ -f "$repo_dir/.devcontainer/devcontainer.json" || -f "$repo_dir/.devcontainer.json" ]] \
+     && command -v devcontainer >/dev/null 2>&1; then
+    # Repo devcontainer: its config owns the environment (no firewall
+    # promise from us). Cache+scripts ride in so the status hooks work; the
+    # parent .git so the worktree's absolute-path .git file resolves (the
+    # handback); ~/.claude + the OAuth token so the agent is logged in.
+    CCMD="devcontainer up --workspace-folder \"$dir\""
+    CCMD+=" --mount \"type=bind,source=$AF_CACHE_DIR,target=$AF_CACHE_DIR\""
+    CCMD+=" --mount \"type=bind,source=$ROOT_DIR/scripts,target=$ROOT_DIR/scripts\""
+    [[ -n "$wt_path" && -d "$repo_dir/.git" ]] \
+      && CCMD+=" --mount \"type=bind,source=$repo_dir/.git,target=$repo_dir/.git\""
+    [[ -d "$HOME/.claude" ]] \
+      && CCMD+=" --mount \"type=bind,source=$HOME/.claude,target=$HOME/.claude\""
+    CCMD+=" && exec devcontainer exec --workspace-folder \"$dir\""
+    CCMD+=" env TMUX_PANE=\"\$TMUX_PANE\" AGENT_FLEET_SOCKET=\"$SOCKET\""
+    CCMD+=" CLAUDE_CODE_OAUTH_TOKEN=\"\$CLAUDE_CODE_OAUTH_TOKEN\""
+    [[ -n "${XDG_CACHE_HOME:-}" ]] && CCMD+=" XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
+    CCMD+=" $agent_tail"
+    # The devcontainer CLI names its own container but labels it with the
+    # workspace folder — record that so terminal marks can stop it.
+    CNAME=""; CDIR_REC="$dir"
+  else
+    [[ -f "$repo_dir/.devcontainer/devcontainer.json" || -f "$repo_dir/.devcontainer.json" ]] \
+      && echo "note: repo has a devcontainer but the devcontainer CLI is missing — using the default image" >&2
+    local vols envs img imgver
+    vols="-v \"$dir:$dir\""
+    [[ -n "$wt_path" && -d "$repo_dir/.git" ]] && vols+=" -v \"$repo_dir/.git:$repo_dir/.git\""
+    vols+=" -v \"$AF_CACHE_DIR:$AF_CACHE_DIR\" -v \"$ROOT_DIR/scripts:$ROOT_DIR/scripts:ro\""
+    [[ -d "$HOME/.claude" ]] && vols+=" -v \"$HOME/.claude:$HOME/.claude\""
+    envs="-e TMUX_PANE -e AF_TASK_PROMPT -e HOME -e CLAUDE_CODE_OAUTH_TOKEN"
+    envs+=" -e AGENT_FLEET_SOCKET=\"$SOCKET\" -e AF_UID=$(id -u) -e AF_GID=$(id -g)"
+    [[ -n "${XDG_CACHE_HOME:-}" ]] && envs+=" -e XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
+    # Content-keyed tag: editing docker/ (a new allowlist host, say) must
+    # take effect on the next task, not stay frozen at the first build.
+    imgver="$(cat "$ROOT_DIR/docker"/* 2>/dev/null | cksum | awk '{print $1}')"
+    img="af-default:v${imgver:-0}"
+    # Build in the PANE (progress visible; a failure is a visible dead pane,
+    # not a silent degrade). NET_ADMIN: the image's default-deny firewall.
+    # --init: claude is the container's PID 1 otherwise, and its subshells'
+    # orphans would accumulate as zombies over a long session.
+    CCMD="docker image inspect $img >/dev/null 2>&1"
+    CCMD+=" || docker build -t $img \"$ROOT_DIR/docker\" || exit 1; "
+    CCMD+="exec docker run --rm -it --init --name \"$CNAME\" --cap-add NET_ADMIN"
+    CCMD+=" $envs $vols -w \"$dir\" $img $agent_tail"
+  fi
 }
 
 # task_id_for <id|%pane> — resolve either form to a task id, or fail.
@@ -1748,18 +1812,22 @@ task_show() {
   cat "$AF_TASKS_DIR/$tid"
 }
 
-# task_record_get <tid> — fill TASK_<FIELD> vars from a record (last state wins).
+# task_record_get <tid> — fill TASK_<FIELD> vars from a record (last one wins
+# for every field — a container resume appends a new `container` line).
 task_record_get() {
   local f="$AF_TASKS_DIR/$1" k v
   TASK_STATE=""; TASK_WORKTREE=""; TASK_BRANCH=""; TASK_REPO=""; TASK_INTENT=""
+  TASK_DIR=""; TASK_SESSION=""
   [[ -f "$f" ]] || return 1
   while read -r k v; do
     case "$k" in
-      state)    TASK_STATE="${v%% *}" ;;
-      worktree) TASK_WORKTREE="$v" ;;
-      branch)   TASK_BRANCH="$v" ;;
-      repo)     TASK_REPO="$v" ;;
-      intent)   TASK_INTENT="$v" ;;   # PR titles (cmd_review)
+      state)     TASK_STATE="${v%% *}" ;;
+      worktree)  TASK_WORKTREE="$v" ;;
+      branch)    TASK_BRANCH="$v" ;;
+      repo)      TASK_REPO="$v" ;;
+      intent)    TASK_INTENT="$v" ;;   # PR titles (cmd_review)
+      dir)       TASK_DIR="$v" ;;
+      session)   TASK_SESSION="$v" ;;
     esac
   done < "$f"
   return 0
@@ -2012,6 +2080,53 @@ task_history() {
   done < <(printf '%s\n' "${rows[@]}" | sort -s -t $'\t' -k1,1nr)
 }
 
+# _container-resume <tid> (internal, #13): persist-restore points a restored
+# container task's pane here. Rebuilds the container command from the record
+# (fresh container name appended — last one wins), resumes the recorded claude
+# session when one was captured, and execs it. Docker gone at boot → visible
+# note + a shell (honest degrade; the record keeps saying container).
+cmd_container_resume() {
+  local tid="${1:?usage: agent-fleet _container-resume <task-id>}"
+  task_record_get "$tid" || { echo "no task record for $tid — dropping to a shell" >&2; exec bash -i; }
+  local dir="${TASK_DIR:-$PWD}"
+  local repo="${TASK_REPO:-$dir}" wt="${TASK_WORKTREE:-}"
+  # SECURITY: the task record is writable from INSIDE the container (the
+  # cache is bind-mounted rw for the status hooks) and everything below ends
+  # in host `bash -c`. Nothing record-sourced may reach it unvalidated — a
+  # forged `session x; curl …` line would otherwise become host code at the
+  # next reboot. Session ids are claude UUIDs; paths must be free of the
+  # metacharacters that could escape the double-quoted ccmd embeds.
+  if [[ -n "$TASK_SESSION" && ! "$TASK_SESSION" =~ ^[A-Za-z0-9-]+$ ]]; then
+    echo "note: $tid's recorded session id is not a valid id — resuming fresh" >&2
+    TASK_SESSION=""
+  fi
+  case "${dir}${repo}${wt}" in
+    *[\"\$\`\\]*)
+      echo "note: $tid's recorded paths contain shell metacharacters — dropping to a shell" >&2
+      exec bash -i ;;
+  esac
+  if [[ ! -d "$dir" ]]; then
+    echo "note: $tid's directory is gone (cleaned?) — dropping to a shell" >&2
+    exec bash -i
+  fi
+  if ! container_available; then
+    echo "note: docker is not available — $tid stays a shell (record still says container)" >&2
+    exec bash -i
+  fi
+  local hooks_file tail
+  hooks_file="$(ensure_hook_settings)"
+  if [[ -n "$TASK_SESSION" ]]; then
+    tail="claude --resume $TASK_SESSION --settings '$hooks_file'"
+  else
+    tail="claude --settings '$hooks_file'"
+  fi
+  build_container_cmd "resume-${tid}" "$dir" "$repo" "$wt" "$tail"
+  if [[ -n "$CNAME" ]]; then
+    printf 'container %s\n' "$CNAME" >> "$AF_TASKS_DIR/$tid" 2>/dev/null || true
+  fi
+  exec bash -c "$CCMD"
+}
+
 cmd_task() {
   # `task -- "<prompt>"` forces the create form — for scripted callers whose
   # prompt could collide with a subcommand ('ls', 'show') or start with '-'.
@@ -2153,60 +2268,11 @@ cmd_task() {
   # arrays, plain "quoted" expansions only.
   local ccmd="" cname="" cdir_rec=""
   if [[ "$rung" == "container" ]]; then
-    local hooks_file _cnow _cn
+    local hooks_file
     hooks_file="$(ensure_hook_settings)"
-    printf -v _cnow '%(%s)T' -1
-    # Docker name charset is [A-Za-z0-9_.-]; --name is raw user text and the
-    # socket is env-controlled — a space would break the ccmd parse AND the
-    # whitespace-split record line task_container_stop reads.
-    _cn="$(printf '%s' "${SOCKET}-${name}" | tr -c 'A-Za-z0-9_.-' '_')"
-    cname="af-${_cn}-${_cnow}"
-    local base_claude="claude --settings '$hooks_file' \"\$AF_TASK_PROMPT\""
-    if [[ -f "$repo_dir/.devcontainer/devcontainer.json" || -f "$repo_dir/.devcontainer.json" ]] \
-       && command -v devcontainer >/dev/null 2>&1; then
-      # Repo devcontainer: its config owns the environment (no firewall
-      # promise from us). Cache+scripts ride in so the status hooks work; the
-      # parent .git so the worktree's absolute-path .git file resolves (the
-      # handback); ~/.claude + the OAuth token so the agent is logged in.
-      ccmd="devcontainer up --workspace-folder \"$dir\""
-      ccmd+=" --mount \"type=bind,source=$AF_CACHE_DIR,target=$AF_CACHE_DIR\""
-      ccmd+=" --mount \"type=bind,source=$ROOT_DIR/scripts,target=$ROOT_DIR/scripts\""
-      [[ -n "$wt_path" && -d "$repo_dir/.git" ]] \
-        && ccmd+=" --mount \"type=bind,source=$repo_dir/.git,target=$repo_dir/.git\""
-      [[ -d "$HOME/.claude" ]] \
-        && ccmd+=" --mount \"type=bind,source=$HOME/.claude,target=$HOME/.claude\""
-      ccmd+=" && exec devcontainer exec --workspace-folder \"$dir\""
-      ccmd+=" env TMUX_PANE=\"\$TMUX_PANE\" AGENT_FLEET_SOCKET=\"$SOCKET\""
-      ccmd+=" CLAUDE_CODE_OAUTH_TOKEN=\"\$CLAUDE_CODE_OAUTH_TOKEN\""
-      [[ -n "${XDG_CACHE_HOME:-}" ]] && ccmd+=" XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
-      ccmd+=" $base_claude"
-      # The devcontainer CLI names its own container but labels it with the
-      # workspace folder — record that so terminal marks can stop it.
-      cname=""; cdir_rec="$dir"
-    else
-      [[ -f "$repo_dir/.devcontainer/devcontainer.json" || -f "$repo_dir/.devcontainer.json" ]] \
-        && echo "note: repo has a devcontainer but the devcontainer CLI is missing — using the default image" >&2
-      local vols envs img imgver
-      vols="-v \"$dir:$dir\""
-      [[ -n "$wt_path" && -d "$repo_dir/.git" ]] && vols+=" -v \"$repo_dir/.git:$repo_dir/.git\""
-      vols+=" -v \"$AF_CACHE_DIR:$AF_CACHE_DIR\" -v \"$ROOT_DIR/scripts:$ROOT_DIR/scripts:ro\""
-      [[ -d "$HOME/.claude" ]] && vols+=" -v \"$HOME/.claude:$HOME/.claude\""
-      envs="-e TMUX_PANE -e AF_TASK_PROMPT -e HOME -e CLAUDE_CODE_OAUTH_TOKEN"
-      envs+=" -e AGENT_FLEET_SOCKET=\"$SOCKET\" -e AF_UID=$(id -u) -e AF_GID=$(id -g)"
-      [[ -n "${XDG_CACHE_HOME:-}" ]] && envs+=" -e XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
-      # Content-keyed tag: editing docker/ (a new allowlist host, say) must
-      # take effect on the next task, not stay frozen at the first build.
-      imgver="$(cat "$ROOT_DIR/docker"/* 2>/dev/null | cksum | awk '{print $1}')"
-      img="af-default:v${imgver:-0}"
-      # Build in the PANE (progress visible; a failure is a visible dead pane,
-      # not a silent degrade). NET_ADMIN: the image's default-deny firewall.
-      # --init: claude is the container's PID 1 otherwise, and its subshells'
-      # orphans would accumulate as zombies over a long session.
-      ccmd="docker image inspect $img >/dev/null 2>&1"
-      ccmd+=" || docker build -t $img \"$ROOT_DIR/docker\" || exit 1; "
-      ccmd+="exec docker run --rm -it --init --name \"$cname\" --cap-add NET_ADMIN"
-      ccmd+=" $envs $vols -w \"$dir\" $img $base_claude"
-    fi
+    build_container_cmd "$name" "$dir" "$repo_dir" "$wt_path" \
+      "claude --settings '$hooks_file' \"\$AF_TASK_PROMPT\""
+    ccmd="$CCMD"; cname="$CNAME"; cdir_rec="$CDIR_REC"
   fi
 
   if [[ -n "$ccmd" ]]; then
@@ -2375,6 +2441,8 @@ main() {
     # Internal: echo the last command-prompt input, parked in a tmux option by
     # the conf's prompt bindings (typed text never touches sh — see the conf).
     _prompt)    tx show-option -gqv @fleet-prompt 2>/dev/null ;;
+    # Internal: restore's relaunch shim for container-rung tasks (#13).
+    _container-resume) cmd_container_resume "$@" ;;
     -V|--version|version) echo "agent-fleet $AGENT_FLEET_VERSION" ;;
     -h|--help|help) usage ;;
     "")         cmd_attach ;;

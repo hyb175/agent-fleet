@@ -123,6 +123,11 @@ declare -A WOPT_LAST=()
 ESCALATE="${AGENT_FLEET_NOTIFY_ESCALATE:-0}"
 [[ "$ESCALATE" =~ ^[0-9]+$ ]] || ESCALATE=0
 declare -A ESC_DONE=()
+# Container agents' hooks run INSIDE the container where notify.sh has no
+# desktop to talk to — the daemon edge-detects their transitions host-side
+# (#13). Container panes only: host agents' hooks already notify, and firing
+# here too would double every popup. First observation never fires (boot spam).
+declare -A CTR_PREV=()
 progress_emit() {  # <state> <tty>
   [[ "$PROGRESS_ON" == "1" ]] || return 0
   local st="$1" tty="$2" seq
@@ -202,14 +207,14 @@ build() {
 
   local snap
   snap="$(tx list-panes -a \
-    -F '#{session_name}|#{window_id}|#{window_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}|#{pane_current_path}|#{pane_index}' \
+    -F '#{session_name}|#{window_id}|#{window_name}|#{window_index}|#{pane_id}|#{pane_current_command}|#{pane_tty}|#{@fleet-agent-kind}|#{@fleet-sidenav}|#{pane_current_path}|#{pane_index}|#{@fleet-session}' \
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent iso tid trec
+  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent iso tid trec fsess fsid
   local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
   local -A TAB_BEST=() TAB_STATE=()
-  while IFS='|' read -r s wid wn widx pane cmd tty kind sid _ pidx; do
+  while IFS='|' read -r s wid wn widx pane cmd tty kind sid _ pidx fsess _; do
     [[ -z "$pane" ]] && continue
     # Track each ACTIVE window's ttys for the progress bar (rail preferred —
     # it's present in every window and always visible with it).
@@ -255,6 +260,31 @@ build() {
     case "$iso" in
       sandbox) iso="sbx" ;; worktree) iso="wt" ;; container) iso="ctr" ;; *) iso="-" ;;
     esac
+    # Session mirror (#13): a container agent's hook captures the session id
+    # into panes/<pane>.session but can't set the pane option (no tmux in the
+    # container). Mirror it host-side — one tmux call, once per pane: the
+    # option is non-empty on every later tick. persist-save then resumes it.
+    if [[ -z "$fsess" && -f "$AF_CACHE/$pane.session" ]]; then
+      fsid=""
+      { read -r fsid < "$AF_CACHE/$pane.session"; } 2>/dev/null || true
+      if [[ -n "$fsid" ]]; then
+        tx set-option -p -t "$pane" @fleet-session "$fsid" 2>/dev/null || true
+      fi
+    fi
+    # Host-side notification edge for container panes (see CTR_PREV above).
+    # Hook-authored states only: scrape-tier heuristics flap during the
+    # in-pane image build and claude boot (and every restore purges the
+    # status files, reopening that window) — a heuristic flap must never
+    # become a desktop popup.
+    if [[ "$iso" == "ctr" && -f "$AF_CACHE/$pane.status" ]]; then
+      if [[ -n "${CTR_PREV[$pane]:-}" && "${CTR_PREV[$pane]}" != "$st" ]]; then
+        case "$st" in
+          wait) bash "$ROOT/scripts/notify.sh" "$SOCK" "$pane" "needs your input" >/dev/null 2>&1 & ;;
+          done) bash "$ROOT/scripts/notify.sh" "$SOCK" "$pane" "finished" >/dev/null 2>&1 & ;;
+        esac
+      fi
+      CTR_PREV[$pane]="$st"
+    fi
     # One escalation per wait episode: re-notify once past the threshold,
     # re-arm when the pane leaves wait.
     if [[ "$st" == "wait" ]]; then
