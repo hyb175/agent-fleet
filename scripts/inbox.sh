@@ -53,10 +53,12 @@ pane_fp() {  # <pane> -> checksum, empty when uncapturable
 # only rows that accept answers).
 rows() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wn pane st age intent glyph sub out="" asort fp
+  local line s wn pane st age intent iso glyph sub out="" asort fp
   while IFS= read -r line; do
     [[ "$line" == A\ * ]] || continue
-    IFS='|' read -r s _ _ wn pane _ st _ age intent <<<"${line#A }"
+    # iso before the catch-all _: the LAST read var swallows any newer
+    # trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+    IFS='|' read -r s _ _ wn pane _ st _ age intent iso _ <<<"${line#A }"
     case "$st" in wait|done) ;; *) continue ;; esac
     glyph="$(state_glyph "$st")"
     if [[ -n "$intent" && "$intent" != "-" ]]; then wn="$intent"; fi
@@ -65,6 +67,8 @@ rows() {
     if [[ "$age" =~ ^[0-9]+$ ]]; then
       fmt_age "$age"; sub="$st $AGE"; asort="$age"
     fi
+    # Isolation rung (#11): wt/sbx/ctr when above host.
+    [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
     fp=""
     if [[ "$st" == "wait" && "$pane" != */* ]]; then fp="$(pane_fp "$pane")"; fi
     printf -v line 'PANE:%s|%s|%s\t%s \033[1m%-40s\033[0m \033[2m%s · %s\033[0m' \

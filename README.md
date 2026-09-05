@@ -20,6 +20,7 @@ The CLI is `agent-fleet` (alias `af`).
 - [Keybindings](#keybindings)
 - [Status detection](#status-detection)
 - [Notifications](#notifications)
+- [Isolation ladder](#isolation-ladder)
 - [Persistence (survives reboot)](#persistence-survives-reboot)
 - [Environment variables](#environment-variables)
 - [Uninstall](#uninstall)
@@ -193,11 +194,12 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | `agent-fleet attach [workspace]` | Boot and attach (or switch, if inside). Default when run with no subcommand. |
 | `agent-fleet connect <dir\|name> [workspace-name]` (alias `c`) | Create or switch to a workspace. Defaults to `$PWD`; a name overrides the directory basename. Names are sanitized (`:`, `.`, space, `/`, `\|` → `_`). |
 | `agent-fleet add [name] [--to <ws>] [--new-workspace <name>] [--cmd <cmd>] [--dir <dir>] [--focus]` | Add an agent window. Defaults: command `$AGENT_FLEET_CMD` (claude), current/first workspace, name after the workspace. Launches with fleet status hooks. `--new-workspace` gives it its own workspace; `--focus` jumps to it (used by `Prefix C`). |
-| `agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--isolated] [--focus]` | Spawn an interactive agent from an intent: resolves (or creates) the workspace for the directory, starts a hooked `claude` with the prompt as its argument, and writes a task record. `--isolated` gives the task its own branch (`af/task/<name>`) and git worktree, so parallel tasks on one repo can't collide (`AGENT_FLEET_TASK_ISOLATED=1` makes it the default; `--no-isolated` opts out; non-git dirs degrade to the shared checkout). Prints `<task-id> <pane-id>`. |
+| `agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--isolation <rung>] [--focus]` | Spawn an interactive agent from an intent: resolves (or creates) the workspace for the directory, starts a hooked `claude` with the prompt as its argument, and writes a task record. `--isolation` picks the [isolation ladder](#isolation-ladder) rung (`--isolated`/`--no-isolated` are legacy spellings of `worktree`/`host`). Prints `<task-id> <pane-id>`. |
 | `agent-fleet task ls` | List task records with state, `[branch]` (`*` dirty, `^` unmerged), dead panes as `(gone)`, and any orphaned worktrees. |
 | `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, worktree/branch, state history). |
 | `agent-fleet task done\|drop <id\|%pane>` | Mark a task terminal (merged / abandoned) — the gate `clean` requires. |
 | `agent-fleet task clean [<id\|%pane>] [--dry-run] [--force] [--keep-branch]` | Reclaim terminal tasks' worktrees and branches. Refuses dirty trees and unmerged branches without `--force` — unreviewed work is never eaten silently. |
+| `agent-fleet task history` (alias `agent-fleet history`) | Finished tasks grouped per day (newest first, `n tasks, n merged` headers): outcome (merged / abandoned / pr; `abandoned~` = agent killed without an outcome), duration, total wait time, repo, intent. Reads task records only — survives restarts and reboots. |
 | `agent-fleet review <id\|%pane> [--diff-only\|--pr\|--merge\|--send <notes>]` | Review a done task's diff (vs its merge-base, `delta` when installed), then act: open a PR from the task branch (records non-terminal state `pr` — mark `done` after it merges), merge locally (marks `merged`, feeding `clean`), or send notes back into the live agent session. No flag: diff + interactive menu. Also `^v` on a done inbox row. |
 | `agent-fleet goto <pane_id>` | Focus a specific agent pane (used by the picker). |
 | `agent-fleet back` | Jump to the previously focused pane (`Prefix Tab`); toggles between two. |
@@ -276,6 +278,23 @@ The fleet also drives a **terminal progress bar** (OSC 9;4 — Ghostty 1.2+, iTe
 
 ---
 
+## Isolation ladder
+
+The end goal is safe autonomy: agents running with minimal permission prompts without risking the host. Each `af task` runs at one of four rungs — each including the previous rungs' guarantees:
+
+| Rung | What it guarantees | What it does NOT |
+| --- | --- | --- |
+| `host` | Nothing — the agent works in your checkout with your permissions. | Everything. |
+| `worktree` | Git isolation: a per-task branch (`af/task/<name>`) + private worktree; parallel tasks can't collide, your checkout stays untouched. | The agent's processes can still write anywhere you can. |
+| `sandbox` | worktree + Claude Code's native OS bash sandbox ([Seatbelt on macOS, bubblewrap+socat on Linux](https://code.claude.com/docs/en/sandboxing)): filesystem writes scoped to the task's worktree, sandboxed bash auto-allowed — fewer prompts, kernel-enforced boundaries. If the sandbox can't start, claude refuses visibly (`failIfUnavailable`) rather than silently running unsandboxed. | Network egress is not restricted; claude-only (other agent kinds degrade to `worktree` with a note). |
+| `container` | Full process/filesystem/network isolation — not built yet (#12/#13); degrades to `sandbox` with a note. | — |
+
+**Choosing a rung** (first match wins): `--isolation <rung>` per call → `AGENT_FLEET_ISOLATION` env → `isolation <rung>` line in `<repo>/.agent-fleet` (check it in to set a repo policy) → one-word `~/.config/agent-fleet/isolation` (global default) → `host`. Legacy spellings still work: `--isolated` = worktree, `--no-isolated` = host, `AGENT_FLEET_TASK_ISOLATED=1` defaults to worktree.
+
+**Degrading is always visible**: missing bubblewrap/socat or a non-claude agent drop the task one rung down with a note on stderr; a non-git dir drops `worktree` to `host`, while a `sandbox` task keeps its rung (sandboxed, scoped to the shared checkout). The task record's `isolation` line always carries the rung that actually ran. The rail, picker, and inbox show it as a `wt` / `sbx` / `ctr` suffix. The sandbox settings are a per-task `--settings` overlay — your global `~/.claude/settings.json` is never touched.
+
+---
+
 ## Persistence (survives reboot)
 
 tmux is in-memory, so a reboot ends the fleet. agent-fleet saves the layout to `~/.cache/agent-fleet/<socket>/fleet.state` and rebuilds it on the next attach.
@@ -299,7 +318,8 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_CONF` | `<repo>/conf/agent-fleet.conf` | Base tmux config passed to every `tmux -f` |
 | `AGENT_FLEET_SOCKET` | `agent-fleet` | tmux socket name (server isolation) |
 | `AGENT_FLEET_CMD` | `claude` | Default command for `add`; hooks attach only when it's `claude` |
-| `AGENT_FLEET_TASK_ISOLATED` | unset | `1` makes `task` default to worktree isolation (per-task branch + worktree under `~/.local/state/agent-fleet/worktrees/`); `--no-isolated` overrides per call |
+| `AGENT_FLEET_ISOLATION` | unset | Default [isolation ladder](#isolation-ladder) rung for `task` (`host`/`worktree`/`sandbox`/`container`); beaten by `--isolation`, beats the repo/global config files |
+| `AGENT_FLEET_TASK_ISOLATED` | unset | Legacy: `1` makes `task` default to worktree isolation (per-task branch + worktree under `~/.local/state/agent-fleet/worktrees/`); `--no-isolated` overrides per call |
 | `AGENT_FLEET_THEME` | unset | One-shot palette override — see [Theming](#theming) |
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi` | Commands recognized as agents when scraping (space-separated) |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created on first boot |

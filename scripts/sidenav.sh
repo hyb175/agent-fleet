@@ -139,7 +139,7 @@ blank() { printf '\033[K\n'; }
 draw() {
   local frame="$1"; home
   local line=0; local -a map=()
-  local rec s roll br wid wn pane label st GLYPH sel pidx age sub intent
+  local rec s roll br wid wn pane label st GLYPH sel pidx age sub intent iso
   # Agents per window: names get a ".pane" suffix only where a window holds
   # more than one agent, so same-window agents are tellable apart.
   local -A NWIN=()
@@ -194,7 +194,9 @@ draw() {
         break
       fi
       shown=$((shown+1))
-      IFS='|' read -r s wid _ wn pane label st pidx age intent <<<"$rec"
+      # iso before the catch-all _: the LAST read var swallows any newer
+      # trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+      IFS='|' read -r s wid _ wn pane label st pidx age intent iso _ <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
       map+=("$line PANE:$pane" "$((line+1)) PANE:$pane")
@@ -212,6 +214,8 @@ draw() {
       if [[ ( "$st" == "wait" || "$st" == "done" ) && "$age" =~ ^[0-9]+$ ]]; then
         fmt_age "$age"; sub+=" · $AGE"
       fi
+      # Isolation rung (#11): wt/sbx/ctr when above host.
+      [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
       row "$sel" "$GLYPH" "$wn" "$sub"
       line=$((line+2))
     done

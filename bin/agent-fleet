@@ -78,6 +78,7 @@ sanitize_name() { printf '%s' "$1" | tr ':. /|' '_____'; }
 # state (a fresh boot on one socket purging another's live panes, or restore
 # resuming another socket's saved agents).
 source "$ROOT_DIR/scripts/cache.sh"
+source "$ROOT_DIR/scripts/overlay.sh"
 AF_TASKS_DIR="$AF_CACHE_DIR/tasks"
 
 # One-time migration of a pre-scoping install's cache layout into the default
@@ -259,22 +260,25 @@ ensure_server() {
 
 # Generate the fleet-scoped Claude settings file (hooks only). Launching an
 # agent as `claude --settings <this>` overlays the status hooks on top of the
-# user's global config without touching ~/.claude/settings.json.
+# user's global config without touching ~/.claude/settings.json. JSON emission
+# lives in scripts/overlay.sh (shared with persist-restore).
 ensure_hook_settings() {
   mkdir -p "$AF_CACHE_DIR/panes"
   local f="$AF_CACHE_DIR/hooks-settings.json"
-  local hook="$ROOT_DIR/scripts/agent-status-hook.sh"
-  cat > "$f" <<JSON
-{
-  "hooks": {
-    "SessionStart":     [ { "hooks": [ { "type": "command", "command": "'$hook' start $SOCKET claude" } ] } ],
-    "UserPromptSubmit": [ { "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET claude" } ] } ],
-    "PreToolUse":       [ { "matcher": "*", "hooks": [ { "type": "command", "command": "'$hook' working $SOCKET claude" } ] } ],
-    "Notification":     [ { "hooks": [ { "type": "command", "command": "'$hook' wait $SOCKET claude" } ] } ],
-    "Stop":             [ { "hooks": [ { "type": "command", "command": "'$hook' done $SOCKET claude" } ] } ]
-  }
+  overlay_write_hooks "$f" "$ROOT_DIR/scripts/agent-status-hook.sh" "$SOCKET"
+  printf '%s' "$f"
 }
-JSON
+
+# Sandbox-rung overlay (#11): hooks + OS bash sandbox, writes scoped to one
+# root — see scripts/overlay.sh for the emission and the failIfUnavailable
+# rationale. Keyed by BOTH cksum fields (CRC + length): a bare CRC-32
+# collision would scope one task's writes to another task's worktree.
+ensure_sandbox_settings() {  # <write-root> -> prints the overlay path
+  local root="$1" key f
+  mkdir -p "$AF_CACHE_DIR/panes"
+  key="$(printf '%s' "$root" | cksum | awk '{print $1"-"$2}')"
+  f="$AF_CACHE_DIR/sandbox-$key.json"
+  overlay_write_sandbox "$f" "$ROOT_DIR/scripts/agent-status-hook.sh" "$SOCKET" "$root"
   printf '%s' "$f"
 }
 
@@ -341,6 +345,42 @@ task_worktree_create() {  # <repo-dir> <slug> -> "path<TAB>branch" (empty = degr
   err="$(git -C "$dir" worktree add -b "$branch" "$path" 2>&1 >/dev/null)" \
     || { echo "note: worktree add failed: ${err%%$'\n'*}" >&2; return 0; }
   printf '%s\t%s' "$path" "$branch"
+}
+
+# ---- isolation ladder (#11) --------------------------------------------------
+# host < worktree < sandbox < container: each rung includes the previous ones'
+# guarantees. Resolution: --isolation flag > AGENT_FLEET_ISOLATION (legacy
+# AGENT_FLEET_TASK_ISOLATED=1 = worktree) > <repo>/.agent-fleet 'isolation'
+# line > ~/.config/agent-fleet/isolation > host.
+resolve_isolation() {  # <repo-dir> <flag-rung> -> prints a valid rung
+  local dir="$1" flag="${2:-}" r=""
+  if [[ -n "$flag" ]]; then r="$flag"
+  elif [[ -n "${AGENT_FLEET_ISOLATION:-}" ]]; then r="$AGENT_FLEET_ISOLATION"
+  elif [[ "${AGENT_FLEET_TASK_ISOLATED:-}" == "1" ]]; then r="worktree"
+  else
+    if [[ -r "$dir/.agent-fleet" ]]; then
+      r="$(awk '$1=="isolation"{print $2; exit}' "$dir/.agent-fleet" 2>/dev/null || true)"
+    fi
+    if [[ -z "$r" ]]; then
+      local gf="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/isolation"
+      if [[ -r "$gf" ]]; then { read -r r < "$gf"; } 2>/dev/null || true; fi
+    fi
+  fi
+  case "$r" in
+    host|worktree|sandbox|container) ;;
+    "") r="host" ;;
+    *)  echo "note: unknown isolation rung '$r' — running at host" >&2; r="host" ;;
+  esac
+  printf '%s' "$r"
+}
+
+# The sandbox rung needs an OS sandbox for claude's bash: Seatbelt ships with
+# macOS; Linux needs bubblewrap AND socat on PATH (claude's network proxy).
+sandbox_available() {
+  case "$(uname -s)" in
+    Darwin) command -v sandbox-exec >/dev/null 2>&1 ;;
+    *)      command -v bwrap >/dev/null 2>&1 && command -v socat >/dev/null 2>&1 ;;
+  esac
 }
 
 # task_id_for <id|%pane> — resolve either form to a task id, or fail.
@@ -455,13 +495,16 @@ Options:
                             (default: the agent's name). \`agent-fleet task\` sets it.
   --env <NAME=VALUE>        Set one variable in the window's environment (via tmux,
                             bypassing the shell — safe for arbitrary text).
+  --sandbox <root>          claude-only: launch with the OS bash sandbox overlay,
+                            filesystem writes scoped to <root> (\`task --isolation
+                            sandbox\` uses this; see task -h for the ladder).
   --focus                    Focus the new agent window.
   -h, --help                 Show this help.
 EOF
 }
 
 cmd_add() {
-  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws="" intent="" env_kv=""
+  local name="" target="" cmd="$DEFAULT_AGENT_CMD" dir="" focus="" new_ws="" intent="" env_kv="" sb_root=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)         usage_add; return 0 ;;
@@ -471,6 +514,7 @@ cmd_add() {
       --new-workspace)  new_ws="$2"; shift 2 ;;
       --intent)         intent="$2"; shift 2 ;;
       --env)            env_kv="$2"; shift 2 ;;
+      --sandbox)        sb_root="$2"; shift 2 ;;   # claude-only: sandbox overlay, writes scoped here
       --focus)          focus=1; shift ;;
       --)               shift; break ;;
       *)     if [[ -z "$name" ]]; then name="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
@@ -538,6 +582,17 @@ cmd_add() {
   local label
   label="$(basename "${cmd%% *}")"
 
+  # --sandbox is claude-only (the overlay is claude's settings format); a
+  # silent no-op here would launch unisolated while the caller assumes sandbox.
+  if [[ -n "$sb_root" && "$label" != "claude" ]]; then
+    echo "warning: --sandbox is claude-only — ignored for '$label'" >&2
+    sb_root=""
+  fi
+  if [[ -n "$sb_root" && "$sb_root" == *[[:cntrl:]]* ]]; then
+    echo "warning: control characters in the sandbox root — launching hooks-only (no sandbox)" >&2
+    sb_root=""
+  fi
+
   if [[ "$label" == "claude" ]]; then
     # Local claude agent: overlay the fleet status hooks. Gate on the command
     # BASENAME being claude — the hooks (and the --settings flag itself) are
@@ -547,7 +602,11 @@ cmd_add() {
     # (`agent-fleet task` appends one) — never trailing, where a variadic
     # prompt could swallow it.
     local hooks_file
-    hooks_file="$(ensure_hook_settings)"
+    if [[ -n "$sb_root" ]]; then
+      hooks_file="$(ensure_sandbox_settings "$sb_root")"   # hooks + sandbox superset
+    else
+      hooks_file="$(ensure_hook_settings)"
+    fi
     if [[ "$cmd" == *" "* ]]; then
       cmd="${cmd%% *} --settings '$hooks_file' ${cmd#* }"
     else
@@ -1568,9 +1627,19 @@ Prints "<task-id> <pane-id>".
 Options (create form):
   --repo <dir>   Directory to work in (default: current fleet pane's dir, else \$PWD).
   --name <name>  Agent/tab name (default: a slug of the prompt's first words).
-  --isolated     Git repos: branch af/task/<name> + a private worktree; the agent
-                 works there, so parallel tasks on one repo can't collide.
-                 (Default via AGENT_FLEET_TASK_ISOLATED=1; --no-isolated opts out.)
+  --isolation <rung>
+                 host | worktree | sandbox | container — the isolation ladder,
+                 each rung including the previous ones' guarantees. worktree =
+                 branch af/task/<name> + a private worktree (parallel tasks on
+                 one repo can't collide). sandbox = worktree + Claude Code's OS
+                 bash sandbox (Seatbelt/bubblewrap), writes scoped to the
+                 worktree, sandboxed bash auto-allowed. container: not yet (#12).
+                 Default: AGENT_FLEET_ISOLATION env > 'isolation <rung>' in
+                 <repo>/.agent-fleet > ~/.config/agent-fleet/isolation > host.
+                 Missing deps degrade one rung down, with a note.
+  --isolated / --no-isolated
+                 Legacy spellings of --isolation worktree / host.
+                 (AGENT_FLEET_TASK_ISOLATED=1 still means worktree by default.)
   --focus        Jump to the new agent.
   -h, --help     Show this help.
 
@@ -1924,15 +1993,16 @@ cmd_task() {
     usage_task >&2; exit 2
   fi
 
-  local prompt="$1" dir="" name="" focus="" isolated="${AGENT_FLEET_TASK_ISOLATED:-}"
+  local prompt="$1" dir="" name="" focus="" iso_flag=""
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo|--dir) dir="$2"; shift 2 ;;
       --name)       name="$2"; shift 2 ;;
       --focus)      focus=1; shift ;;
-      --isolated)   isolated=1; shift ;;
-      --no-isolated) isolated=""; shift ;;   # per-invocation opt-out of the env default
+      --isolation)  iso_flag="${2:?usage: --isolation host|worktree|sandbox|container}"; shift 2 ;;
+      --isolated)   iso_flag="worktree"; shift ;;   # legacy spelling of the rung
+      --no-isolated) iso_flag="host"; shift ;;      # per-invocation opt-out of the env default
       *) echo "error: unexpected arg: $1" >&2; usage_task >&2; exit 2 ;;
     esac
   done
@@ -1964,19 +2034,47 @@ cmd_task() {
     name="${slug:-task}"
   fi
 
-  # Isolation (#4): branch + worktree per task; the agent starts IN the
+  # Isolation ladder (#11): resolve the rung, then degrade rung by rung with a
+  # visible note wherever a dependency is missing — the record carries what
+  # actually ran, never the intent.
+  local rung
+  rung="$(resolve_isolation "$dir" "$iso_flag")"
+  if [[ "$rung" == "container" ]]; then
+    echo "note: container rung is not built yet (#12/#13) — degrading to sandbox" >&2
+    rung="sandbox"
+  fi
+  if [[ "$rung" == "sandbox" ]]; then
+    if [[ "$(basename "${DEFAULT_AGENT_CMD%% *}")" != "claude" ]]; then
+      echo "note: sandbox rung is claude-only (agent: ${DEFAULT_AGENT_CMD%% *}) — degrading to worktree" >&2
+      rung="worktree"
+    elif ! sandbox_available; then
+      echo "note: no OS sandbox on this host (Linux needs bubblewrap + socat) — degrading to worktree" >&2
+      rung="worktree"
+    fi
+  fi
+
+  # worktree rung (#4): branch + worktree per task; the agent starts IN the
   # worktree. The workspace keeps the ORIGINAL repo's name (all of a repo's
   # tasks group under one workspace, isolated or not). Non-git dirs degrade
   # to the shared checkout, with a note.
   local repo_dir="$dir" wt="" wt_path="" wt_branch=""
-  if [[ "$isolated" == "1" ]]; then
+  if [[ "$rung" == "worktree" || "$rung" == "sandbox" ]]; then
     wt="$(task_worktree_create "$dir" "$name")"
     if [[ -n "$wt" ]]; then
       wt_path="${wt%%$'\t'*}"; wt_branch="${wt#*$'\t'}"
       dir="$wt_path"
     else
       echo "note: $dir is not a git repo (or worktree add failed) — running in the shared checkout" >&2
+      # A sandbox scoped to a shared checkout still sandboxes: keep the rung.
+      [[ "$rung" == "worktree" ]] && rung="host"
     fi
+  fi
+  # A control char in the sandboxed root would make the overlay unparseable
+  # JSON — and an unparseable overlay silently disables its own
+  # failIfUnavailable backstop. Degrade visibly instead.
+  if [[ "$rung" == "sandbox" && "$dir" == *[[:cntrl:]]* ]]; then
+    echo "note: control characters in the task path can't ride in the sandbox overlay — degrading" >&2
+    if [[ -n "$wt_path" ]]; then rung="worktree"; else rung="host"; fi
   fi
 
   ensure_server
@@ -1990,6 +2088,9 @@ cmd_task() {
   # "$VAR" form below reads identically in every sh-family shell and fish.
   local add_args=(--to "$ws")
   tx has-session -t "=$ws" 2>/dev/null || add_args=(--new-workspace "$ws")
+  # sandbox rung: the agent's bash may write only inside its cwd ($dir — the
+  # worktree when one was created, else the shared checkout).
+  [[ "$rung" == "sandbox" ]] && add_args+=(--sandbox "$dir")
   pane="$(cmd_add "$name" "${add_args[@]}" --dir "$dir" \
             --cmd "$DEFAULT_AGENT_CMD \"\$AF_TASK_PROMPT\"" \
             --env "AF_TASK_PROMPT=$prompt" --intent "$prompt" ${focus:+--focus})"
@@ -2013,6 +2114,14 @@ cmd_task() {
       printf 'worktree %s\n' "${wt_path//[$'\n\r\t']/ }"
       printf 'branch %s\n'   "${wt_branch//[$'\n\r\t']/ }"
       printf 'repo %s\n'     "${repo_dir//[$'\n\r\t']/ }"
+    } >> "$AF_TASKS_DIR/$tid" 2>/dev/null || true
+  fi
+  # The rung that actually ran (post-degrade), never the one asked for. The
+  # sandboxfile line lets persist-restore relaunch with the same overlay.
+  if [[ "$tid" != "-" && -f "$AF_TASKS_DIR/$tid" ]]; then
+    {
+      printf 'isolation %s\n' "$rung"
+      [[ "$rung" == "sandbox" ]] && printf 'sandboxfile %s\n' "$(ensure_sandbox_settings "$dir")"
     } >> "$AF_TASKS_DIR/$tid" 2>/dev/null || true
   fi
   echo "$tid $pane"
@@ -2093,6 +2202,8 @@ Env:
   AGENT_FLEET_CMD      Default agent command (default: claude)
   AGENT_FLEET_THEME    One-shot palette override (normally use: agent-fleet theme <name>,
                        which persists; presets live in conf/themes/).
+  AGENT_FLEET_ISOLATION
+                       Default isolation rung for task (host|worktree|sandbox|container).
   AGENT_FLEET_RESTORE_ANY_SOCKET=1
                        Let restore rebuild a layout saved on a different socket. Off by
                        default so a one-off AGENT_FLEET_SOCKET can't clone the live fleet.

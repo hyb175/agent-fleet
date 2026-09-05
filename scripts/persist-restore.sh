@@ -29,6 +29,7 @@ source "$ROOT/scripts/theme.sh"
 theme_write_conf
 # shellcheck source=cache.sh
 source "$ROOT/scripts/cache.sh"
+source "$ROOT/scripts/overlay.sh"
 CACHE="$AF_CACHE_DIR"
 STATE="$CACHE/fleet.state"
 US=$'\t'   # matches persist-save; every field is non-empty so tab won't collapse
@@ -226,7 +227,28 @@ for s in "${sess_order[@]}"; do
           codex)    (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
           opencode) (( has_sid )) && rc="opencode --session $sid" || rc="opencode" ;;
           *)     (( has_sid )) && rc="claude --resume $sid" || rc="claude"
-                 [[ -f "$OVERLAY" ]] && rc="$rc --settings $OVERLAY" ;;
+                 # Sandbox-rung task (#11): relaunch with ITS overlay (hooks +
+                 # sandbox superset) so a reboot never quietly drops the rung.
+                 # A purged cache REGENERATES the overlay from the record (the
+                 # record's dir line is the sandboxed root) — falling back to
+                 # the hooks overlay would relaunch unsandboxed while the
+                 # record and the rail's sbx badge keep claiming the rung.
+                 sbf=""
+                 if [[ -n "$stask" && "$stask" != "-" ]]; then
+                   sbf="$(awk '$1=="sandboxfile"{sub(/^sandboxfile /,""); print; exit}' "$CACHE/tasks/$stask" 2>/dev/null || true)"
+                 fi
+                 if [[ -n "$sbf" && ! -f "$sbf" ]]; then
+                   sbroot="$(awk '$1=="dir"{sub(/^dir /,""); print; exit}' "$CACHE/tasks/$stask" 2>/dev/null || true)"
+                   if [[ -n "$sbroot" ]]; then
+                     mkdir -p "$(dirname "$sbf")" 2>/dev/null || true
+                     overlay_write_sandbox "$sbf" "$ROOT/scripts/agent-status-hook.sh" "$SOCK" "$sbroot" 2>/dev/null || sbf=""
+                   else
+                     sbf=""
+                   fi
+                 fi
+                 if [[ -n "$sbf" && -f "$sbf" ]]; then rc="$rc --settings $(printf '%q' "$sbf")"
+                 elif [[ -f "$OVERLAY" ]]; then rc="$rc --settings $(printf '%q' "$OVERLAY")"
+                 fi ;;
         esac
         tx set-option -p -t "$chosen" @fleet-agent-kind "$skind" 2>/dev/null || true
         tx set-option -w -t "$chosen" @fleet-agent "$skind" 2>/dev/null || true

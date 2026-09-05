@@ -70,7 +70,7 @@ stale_row() {
 # name so same-workspace agents differ) then agentless workspaces.
 list_fleet() {
   [[ -f "$SNAP" ]] || { printf 'NONE\t\033[2m(fleet starting…)\033[0m\n'; return; }
-  local line s wid widx wn pane st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx age sub intent asort
+  local line s wid widx wn pane st roll br glyph agents="" spaces="" idx=0 snap_ts="" pidx age sub intent iso asort
   # First pass: agents per window, so same-window agents get ".pane" suffixes.
   declare -A NWIN
   while IFS= read -r line; do
@@ -82,7 +82,9 @@ list_fleet() {
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
       A\ *)
-        IFS='|' read -r s wid widx wn pane _ st pidx age intent <<<"${line#A }"
+        # iso before the catch-all _: the LAST read var swallows any newer
+        # trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+        IFS='|' read -r s wid widx wn pane _ st pidx age intent iso _ <<<"${line#A }"
         glyph="$(glyph_of "$st")"
         # Title = task intent when present (capped — fzf rows are one line),
         # else the window name. Intent first, .pidx after, cap last — so
@@ -97,6 +99,8 @@ list_fleet() {
           fmt_age "$age"; sub="$st $AGE"
           [[ "$st" == "wait" ]] && asort="$age"
         fi
+        # Isolation rung (#11): wt/sbx/ctr when above host.
+        [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
         printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$sub"
         # Sort key (rank asc, wait-age desc, idx asc): most urgent rank first,
         # LONGEST-waiting first within it, arrival order as the stable tail.
