@@ -41,6 +41,50 @@ f="$cache/${pane}.status"
 input=""
 [[ -t 0 ]] || input="$(cat 2>/dev/null || true)"
 
+# Auto-adopt (#16): a hooked agent whose pane has no task record yet gets a
+# minimal one, so hand-started agents (shim claude, kimi/codex/hermes/…) join
+# the record loop — history, review, intent titles — without ceremony. Once
+# per pane (the pointer file gates it). `af add`/`af task` spawns pre-create
+# their record and set AF_TASK_PRESPAWNED in the window env, so the explicit
+# record always wins the startup race. Runs BEFORE the transition append
+# below, so even this very event's state lands in the new record.
+if [[ ! -f "$cache/${pane}.task" && "${AF_TASK_PRESPAWNED:-}" != "1" && -n "$kind" ]]; then
+  printf -v _anow '%(%s)T' -1
+  _atid="t$_anow-${pane#%}"
+  # Pointer write is the atomic claim (noclobber): `task adopt` can race this
+  # from the CLI — first writer wins, and losing here just means the pane is
+  # already in the loop (skip entirely, no orphan record).
+  if (set -C; printf '%s\n' "$_atid" > "$cache/${pane}.task") 2>/dev/null \
+     && [[ ! -f "${cache%/*}/tasks/$_atid" ]]; then
+    # (The second guard matters: a record created for this pane in this same
+    # SECOND shares the tid — writing would truncate it. The pointer we just
+    # claimed already points at it; nothing more to do.)
+    _acwd="$(printf '%s' "$input" | sed -n 's/.*"cwd"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    _awname=""
+    if command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
+      # One call for both: kimi/codex/hermes payloads may lack "cwd", so the
+      # pane's live path is the fallback.
+      _ainfo="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{window_name}|#{pane_current_path}' 2>/dev/null || true)"
+      _awname="${_ainfo%%|*}"
+      [[ -z "$_acwd" ]] && _acwd="${_ainfo#*|}"
+    fi
+    _awname="${_awname//[$'\n\r\t']/ }"   # record lines are line-oriented (flatten invariant)
+    mkdir -p "${cache%/*}/tasks" 2>/dev/null || true
+    {
+      printf 'id %s\n'      "$_atid"
+      printf 'intent %s\n'  "${_awname:-adopted}"
+      printf 'dir %s\n'     "${_acwd//[$'\n\r\t']/ }"
+      printf 'kind %s\n'    "$kind"
+      printf 'created %s\n' "$_anow"
+      printf 'pane %s\n'    "$pane"
+      printf 'isolation host\n'
+    } > "${cache%/*}/tasks/$_atid" 2>/dev/null || rm -f "$cache/${pane}.task" 2>/dev/null || true
+    if [[ -f "${cache%/*}/tasks/$_atid" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
+      "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-task "$_atid" 2>/dev/null || true
+    fi
+  fi
+fi
+
 prev=""
 [[ -f "$f" ]] && prev="$(cat "$f" 2>/dev/null || true)"
 

@@ -307,7 +307,20 @@ task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
     printf 'created %s\n' "$now"
     printf 'pane %s\n'    "$pane"
   } > "$AF_TASKS_DIR/$tid" 2>/dev/null || return 0
-  printf '%s\n' "$tid" > "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true
+  # Pointer write is the atomic claim (noclobber): the hook's auto-adopt
+  # (#16) races this on hand-started agents — first writer wins, the loser
+  # reuses the winner's record instead of leaving a permanent orphan.
+  local ptr="$AF_CACHE_DIR/panes/$pane.task" cur=""
+  if ! (set -C; printf '%s\n' "$tid" > "$ptr") 2>/dev/null; then
+    cur="$(cat "$ptr" 2>/dev/null || true)"
+    if [[ -n "$cur" && -f "$AF_TASKS_DIR/$cur" ]]; then
+      rm -f "$AF_TASKS_DIR/$tid" 2>/dev/null || true
+      printf '%s' "$cur"
+      return 0
+    fi
+    # Stale pointer (no record behind it): take it over.
+    printf '%s\n' "$tid" > "$ptr" 2>/dev/null || true
+  fi
   tx set-option -p -t "$pane" @fleet-task "$tid" 2>/dev/null || true
   printf '%s' "$tid"
 }
@@ -712,7 +725,9 @@ cmd_add() {
   # value never passes through the default-shell parse of the window command —
   # the only quoting-proof way to hand an agent arbitrary text (see cmd_task).
   local pane_id
-  pane_id="$(tx new-window -P -F '#{pane_id}' ${env_kv:+-e "$env_kv"} -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
+  # AF_TASK_PRESPAWNED: this spawn writes its own record below — the status
+  # hook's auto-adopt (#16) must not race it with a duplicate.
+  pane_id="$(tx new-window -P -F '#{pane_id}' -e AF_TASK_PRESPAWNED=1 ${env_kv:+-e "$env_kv"} -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
   # Mark the agent so the sidenav lists it (per-pane, focus-independent) and so
   # workspace renames can follow it (per-window). Value = agent kind ("claude");
   # --kind overrides when the command wraps the agent (docker run … claude —
@@ -1860,6 +1875,7 @@ Usage: agent-fleet task "<prompt>" [options]
        agent-fleet task -- "<prompt>" [options]   (force create — prompt may be a subcommand or -*)
        agent-fleet task ls
        agent-fleet task show <task-id|%pane>
+       agent-fleet task adopt [%pane] ["intent"]
        agent-fleet task done|drop <task-id|%pane>
        agent-fleet task clean [<task-id|%pane>] [--dry-run] [--force] [--keep-branch]
        agent-fleet task history   (alias: agent-fleet history)
@@ -1892,6 +1908,8 @@ Options (create form):
   --focus        Jump to the new agent.
   -h, --help     Show this help.
 
+'adopt' brings an EXISTING pane into the loop (hooked agents auto-adopt on
+their first event; adopt covers panes whose agents are idle, or older panes).
 Lifecycle: 'done' (merged) / 'drop' (abandoned) mark a task terminal; 'clean'
 reclaims terminal tasks' worktrees and branches — refusing dirty trees and
 unmerged branches unless --force. 'ls' shows [branch] with * dirty, ^ unmerged,
@@ -1903,8 +1921,12 @@ Records live in $AF_TASKS_DIR; worktrees under $AF_WORKTREES_DIR.
 EOF
 }
 
+# Empty states teach (#18): name the command that fills them, never dead-end.
+_no_tasks_hint()   { echo '(no tasks — spawn one: agent-fleet task "<prompt>", or adopt a pane: agent-fleet task adopt %pane)'; }
+_no_history_hint() { echo '(no completed tasks — history fills as tasks reach done/drop; spawn one: agent-fleet task "<prompt>")'; }
+
 task_ls() {
-  [[ -d "$AF_TASKS_DIR" ]] || { echo "(no tasks)"; return 0; }
+  [[ -d "$AF_TASKS_DIR" ]] || { _no_tasks_hint; return 0; }
   local f k v tid intent pane st mark any=""
   # Liveness = the pane exists AND is tagged with THIS task's id. Pane ids
   # restart at %0 every server generation, so a bare pane-exists check
@@ -1950,7 +1972,7 @@ task_ls() {
     fi
     printf '%-18s %-9s %-6s%s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$wtcol" "$intent"
   done
-  [[ -n "$any" ]] || echo "(no tasks)"
+  [[ -n "$any" ]] || _no_tasks_hint
   task_orphans
 }
 
@@ -1958,6 +1980,52 @@ task_show() {
   local tid
   tid="$(task_id_for "${1:?usage: agent-fleet task show <task-id|%pane>}")" || exit 1
   cat "$AF_TASKS_DIR/$tid"
+}
+
+# task adopt (#16): bring an EXISTING pane into the record loop — history,
+# review, and intent titles all key on records, and panes from before the
+# record system (or hand-started agents) otherwise stay invisible forever.
+task_adopt() {
+  local pane="" intent=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      %*)        pane="$1"; shift ;;
+      -h|--help) echo 'usage: agent-fleet task adopt [%pane] ["intent"]'; return 0 ;;
+      *)         intent="$1"; shift ;;
+    esac
+  done
+  if [[ -z "$pane" ]]; then
+    if in_fleet_tmux && [[ -n "${TMUX_PANE:-}" ]]; then pane="$TMUX_PANE"; fi
+    [[ -n "$pane" ]] || { echo "error: no pane — run inside the fleet or pass %pane" >&2; exit 2; }
+  fi
+  server_up || { echo "error: fleet not running" >&2; exit 1; }
+  tx display-message -p -t "$pane" '#{pane_id}' >/dev/null 2>&1 \
+    || { echo "error: no such pane: $pane" >&2; exit 1; }
+  # Already in the loop? Either the pane option or the pointer file counts.
+  local cur
+  cur="$(tx display-message -p -t "$pane" '#{@fleet-task}' 2>/dev/null || true)"
+  [[ -z "$cur" ]] && cur="$(cat "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true)"
+  if [[ -n "$cur" && -f "$AF_TASKS_DIR/$cur" ]]; then
+    echo "error: $pane already has task $cur" >&2; exit 1
+  fi
+  local dir kind wname
+  dir="$(tx display-message -p -t "$pane" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+  kind="$(tx display-message -p -t "$pane" '#{@fleet-agent-kind}' 2>/dev/null || true)"
+  wname="$(tx display-message -p -t "$pane" '#{window_name}' 2>/dev/null || true)"
+  if [[ -z "$kind" ]]; then
+    # Fall back to the running command, but only when it IS an agent —
+    # adopting a plain shell records kind claude (what the pane will run).
+    kind="$(tx display-message -p -t "$pane" '#{pane_current_command}' 2>/dev/null || true)"
+    case "$kind" in
+      claude|codex|opencode|kimi|hermes|agent) ;;
+      *) kind="claude" ;;
+    esac
+  fi
+  [[ -n "$intent" ]] || intent="${wname:-adopted}"
+  local tid
+  tid="$(task_record_create "$pane" "$intent" "$dir" "$kind")"
+  [[ -n "$tid" ]] || { echo "error: record could not be written (cache unwritable?)" >&2; exit 1; }
+  echo "adopted $pane -> $tid ($intent)"
 }
 
 # task_record_get <tid> — fill TASK_<FIELD> vars from a record (last one wins
@@ -2132,7 +2200,7 @@ task_orphans() {
 # records — so it survives fleet restarts and reboots, and needs no server.
 task_history() {
   [[ $# -eq 0 ]] || { echo "error: unexpected arg: $1 (task history takes none)" >&2; exit 2; }
-  [[ -d "$AF_TASKS_DIR" ]] || { echo "(no completed tasks)"; return 0; }
+  [[ -d "$AF_TASKS_DIR" ]] || { _no_history_hint; return 0; }
   # Liveness (same discipline as task_ls: pane exists AND is tagged with THIS
   # id — restore rewrites the record's pane line, so the key stays valid across
   # reboots). A non-terminal record with a dead pane was killed without an
@@ -2215,7 +2283,7 @@ task_history() {
     rows+=("$(printf '%s\t%s\t  %-18s %-10s %5s %-6s %-14s %s' \
       "$ended" "$day" "$tid" "$outcome" "$dur" "$wcol" "$repob" "${intent:--}")")
   done
-  (( ${#rows[@]} )) || { echo "(no completed tasks)"; return 0; }
+  (( ${#rows[@]} )) || { _no_history_hint; return 0; }
   local line lastday="" rday rrest
   while IFS= read -r line; do
     rday="${line#*$'\t'}"; rday="${rday%%$'\t'*}"
@@ -2287,6 +2355,7 @@ cmd_task() {
       "")        usage_task >&2; exit 2 ;;
       ls)        shift; task_ls "$@"; return 0 ;;
       show)      shift; task_show "$@"; return 0 ;;
+      adopt)     shift; task_adopt "$@"; return 0 ;;
       history)   shift; task_history "$@"; return 0 ;;
       done)      shift; task_mark "${1:?usage: agent-fleet task done <task-id|%pane>}" merged; return 0 ;;
       drop)      shift; task_mark "${1:?usage: agent-fleet task drop <task-id|%pane>}" abandoned; return 0 ;;
