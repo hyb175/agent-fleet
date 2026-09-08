@@ -98,5 +98,61 @@ check "open PR is NOT marked merged" "! grep -q '^state merged ' '$REC3'"
 af task clean >/dev/null 2>&1 && rc=0 || rc=$?
 check "bulk clean tolerates an open-PR task" "[[ $rc -eq 0 ]]"
 
+# --- phase 2: diffstat (#19), context line + atomic finish (#20/#21) ---------
+out4="$(af task "atomic finish probe" --repo "$REPODIR" --isolated)"
+T4="${out4%% *}"; P4="${out4##* }"
+sleep 0.4
+REC4="$XDG_CACHE_HOME/agent-fleet/$SOCK/tasks/$T4"
+WT4="$(awk '$1=="worktree"{print $2; exit}' "$REC4")"
+echo more > "$WT4/more.txt"
+git -C "$WT4" -c user.email=t@t -c user.name=t add more.txt
+git -C "$WT4" -c user.email=t@t -c user.name=t commit -qm more
+
+# A done transition records the diffstat; working transitions never do.
+hook4() {  # <state> <stdin-json>
+  printf '%s' "$2" | TMUX_PANE="$P4" AF_TASK_PRESPAWNED=1 AGENT_FLEET_NOTIFY=0 \
+    XDG_CACHE_HOME="$XDG_CACHE_HOME" bash "$REPO/scripts/agent-status-hook.sh" "$1" "$SOCK" claude
+}
+hook4 'done' '{"hook_event_name":"Stop","session_id":"x"}'
+check "done transition records a diffstat" "grep -Eq '^diffstat \+1-0 ' '$REC4'"
+hook4 working '{"hook_event_name":"UserPromptSubmit","session_id":"x"}'
+check "working transition records NO diffstat" "[[ \"\$(grep -c '^diffstat ' '$REC4')\" == 1 ]]"
+
+# Committed-away delta: the next attention transition tombstones the number
+# (a stale +N-N must never render as current).
+git -C "$REPODIR" -c user.email=t@t -c user.name=t merge -q --no-edit af/task/atomic-finish-probe 2>/dev/null || true
+hook4 'done' '{"hook_event_name":"Stop","session_id":"x"}'
+check "clean diff tombstones the diffstat" "grep '^diffstat ' '$REC4' | tail -1 | grep -q '^diffstat - '"
+git -C "$REPODIR" reset -q --hard HEAD~1 2>/dev/null || true   # undo probe merge for the finish below
+
+# Atomic finish refuses BEFORE killing anything when the worktree is dirty.
+echo scratch > "$WT4/scratch.tmp"
+af review "$T4" --merge --clean >/dev/null 2>&1 && rc=0 || rc=$?
+check "dirty worktree: finish refused" "[[ $rc -ne 0 ]]"
+# shellcheck disable=SC2034 # panes_now read inside the eval'd check() condition below
+panes_now="$(tx list-panes -a -F '#{pane_id}' 2>/dev/null)"
+check "dirty worktree: agent pane still alive" "grep -qx -- '$P4' <<<\"\$panes_now\""
+rm -f "$WT4/scratch.tmp"
+
+# --clean without --merge is a usage error.
+af review "$T4" --clean 2>/dev/null && rc=0 || rc=$?
+check "--clean without --merge refused" "[[ $rc -eq 2 ]]"
+
+# Atomic finish: context line, merge, pane closed, worktree reclaimed.
+# shellcheck disable=SC2034 # ctx read inside the eval'd check() conditions below
+ctx="$(af review "$T4" --merge --clean 2>&1)" && rc=0 || rc=$?
+check "atomic finish exits clean" "[[ $rc -eq 0 ]]"
+check "context line: id and branch" "grep -q \"review $T4 · af/task/atomic-finish-probe\" <<<\"\$ctx\""
+check "context line: commits ahead" "grep -q '\[1 ahead\]' <<<\"\$ctx\""
+check "context line: intent shown" "grep -q 'intent: atomic finish probe' <<<\"\$ctx\""
+# shellcheck disable=SC2034
+mlog2="$(git -C "$REPODIR" log --oneline -3)"
+check "atomic finish merged the work" "grep -q 'more' <<<\"\$mlog2\""
+check "atomic finish reclaimed the worktree" "[[ ! -e \"\$WT4\" ]]"
+# shellcheck disable=SC2034 # panes_left read inside the eval'd check() condition below
+panes_left="$(tx list-panes -a -F '#{pane_id}' 2>/dev/null)"
+check "atomic finish closed the pane" "! grep -qx -- '$P4' <<<\"\$panes_left\""
+check "record settles cleaned" "grep -q '^state cleaned ' '$REC4'"
+
 rm -rf "$FAKEBIN"
 exit "$FAIL"

@@ -1755,25 +1755,32 @@ Usage: agent-fleet review <task-id|%pane> [action]
 
 Actions (default: show the diff, then an interactive menu on a TTY):
   --diff-only      Print the diff and exit.
-  --pr             Push the task branch and open a PR (gh); marks the task merged.
+  --pr             Push the task branch and open a PR (gh); mark done after merge.
   --merge          Merge the task branch into the repo's current branch; marks it merged.
+  --clean          (with --merge) Atomic finish: after the merge, close the
+                   task's pane and reclaim its worktree+branch — the whole
+                   happy path in one verb. Guards still refuse dirty/unmerged.
   --send <notes>   Type the notes into the task's LIVE agent pane (returns it to work).
 EOF
 }
 
 cmd_review() {
-  local target="" action="" notes=""
+  local target="" action="" notes="" doclean=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --diff-only) action="diff"; shift ;;
       --pr)        action="pr"; shift ;;
       --merge)     action="merge"; shift ;;
+      --clean)     doclean=1; shift ;;
       --send)      action="send"; notes="${2:?error: --send needs notes}"; shift 2 ;;
       -h|--help)   usage_review; return 0 ;;
       -*) echo "error: unexpected arg: $1" >&2; usage_review >&2; exit 2 ;;
       *)  target="$1"; shift ;;
     esac
   done
+  if [[ -n "$doclean" && "$action" != "merge" ]]; then
+    echo "error: --clean goes with --merge (atomic finish)" >&2; exit 2
+  fi
   [[ -n "$target" ]] || { usage_review >&2; exit 2; }
   local tid
   tid="$(task_id_for "$target")" || exit 1
@@ -1786,6 +1793,22 @@ cmd_review() {
   if [[ -n "$repo" && -n "$branch" ]]; then
     mb="$(git -C "$repo" merge-base "$branch" HEAD 2>/dev/null || true)"
   fi
+
+  # Context line (#21): what and how big, before any diff scrolls by. Not on
+  # --diff-only, whose output must stay scriptable.
+  review_context() {
+    local ahead="" ss="" dirty=""
+    if [[ -n "$mb" ]]; then
+      ahead="$(git -C "$wt" rev-list --count "$mb"..HEAD 2>/dev/null || true)"
+      [[ "$ahead" == "0" ]] && ahead=""
+      ss="$(git -C "$wt" diff --shortstat "$mb" 2>/dev/null || true)"
+    else
+      ss="$(git -C "$wt" diff --shortstat HEAD 2>/dev/null || true)"
+    fi
+    [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ]] && dirty=" · uncommitted*"
+    echo "review $tid · ${branch:-?}${ahead:+ [$ahead ahead]} ·${ss:- no changes}$dirty"
+    [[ -n "$TASK_INTENT" ]] && echo "intent: $TASK_INTENT" || true
+  }
 
   review_diff() {  # [color] — color only for the pager path; --diff-only
                    # output must stay scriptable (redirectable to a patch).
@@ -1845,25 +1868,58 @@ cmd_review() {
     echo "sent to $rec_pane — the agent returns to working when it picks it up"
   }
 
+  # Atomic finish (#20): merge, then close the pane, then reclaim — the
+  # order matters: task_clean's liveness guard refuses a live agent's
+  # worktree, so the pane goes first (its work is merged; killing it loses
+  # nothing). Any guard tripping stops the chain with its own message.
+  review_finish() {
+    # Pre-flight BEFORE anything irreversible: killing the pane is the one
+    # step that cannot be undone, and task_clean commonly refuses a worktree
+    # with uncommitted debris — that refusal must arrive with the agent still
+    # alive to ask for cleanup.
+    if [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ]]; then
+      echo "error: worktree has uncommitted changes — finish refused (have the agent commit/clean them, or merge and 'task clean --force' yourself)" >&2
+      return 1
+    fi
+    review_merge || return 1
+    local rp cur others
+    rp="$(awk '$1=="pane"{print $2; exit}' "$AF_TASKS_DIR/$tid" 2>/dev/null || true)"
+    cur="$(tx display-message -p -t "$rp" '#{@fleet-task}' 2>/dev/null || true)"
+    if [[ -n "$rp" && "$cur" == "$tid" ]]; then
+      # Last non-rail pane in the window -> close the whole tab (a rail-only
+      # window is a husk); otherwise just this pane.
+      others="$(tx list-panes -t "$rp" -F '#{pane_id} #{?@fleet-sidenav,1,0}' 2>/dev/null | awk '$2 != "1"' | wc -l)"
+      if (( others <= 1 )); then
+        tx kill-window -t "$rp" 2>/dev/null || true
+      else
+        tx kill-pane -t "$rp" 2>/dev/null || true
+      fi
+    fi
+    task_clean "$tid"
+  }
+
   case "$action" in
     diff)  review_diff; return 0 ;;
-    pr)    review_pr ;;
-    merge) review_merge ;;
+    pr)    review_context; review_pr ;;
+    merge) review_context
+           if [[ -n "$doclean" ]]; then review_finish; else review_merge; fi ;;
     send)  review_send ;;
   esac
   if [[ -n "$action" ]]; then return 0; fi
 
-  # No flag: diff through the pager, then (TTY only) the action menu.
+  # No flag: context, diff through the pager, then (TTY only) the action menu.
+  review_context
   review_diff color | review_pager || true
   [[ -t 0 ]] || return 0
   local choice="" _cur
   _cur="$(git -C "$repo" branch --show-current 2>/dev/null || true)"
-  printf '\n[p] PR  [m] merge into %s  [s] send back with notes  [q] quit: ' "${_cur:-HEAD}"
+  printf '\n[p] PR  [m] merge into %s  [M] merge + clean  [s] send back with notes  [q] quit: ' "${_cur:-HEAD}"
   IFS= read -r -n1 choice || choice=""
   printf '\n'
   case "$choice" in
     p) review_pr ;;
     m) review_merge ;;
+    M) review_finish ;;
     s) printf 'notes: '; IFS= read -r notes; review_send ;;
     *) : ;;
   esac

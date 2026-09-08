@@ -82,9 +82,9 @@ list_fleet() {
     case "$line" in
       T\ *) snap_ts="${line#T }" ;;
       A\ *)
-        # iso before the catch-all _: the LAST read var swallows any newer
-        # trailing fields, and intent must never absorb them (CONTRIBUTING #7).
-        IFS='|' read -r s wid widx wn pane _ st pidx age intent iso _ <<<"${line#A }"
+        # Named fields before the catch-all _: the LAST read var swallows any
+        # newer trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+        IFS='|' read -r s wid widx wn pane _ st pidx age intent iso ds _ <<<"${line#A }"
         glyph="$(glyph_of "$st")"
         # Title = task intent when present (capped — fzf rows are one line),
         # else the window name. Intent first, .pidx after, cap last — so
@@ -98,6 +98,10 @@ list_fleet() {
         if [[ ( "$st" == "wait" || "$st" == "done" ) && "$age" =~ ^[0-9]+$ ]]; then
           fmt_age "$age"; sub="$st $AGE"
           [[ "$st" == "wait" ]] && asort="$age"
+        fi
+        # Diffstat (#19): wait/done only.
+        if [[ "$st" == "wait" || "$st" == "done" ]]; then
+          [[ -n "${ds:-}" && "$ds" != "-" ]] && sub+=" · $ds"
         fi
         # Isolation rung (#11): wt/sbx/ctr when above host.
         [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
@@ -263,7 +267,7 @@ run_view() {
     fleet)
       entries="$(list_fleet)"
       [[ -z "$entries" ]] && entries=$'NONE\t\033[2m(no workspaces — Tab to connect a repo)\033[0m'
-      header='[fleet] spaces connect  ·  Tab  ·  ⏎ jump  ·  / filter'
+      header='[fleet] spaces connect  ·  Tab  ·  ⏎ jump · ^v review  ·  / filter'
       prompt='› '
       ;;
     spaces)
@@ -289,6 +293,7 @@ run_view() {
     --bind="ctrl-z:become(echo VIEW:connect)" \
     --bind="ctrl-r:become(printf 'NAME\t%s\n' {1})" \
     --bind="ctrl-a:become(printf 'AGENT\t%s\n' {1})" \
+    --bind="ctrl-v:become(printf 'REVIEW\t%s\n' {1})" \
     --bind="alt-enter:become(printf 'NAME\t%s\n' {1})" \
     --bind="alt-a:become(printf 'AGENT\t%s\n' {1})" \
     --color="bg+:$AF_THEME_HL,fg+:$AF_THEME_FG,hl:$AF_THEME_ACCENT,hl+:$AF_THEME_ACCENT,pointer:$AF_THEME_ACCENT,prompt:$AF_THEME_ACCENT,info:$AF_THEME_MUTED,header:$AF_THEME_MUTED,spinner:$AF_THEME_WORKING,marker:$AF_THEME_WAIT,gutter:-1"
@@ -329,6 +334,23 @@ main() {
           PANE:*)  "$AF" goto "${target#PANE:}"; exit 0 ;;
           SESS:*)  "$AF" connect "${target#SESS:}"; exit 0 ;;
           *)       continue ;;
+        esac ;;
+      REVIEW)
+        # ^v on an agent row (#21): review its task right here in the popup.
+        # No exec — refusals and outcomes must survive until a keypress.
+        local rtarget rp
+        rtarget="$(printf '%s' "$selection" | cut -f2)"
+        case "$rtarget" in
+          PANE:*)
+            rp="${rtarget#PANE:}"
+            if [[ "$rp" == */* ]]; then
+              printf '\nno review: remote task — review it on %s\n' "${rp%%/*}"; sleep 1.5; continue
+            fi
+            "$AF" review "$rp" || true
+            printf '\n(any key returns to the picker)'
+            IFS= read -r -n1 _ || true
+            continue ;;
+          *) continue ;;
         esac ;;
       NAME)
         # ^r (or Alt-⏎) on a connect row: prompt for a workspace name (pre-filled

@@ -54,7 +54,7 @@ printf 'wait\n' > "$PANES/$hp.status"
 touch -d '@'"$(( $(date +%s) - 240 ))" "$PANES/$hp.status" 2>/dev/null \
   || touch -t "$(date -v-4M '+%Y%m%d%H%M.%S' 2>/dev/null)" "$PANES/$hp.status" 2>/dev/null
 check "wait record carries age"        "wait_snap 'claude|wait|[0-9]*|2[0-9][0-9]|'"
-check "record carries intent, | scrubbed" "wait_snap '|fix the auth¦bug|-\$'"
+check "record carries intent, | scrubbed" "wait_snap '|fix the auth¦bug|-|-\$'"
 check "tab glyph: wait wins -> ◆"      "wait_opt ◆"
 
 # Done state carries age too (same mtime source).

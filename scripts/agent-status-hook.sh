@@ -136,6 +136,51 @@ if [[ -n "$state" && "$state" != "$prev" && -f "$tf" ]]; then
      && [[ "$(grep '^state ' "$rec" 2>/dev/null | tail -1)" != "state $state "* ]]; then
     printf -v ts '%(%s)T' -1
     printf 'state %s %s\n' "$state" "$ts" >> "$rec" 2>/dev/null || true
+    # Diffstat on ATTENTION transitions only (#19): the rail answers "how big
+    # is the thing waiting on me" without attaching. Never on the per-tool
+    # working path and never in the snapshot tick (fork-free rule) — a
+    # wait/done transition is rare and already forked the grep above.
+    # Worktree tasks diff against the merge-base (committed work included,
+    # matching what review shows); others against HEAD (uncommitted work).
+    if [[ "$state" == "wait" || "$state" == "done" ]] && command -v git >/dev/null 2>&1; then
+      IFS=$'\t' read -r _dwt _drepo _dbr _ddir < <(awk '
+        $1=="worktree"{w=substr($0,10)} $1=="repo"{r=substr($0,6)}
+        $1=="branch"{b=substr($0,8)}   $1=="dir"{d=substr($0,5)}
+        END{printf "%s\t%s\t%s\t%s", w, r, b, d}' "$rec" 2>/dev/null) || true
+      _dtarget="${_dwt:-${_ddir:-}}"
+      # timeout where available + no optional locks: this runs on the agent's
+      # Stop path and a cold-cache diff on a huge repo must not stall the turn.
+      _dtmo=()
+      command -v timeout >/dev/null 2>&1 && _dtmo=(timeout 5)
+      if [[ -n "$_dtarget" && -d "$_dtarget" ]]; then
+        _dbase="HEAD"
+        if [[ -n "${_dwt:-}" ]]; then
+          # Worktree task: only the merge-base is an honest size. Diffing the
+          # worktree against its OWN HEAD would count committed work as zero —
+          # skip entirely when the base cannot be resolved.
+          _dbase=""
+          if [[ -n "${_drepo:-}" && -n "${_dbr:-}" ]]; then
+            _dbase="$(GIT_OPTIONAL_LOCKS=0 ${_dtmo[@]+"${_dtmo[@]}"} git -C "$_drepo" merge-base "$_dbr" HEAD 2>/dev/null || true)"
+          fi
+        fi
+        if [[ -n "$_dbase" ]]; then
+          # LC_ALL=C: --shortstat is localized; the parse below is not.
+          _dok=1
+          _draw="$(LC_ALL=C GIT_OPTIONAL_LOCKS=0 ${_dtmo[@]+"${_dtmo[@]}"} git -C "$_dtarget" diff --shortstat "$_dbase" 2>/dev/null)" || _dok=""
+          if [[ "$_draw" =~ ([0-9]+)\ file ]]; then
+            _di=0; _dd=0
+            [[ "$_draw" =~ ([0-9]+)\ insertion ]] && _di="${BASH_REMATCH[1]}"
+            [[ "$_draw" =~ ([0-9]+)\ deletion ]] && _dd="${BASH_REMATCH[1]}"
+            printf 'diffstat +%s-%s %s\n' "$_di" "$_dd" "$ts" >> "$rec" 2>/dev/null || true
+          elif [[ -n "$_dok" ]]; then
+            # Clean diff (distinct from git failure): tombstone the previous
+            # number so a committed-away delta never renders as current —
+            # snapshotd's format check coerces '-' back to no-badge.
+            printf 'diffstat - %s\n' "$ts" >> "$rec" 2>/dev/null || true
+          fi
+        fi
+      fi
+    fi
   fi
 fi
 

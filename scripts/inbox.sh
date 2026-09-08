@@ -60,9 +60,9 @@ rows() {
   local line s wn pane st age intent iso glyph sub out="" asort fp
   while IFS= read -r line; do
     [[ "$line" == A\ * ]] || continue
-    # iso before the catch-all _: the LAST read var swallows any newer
-    # trailing fields, and intent must never absorb them (CONTRIBUTING #7).
-    IFS='|' read -r s _ _ wn pane _ st _ age intent iso _ <<<"${line#A }"
+    # Named fields before the catch-all _: the LAST read var swallows any
+    # newer trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+    IFS='|' read -r s _ _ wn pane _ st _ age intent iso ds _ <<<"${line#A }"
     case "$st" in wait|done) ;; *) continue ;; esac
     glyph="$(state_glyph "$st")"
     if [[ -n "$intent" && "$intent" != "-" ]]; then wn="$intent"; fi
@@ -74,6 +74,8 @@ rows() {
       # wears the same urgency in the queue.
       if [[ "$st" == "wait" ]] && (( ESC > 0 && age >= ESC )); then sub+=" !"; fi
     fi
+    # Diffstat (#19): how big is the thing waiting on me.
+    [[ -n "${ds:-}" && "$ds" != "-" ]] && sub+=" · $ds"
     # Isolation rung (#11): wt/sbx/ctr when above host.
     [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
     fp=""

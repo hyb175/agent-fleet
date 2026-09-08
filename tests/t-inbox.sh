@@ -18,7 +18,7 @@ inbox() { AGENT_FLEET_ROOT="$REPO" AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$X
 # --- rows from a fabricated snapshot ----------------------------------------
 { printf 'T %s 1\n' "$(date +%s)"
   printf 'A ws|@1|1|w1|%%10|claude|wait|1|60|short wait\n'
-  printf 'A ws|@2|2|w2|%%11|claude|wait|1|900|long wait\n'
+  printf 'A ws|@2|2|w2|%%11|claude|wait|1|900|long wait|-|+31-2\n'
   printf 'A ws|@3|3|w3|%%12|claude|done|1|300|finished thing\n'
   printf 'A ws|@4|4|w4|%%13|claude|working|1|-|busy thing\n'
   printf 'A devbox/ws|devbox/@1|1|rw|devbox/%%9|claude|wait|1|30|remote thing\n'
@@ -35,6 +35,7 @@ check "wait ranks above done" \
 # Escalation marker (#17): past the threshold the row wears '!'; fresh waits do not.
 check "escalated wait wears the ! marker" "grep -q 'wait 15m !' <<<\"\$rows\""
 check "fresh wait unmarked"               "! grep -q 'wait 1m !' <<<\"\$rows\""
+check "diffstat shown on the row (#19)"   "grep -q '· +31-2' <<<\"\$rows\""
 
 # Zero-state reads as alive (#18): totals from the snapshot, not a dead end.
 {
@@ -46,7 +47,7 @@ zrows="$(inbox --rows)"
 check "inbox zero shows fleet totals" "grep -q '2 agents: 1 working · 1 idle' <<<\"\$zrows\""
 {
   printf 'A ws|@1|1|w1|%%10|claude|wait|1|60|short wait\n'
-  printf 'A ws|@2|2|w2|%%11|claude|wait|1|900|long wait\n'
+  printf 'A ws|@2|2|w2|%%11|claude|wait|1|900|long wait|-|+31-2\n'
   printf 'A ws|@3|3|w3|%%12|claude|done|1|300|finished thing\n'
   printf 'A ws|@4|4|w4|%%13|claude|working|1|-|busy thing\n'
   printf 'A devbox/ws|devbox/@1|1|rw|devbox/%%9|claude|wait|1|30|remote thing\n'
