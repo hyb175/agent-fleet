@@ -119,10 +119,18 @@ progress_reap() {
 declare -A WOPT_LAST=()
 # Wait-escalation (#8): at most ONE re-notification per wait episode. The mark
 # is set when a wait crosses the threshold and cleared the moment the pane
-# leaves wait. AGENT_FLEET_NOTIFY_ESCALATE = seconds; 0/unset = off.
-ESCALATE="${AGENT_FLEET_NOTIFY_ESCALATE:-0}"
-[[ "$ESCALATE" =~ ^[0-9]+$ ]] || ESCALATE=0
+# leaves wait. AGENT_FLEET_NOTIFY_ESCALATE = seconds; 0 = off. ON by default
+# (#17): "an agent has been stuck on a question for 10 minutes while you are
+# deep elsewhere" is the product's core case — it must not need discovering
+# an env var first.
+ESCALATE="${AGENT_FLEET_NOTIFY_ESCALATE:-600}"
+[[ "$ESCALATE" =~ ^[0-9]+$ ]] || ESCALATE=600
 declare -A ESC_DONE=()
+# First tick after a (re)start seeds ESC_DONE silently: waits already past
+# the threshold re-notified under the PREVIOUS daemon — a reload must not
+# re-fire the whole backlog at once ("once per wait episode" survives
+# restarts). Only episodes crossing the threshold on OUR watch notify.
+FIRST_TICK=1
 # Container agents' hooks run INSIDE the container where notify.sh has no
 # desktop to talk to — the daemon edge-detects their transitions host-side
 # (#13). Container panes only: host agents' hooks already notify, and firing
@@ -291,8 +299,10 @@ build() {
       if (( ESCALATE > 0 )) && [[ "$age" =~ ^[0-9]+$ ]] && (( age >= ESCALATE )) \
          && [[ -z "${ESC_DONE[$pane]:-}" ]]; then
         ESC_DONE[$pane]=1
-        AGENT_FLEET_NOTIFY="${AGENT_FLEET_NOTIFY:-1}" \
-          bash "$ROOT/scripts/notify.sh" "$SOCK" "$pane" "still waiting ($(( age / 60 ))m)" >/dev/null 2>&1 &
+        if (( ! FIRST_TICK )); then
+          AGENT_FLEET_NOTIFY="${AGENT_FLEET_NOTIFY:-1}" \
+            bash "$ROOT/scripts/notify.sh" "$SOCK" "$pane" "still waiting ($(( age / 60 ))m)" >/dev/null 2>&1 &
+        fi
       fi
     elif [[ -n "${ESC_DONE[$pane]:-}" ]]; then
       unset "ESC_DONE[$pane]"
@@ -389,6 +399,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     tx list-sessions >/dev/null 2>&1 || cleanup   # server gone → exit
     progress_reap
     build
+    FIRST_TICK=0
     ticks=$(( ticks + 1 ))
     if (( ticks >= SAVE_EVERY )); then
       ticks=0

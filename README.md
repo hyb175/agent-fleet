@@ -197,6 +197,7 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | `agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--isolation <rung>] [--focus]` | Spawn an interactive agent from an intent: resolves (or creates) the workspace for the directory, starts a hooked `claude` with the prompt as its argument, and writes a task record. `--isolation` picks the [isolation ladder](#isolation-ladder) rung (`--isolated`/`--no-isolated` are legacy spellings of `worktree`/`host`). Prints `<task-id> <pane-id>`. |
 | `agent-fleet task ls` | List task records with state, `[branch]` (`*` dirty, `^` unmerged), dead panes as `(gone)`, and any orphaned worktrees. |
 | `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, worktree/branch, state history). |
+| `agent-fleet task adopt [%pane] ["intent"]` | Bring an existing pane into the record loop (intent defaults to the window name). Hooked agents auto-adopt on their first event; adopt covers idle agents and panes from before the record system. |
 | `agent-fleet task done\|drop <id\|%pane>` | Mark a task terminal (merged / abandoned) — the gate `clean` requires. |
 | `agent-fleet task clean [<id\|%pane>] [--dry-run] [--force] [--keep-branch]` | Reclaim terminal tasks' worktrees and branches. Refuses dirty trees and unmerged branches without `--force` — unreviewed work is never eaten silently. |
 | `agent-fleet task history` (alias `agent-fleet history`) | Finished tasks grouped per day (newest first, `n tasks, n merged` headers): outcome (merged / abandoned / pr; `abandoned~` = agent killed without an outcome), duration, total wait time, repo, intent. Reads task records only — survives restarts and reboots. |
@@ -239,6 +240,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 | `Prefix c` | New plain shell window (tmux default) |
 | `Prefix C` | Add a Claude agent — menu picks a new tab or a new workspace; starts in the current dir, jumps to it |
 | `Prefix R` | Force-repaint the focused pane (fixes a stale Claude frame) |
+| `Prefix ?` | Fleet keymap as a menu — every row also launches its action (tmux's raw dump stays at `:list-keys`) |
 | `Prefix Tab` | Jump back to the previously focused agent; toggles between two |
 | `Prefix Space` | Triage jump — next agent needing input (`wait`, then `done`), cycling; most urgent first |
 | `Prefix L` | Switch to the previous workspace |
@@ -275,7 +277,7 @@ A single daemon (`snapshotd.sh`, one per fleet) polls tmux once a second, resolv
 
 A hooked agent changing to **wait** or **done** fires a desktop notification whose body leads with the **task intent**. Where the platform allows, clicking it jumps to the agent: install `terminal-notifier` on macOS (the plain `osascript` banner isn't clickable), and on Linux `notify-send` gets a *Jump to agent* action when the notification daemon supports actions. Scrape-tier agents don't notify. `AGENT_FLEET_NOTIFY=0` silences.
 
-An agent stuck in **wait** past `AGENT_FLEET_NOTIFY_ESCALATE` seconds re-notifies **once per wait episode** (default off; the daemon re-arms when the agent resumes).
+An agent stuck in **wait** past `AGENT_FLEET_NOTIFY_ESCALATE` seconds re-notifies **once per wait episode** (default 600 — ten minutes; `0` disables; the daemon re-arms when the agent resumes). Inbox rows past the threshold wear a `!` marker.
 
 The fleet also drives a **terminal progress bar** (OSC 9;4 — Ghostty 1.2+, iTerm2, WezTerm): indeterminate while the active window's agent works, red when it needs input, cleared when done. Claude doesn't emit these under tmux, so the daemon synthesizes them from the active window's most-urgent state. `AGENT_FLEET_PROGRESS=0` disables it (daemon restart to change).
 
@@ -327,7 +329,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi hermes` | Commands recognized as agents when scraping (space-separated) |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created on first boot |
 | `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
-| `AGENT_FLEET_NOTIFY_ESCALATE` | `0` (off) | Seconds in `wait` before a one-per-episode re-notification (daemon restart to change) |
+| `AGENT_FLEET_NOTIFY_ESCALATE` | `600` | Seconds in `wait` before a one-per-episode re-notification and the inbox `!` marker (`0` disables; daemon restart to change) |
 | `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (`0` disables; read at daemon start) |
 | `AGENT_FLEET_SHIM` | `1` | Put the claude shim on shell panes' `PATH` (`0` opts out) |
 | `AGENT_FLEET_PROJECT_ROOTS` | auto | Colon-separated dirs whose children the connect view lists |

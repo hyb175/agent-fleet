@@ -32,6 +32,25 @@ check "longest wait first" \
   "[[ \"\$(grep -n 'long wait' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'short wait' <<<\"\$rows\" | cut -d: -f1)\" ]]"
 check "wait ranks above done" \
   "[[ \"\$(grep -n 'short wait' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'finished thing' <<<\"\$rows\" | cut -d: -f1)\" ]]"
+# Escalation marker (#17): past the threshold the row wears '!'; fresh waits do not.
+check "escalated wait wears the ! marker" "grep -q 'wait 15m !' <<<\"\$rows\""
+check "fresh wait unmarked"               "! grep -q 'wait 1m !' <<<\"\$rows\""
+
+# Zero-state reads as alive (#18): totals from the snapshot, not a dead end.
+{
+  printf 'A ws|@4|4|w4|%%13|claude|working|1|-|busy thing\n'
+  printf 'A ws|@5|5|w5|%%14|claude|idle|1|-|resting\n'
+} > "$SNAPF"
+# shellcheck disable=SC2034
+zrows="$(inbox --rows)"
+check "inbox zero shows fleet totals" "grep -q '2 agents: 1 working · 1 idle' <<<\"\$zrows\""
+{
+  printf 'A ws|@1|1|w1|%%10|claude|wait|1|60|short wait\n'
+  printf 'A ws|@2|2|w2|%%11|claude|wait|1|900|long wait\n'
+  printf 'A ws|@3|3|w3|%%12|claude|done|1|300|finished thing\n'
+  printf 'A ws|@4|4|w4|%%13|claude|working|1|-|busy thing\n'
+  printf 'A devbox/ws|devbox/@1|1|rw|devbox/%%9|claude|wait|1|30|remote thing\n'
+} > "$SNAPF"
 
 # --- previews ---------------------------------------------------------------
 # shellcheck disable=SC2034 # rprev read inside the eval'd check() condition below

@@ -36,6 +36,10 @@ source "$ROOT/scripts/status.sh"   # theme (T_*/AF_THEME_*), fmt_age, cache path
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 SNAP="$AF_CACHE_DIR/fleet.snapshot"
+# Escalation threshold (#17): same default as snapshotd — the inbox marker
+# and the re-notification must agree on what "stuck" means.
+ESC="${AGENT_FLEET_NOTIFY_ESCALATE:-600}"
+[[ "$ESC" =~ ^[0-9]+$ ]] || ESC=600
 
 # Fingerprint of what the user is looking at: the FULL visible pane,
 # whitespace-normalized. Full, not a tail — permission dialogs share their
@@ -66,6 +70,9 @@ rows() {
     sub="$st"; asort=0
     if [[ "$age" =~ ^[0-9]+$ ]]; then
       fmt_age "$age"; sub="$st $AGE"; asort="$age"
+      # Past the escalation threshold (#17): the row that already re-notified
+      # wears the same urgency in the queue.
+      if [[ "$st" == "wait" ]] && (( ESC > 0 && age >= ESC )); then sub+=" !"; fi
     fi
     # Isolation rung (#11): wt/sbx/ctr when above host.
     [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
@@ -78,7 +85,19 @@ rows() {
   if [[ -n "$out" ]]; then
     printf '%s' "$out" | sort -t$'\t' -k1,1n -k2,2nr | cut -f3-
   else
-    printf 'NONE\t\033[2minbox zero — nothing needs you\033[0m\n'
+    # Zero-state that reads as ALIVE (#18): what the fleet is doing right now,
+    # so an empty queue is reassurance, not a dead end.
+    local nw=0 ni=0 tot=0
+    while IFS= read -r line; do
+      [[ "$line" == A\ * ]] || continue
+      tot=$(( tot + 1 ))
+      case "$line" in
+        *'|working|'*) nw=$(( nw + 1 )) ;;
+        *'|idle|'*)    ni=$(( ni + 1 )) ;;
+      esac
+    done < "$SNAP"
+    printf 'NONE\t\033[2minbox zero — %s agents: %s working · %s idle · nothing needs you\033[0m\n' \
+      "$tot" "$nw" "$ni"
   fi
 }
 

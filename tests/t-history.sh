@@ -16,7 +16,8 @@ af() { AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" "$REPO/bin/agent-flee
 CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 TASKS="$CACHE/tasks"
 
-check "no records at all: empty message" "[[ \"\$(af task history)\" == '(no completed tasks)' ]]"
+check "no records: empty state teaches the fill command" \
+  "[[ \"\$(af task history)\" == '(no completed tasks'*'agent-fleet task'* ]]"
 
 mkrec() {  # <tid> <created> <intent> <dir> <pane>; state lines on stdin
   { printf 'id %s\nintent %s\ndir %s\nkind claude\ncreated %s\npane %s\n' \
