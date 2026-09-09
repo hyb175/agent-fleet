@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-worktree.sh — worktree-per-task isolation (#4) + cleanup lifecycle (#5).
+# t-worktree.sh — worktree-per-task isolation + cleanup lifecycle.
 #   - --isolated creates branch af/task/<slug> + a worktree; the agent starts
 #     there; the record carries worktree/branch/repo; collisions get suffixes
 #   - non-git dirs degrade to the shared checkout

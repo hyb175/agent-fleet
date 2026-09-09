@@ -41,7 +41,7 @@ f="$cache/${pane}.status"
 input=""
 [[ -t 0 ]] || input="$(cat 2>/dev/null || true)"
 
-# Auto-adopt (#16): a hooked agent whose pane has no task record yet gets a
+# Auto-adopt: a hooked agent whose pane has no task record yet gets a
 # minimal one, so hand-started agents (shim claude, kimi/codex/hermes/…) join
 # the record loop — history, review, intent titles — without ceremony. Once
 # per pane (the pointer file gates it). `af add`/`af task` spawns pre-create
@@ -136,7 +136,7 @@ if [[ -n "$state" && "$state" != "$prev" && -f "$tf" ]]; then
      && [[ "$(grep '^state ' "$rec" 2>/dev/null | tail -1)" != "state $state "* ]]; then
     printf -v ts '%(%s)T' -1
     printf 'state %s %s\n' "$state" "$ts" >> "$rec" 2>/dev/null || true
-    # Diffstat on ATTENTION transitions only (#19): the rail answers "how big
+    # Diffstat on ATTENTION transitions only: the rail answers "how big
     # is the thing waiting on me" without attaching. Never on the per-tool
     # working path and never in the snapshot tick (fork-free rule) — a
     # wait/done transition is rare and already forked the grep above.

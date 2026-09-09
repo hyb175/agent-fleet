@@ -32,12 +32,12 @@ check "longest wait first" \
   "[[ \"\$(grep -n 'long wait' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'short wait' <<<\"\$rows\" | cut -d: -f1)\" ]]"
 check "wait ranks above done" \
   "[[ \"\$(grep -n 'short wait' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'finished thing' <<<\"\$rows\" | cut -d: -f1)\" ]]"
-# Escalation marker (#17): past the threshold the row wears '!'; fresh waits do not.
+# Escalation marker: past the threshold the row wears '!'; fresh waits do not.
 check "escalated wait wears the ! marker" "grep -q 'wait 15m !' <<<\"\$rows\""
 check "fresh wait unmarked"               "! grep -q 'wait 1m !' <<<\"\$rows\""
-check "diffstat shown on the row (#19)"   "grep -q '· +31-2' <<<\"\$rows\""
+check "diffstat shown on the row"   "grep -q '· +31-2' <<<\"\$rows\""
 
-# Zero-state reads as alive (#18): totals from the snapshot, not a dead end.
+# Zero-state reads as alive: totals from the snapshot, not a dead end.
 {
   printf 'A ws|@4|4|w4|%%13|claude|working|1|-|busy thing\n'
   printf 'A ws|@5|5|w5|%%14|claude|idle|1|-|resting\n'
@@ -85,7 +85,7 @@ printf 'id %s\nintent finished thing\npane %%12\nworktree %s\nbranch af/task/pro
   "$TID" "$WORK/wt" "$REPODIR" > "$CACHE/tasks/$TID"
 printf '%s\n' "$TID" > "$CACHE/panes/%12.task"
 # Captured, not piped: grep -q's early exit would SIGPIPE the preview under
-# pipefail (CONTRIBUTING #3).
+# pipefail (capture-then-grep — CONTRIBUTING).
 # shellcheck disable=SC2034 # read inside the eval'd check() condition below
 dprev="$(inbox --preview 'PANE:%12|done')"
 check "done preview shows the diffstat" "grep -q 'newfile.txt' <<<\"\$dprev\""
@@ -97,7 +97,7 @@ git -C "$WORK/wt" -c user.email=t@t -c user.name=t commit -qm probe
 dprev2="$(inbox --preview 'PANE:%12|done')"
 check "committed task work still previews" "grep -q 'newfile.txt' <<<\"\$dprev2\""
 
-# --- inline answers (#7) -----------------------------------------------------
+# --- inline answers -----------------------------------------------------
 # A pane genuinely blocked on read(1): approve sends Enter, text sends a reply.
 ap="$(tx split-window -d -P -F '#{pane_id}' -t t: \
   "bash -c 'read -r -p \"Proceed? \" a; printf %s \"answered:\$a\" > '$WORK'/ans1; sleep 60'")"
@@ -144,5 +144,43 @@ check "state-change refused" "[[ $rc -ne 0 ]] && grep -q 'moved on' <<<\"\$out\"
 # shellcheck disable=SC2034 # out read inside the eval'd check() condition below
 out="$(inbox --answer approve 'PANE:devbox/%9|wait|123' 2>&1)" && rc=0 || rc=$?
 check "remote row refuses inline answers" "[[ $rc -ne 0 ]] && grep -q 'remote' <<<\"\$out\""
+
+# --- batch approve -----------------------------------------------------
+# Two waiting readers; one pane whose STATUS FILE says it moved on (the batch
+# gate re-reads status at send time); one remote row. ^a = approve all.
+# New windows, not splits — the shared test window is out of split space by
+# this point ("no space for new pane" would void the whole section).
+ba1="$(tx new-window -d -P -F '#{pane_id}' -t t: \
+  "bash -c 'read -r -p \"ok1? \" a; printf done1 > '$WORK'/ba1; sleep 60'")"
+ba2="$(tx new-window -d -P -F '#{pane_id}' -t t: \
+  "bash -c 'read -r -p \"ok2? \" a; printf done2 > '$WORK'/ba2; sleep 60'")"
+ba3="$(tx new-window -d -P -F '#{pane_id}' -t t: \
+  "bash -c 'read -r -p \"ok3? \" a; printf done3 > '$WORK'/ba3; sleep 60'")"
+sleep 0.6
+# new-window re-armed the conf's snapshotd hook — kill it again or it
+# overwrites the fabricated snapshot below (same dance as after boot).
+kill "$(cat "$CACHE/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null || true
+for _ in $(seq 1 30); do [[ -d "$CACHE/snapshotd.lock" ]] || break; sleep 0.2; done
+printf 'wait\n' > "$CACHE/panes/$ba1.status"
+printf 'wait\n' > "$CACHE/panes/$ba2.status"
+printf 'working\n' > "$CACHE/panes/$ba3.status"   # snapshot will SAY wait; status says otherwise
+{
+  printf 'T %s 1\n' "$(date +%s)"
+  printf 'A ws|@1|1|b1|%s|claude|wait|1|60|batch one\n' "$ba1"
+  printf 'A ws|@2|2|b2|%s|claude|wait|1|70|batch two\n' "$ba2"
+  printf 'A ws|@3|3|b3|%s|claude|wait|1|80|moved on\n' "$ba3"
+  printf 'A devbox/ws|devbox/@1|1|rw|devbox/%%9|claude|wait|1|30|remote thing\n'
+} > "$SNAPF"
+# No confirmation -> cancelled, nothing fired (the ^a guard).
+# shellcheck disable=SC2034 # cancel/bout read inside the eval'd check() conditions below
+cancel="$(inbox --answer-all </dev/null 2>&1)"
+check "batch without confirmation cancels" "grep -q 'cancelled' <<<\"\$cancel\""
+check "cancel sent nothing" "[[ ! -s '$WORK/ba1' && ! -s '$WORK/ba2' ]]"
+# shellcheck disable=SC2034
+bout="$(printf 'y' | inbox --answer-all 2>&1)"
+for _ in $(seq 1 20); do [[ -s "$WORK/ba1" && -s "$WORK/ba2" ]] && break; sleep 0.2; done
+check "batch: both waiting panes approved" "[[ -s '$WORK/ba1' && -s '$WORK/ba2' ]]"
+check "batch: moved-on pane untouched" "[[ ! -s '$WORK/ba3' ]]"
+check "batch: honest tally" "grep -q 'approved 2 · skipped 2' <<<\"\$bout\""
 
 exit "$FAIL"

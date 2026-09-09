@@ -233,7 +233,7 @@ for s in "${sess_order[@]}"; do
           opencode) (( has_sid )) && rc="opencode --session $sid" || rc="opencode" ;;
           hermes)   (( has_sid )) && rc="hermes --resume $sid" || rc="hermes" ;;
           *)     (( has_sid )) && rc="claude --resume $sid" || rc="claude"
-                 # Sandbox-rung task (#11): relaunch with ITS overlay (hooks +
+                 # Sandbox-rung task: relaunch with ITS overlay (hooks +
                  # sandbox superset) so a reboot never quietly drops the rung.
                  # A purged cache REGENERATES the overlay from the record (the
                  # record's dir line is the sandboxed root) — falling back to
@@ -256,7 +256,7 @@ for s in "${sess_order[@]}"; do
                  elif [[ -f "$OVERLAY" ]]; then rc="$rc --settings $(printf '%q' "$OVERLAY")"
                  fi ;;
         esac
-        # Container-rung task (#12/#13): relaunching claude on the HOST would
+        # Container-rung task: relaunching claude on the HOST would
         # silently drop the container boundary the record still claims. Route
         # through the CLI's resume shim instead — it rebuilds the container
         # command from the record (resuming the captured session) and execs

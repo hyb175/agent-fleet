@@ -38,7 +38,7 @@ check "idle -> cleared (9;4;0)" "wait_for $'\x1b\x1b]9;4;0'"
 
 kill "$(cat "$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null
 # The daemon's cleanup emits a parting clear and releases its lock — wait for
-# the release so phase 2's fresh daemon can start and the tap can be truncated
+# the release so the second daemon can start and the tap can be truncated
 # AFTER the parting sequence has landed.
 for _ in $(seq 1 30); do [[ -d "$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock" ]] || break; sleep 0.2; done
 sleep 0.3

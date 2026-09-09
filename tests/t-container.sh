@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-container.sh — container rung (#12).
+# t-container.sh — container rung.
 #   - default image: window command is `docker run --rm -it` with the worktree,
 #     parent .git, fleet cache, scripts, and ~/.claude mounted at IDENTICAL
 #     host paths; env passthrough; NET_ADMIN for the firewall; host uid/gid
@@ -9,7 +9,7 @@
 #     up/exec (no NET_ADMIN, no af-default)
 #   - lifecycle: task done stops the named container
 #   - restore leaves container tasks as shells (no silent host relaunch) until
-#     container re-link (#13)
+#     container re-link
 # All docker/devcontainer calls hit an argv-logging stub — hermetic on both CI
 # platforms, no images, no daemon.
 set -uo pipefail
@@ -91,7 +91,7 @@ check "snapshot iso=ctr" "awk -F'|' -v p='$P' '/^A /{if (\$5==p && \$11==\"ctr\"
 af task 'done' "$T" >/dev/null
 check "task done stopped the container" "grep -q \"stop -t 2 \$CN\" '$DLOG'"
 
-# --- #13: session mirror -----------------------------------------------------
+# --- session mirror -----------------------------------------------------
 # The hook inside the container writes the session FILE through the cache
 # mount but cannot set the pane option; snapshotd mirrors it host-side.
 printf 'cafe-sess-9\n' > "$CACHE/panes/$P.session"
@@ -100,7 +100,7 @@ poll_until 15 "[[ \"\$(tx display-message -p -t $P '#{@fleet-session}')\" == 'ca
 check "session file mirrored into @fleet-session" \
   "[[ \"\$(tx display-message -p -t $P '#{@fleet-session}')\" == 'cafe-sess-9' ]]"
 
-# --- #13: host-side notification edge ---------------------------------------
+# --- host-side notification edge ---------------------------------------
 # The container hook's notify.sh no-ops inside (no desktop); the daemon fires
 # host-side on wait/done transitions of container panes. Seed a known state
 # via the snapshot, then transition.
@@ -113,7 +113,7 @@ printf 'done\n' > "$CACHE/panes/$P.status"
 poll_until 15 "grep -q 'finished' '$NLOG'"
 check "container done transition notifies host-side" "grep -q 'finished' '$NLOG'"
 
-# --- #13: review flow works host-side on the container task's worktree ------
+# --- review flow works host-side on the container task's worktree ------
 ( cd "$WT" && echo change > probe.txt && git add probe.txt \
   && git -c user.email=t@t -c user.name=t commit -qm probe )
 # shellcheck disable=SC2034
@@ -142,7 +142,7 @@ check "devcontainer: done stops via workspace label" \
   "grep -q 'ps -q --filter label=devcontainer.local_folder=' '$DLOG' && grep -q 'stop -t 2 cafe123' '$DLOG'"
 rm -rf "$REPODIR/.devcontainer"
 
-# --- restore re-link (#13): resumed IN a container, never on the host -------
+# --- restore re-link: resumed IN a container, never on the host -------
 "$REPO/scripts/persist-save.sh"
 tx kill-server; sleep 0.4
 : > "$DLOG"

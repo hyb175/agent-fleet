@@ -83,7 +83,7 @@ list_fleet() {
       T\ *) snap_ts="${line#T }" ;;
       A\ *)
         # Named fields before the catch-all _: the LAST read var swallows any
-        # newer trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+        # newer trailing fields, and intent must never absorb them (fields grow at the END — CONTRIBUTING).
         IFS='|' read -r s wid widx wn pane _ st pidx age intent iso ds _ <<<"${line#A }"
         glyph="$(glyph_of "$st")"
         # Title = task intent when present (capped — fzf rows are one line),
@@ -99,11 +99,11 @@ list_fleet() {
           fmt_age "$age"; sub="$st $AGE"
           [[ "$st" == "wait" ]] && asort="$age"
         fi
-        # Diffstat (#19): wait/done only.
+        # Diffstat: wait/done only.
         if [[ "$st" == "wait" || "$st" == "done" ]]; then
           [[ -n "${ds:-}" && "$ds" != "-" ]] && sub+=" · $ds"
         fi
-        # Isolation rung (#11): wt/sbx/ctr when above host.
+        # Isolation rung: wt/sbx/ctr when above host.
         [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
         printf -v line 'PANE:%s\t%s \033[1m%-16s\033[0m \033[2m%s:%s · %s\033[0m' "$pane" "$glyph" "$wn" "$s" "$widx" "$sub"
         # Sort key (rank asc, wait-age desc, idx asc): most urgent rank first,
@@ -336,7 +336,7 @@ main() {
           *)       continue ;;
         esac ;;
       REVIEW)
-        # ^v on an agent row (#21): review its task right here in the popup.
+        # ^v on an agent row: review its task right here in the popup.
         # No exec — refusals and outcomes must survive until a keypress.
         local rtarget rp
         rtarget="$(printf '%s' "$selection" | cut -f2)"

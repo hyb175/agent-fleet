@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-adopt.sh — task adoption (#16).
+# t-adopt.sh — task adoption.
 #   - `task adopt %pane "intent"` creates a record for an existing pane
 #     (pointer + @fleet-task + intent); refuses a pane that already has one;
 #     intent defaults to the window name
@@ -21,7 +21,7 @@ export PATH="$FAKEBIN:$PATH"
 af() { AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" "$REPO/bin/agent-fleet" "$@"; }
 
 boot_server __boot__ "$WORK"
-check "Prefix ? cheatsheet bound (#18)" "tx list-keys 2>/dev/null | grep -q 'agent-fleet keys'"
+check "Prefix ? cheatsheet bound" "tx list-keys 2>/dev/null | grep -q 'agent-fleet keys'"
 mkdir -p "$WORK/a"
 tx new-session -d -s aw -n legacy-agent -c "$WORK/a"
 sleep 0.5

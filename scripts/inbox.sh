@@ -8,7 +8,7 @@
 # Rows come from fleet.snapshot (no tmux polling on open); previews touch
 # tmux/git only for the row under the cursor.
 #
-# Inline answers (#7): most waits need one key — approve (Enter into the
+# Inline answers: most waits need one key — approve (Enter into the
 # pane), deny (Escape), or a short reply — so the inbox sends them via
 # send-keys without attaching. Attach stays the escape hatch for anything
 # nontrivial; the inline path is sugar over the same live PTY. Guardrail:
@@ -36,7 +36,7 @@ source "$ROOT/scripts/status.sh"   # theme (T_*/AF_THEME_*), fmt_age, cache path
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCKET" "$@"; }
 
 SNAP="$AF_CACHE_DIR/fleet.snapshot"
-# Escalation threshold (#17): same default as snapshotd — the inbox marker
+# Escalation threshold: same default as snapshotd — the inbox marker
 # and the re-notification must agree on what "stuck" means.
 ESC="${AGENT_FLEET_NOTIFY_ESCALATE:-600}"
 [[ "$ESC" =~ ^[0-9]+$ ]] || ESC=600
@@ -61,7 +61,7 @@ rows() {
   while IFS= read -r line; do
     [[ "$line" == A\ * ]] || continue
     # Named fields before the catch-all _: the LAST read var swallows any
-    # newer trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+    # newer trailing fields, and intent must never absorb them (fields grow at the END — CONTRIBUTING).
     IFS='|' read -r s _ _ wn pane _ st _ age intent iso ds _ <<<"${line#A }"
     case "$st" in wait|done) ;; *) continue ;; esac
     glyph="$(state_glyph "$st")"
@@ -70,13 +70,13 @@ rows() {
     sub="$st"; asort=0
     if [[ "$age" =~ ^[0-9]+$ ]]; then
       fmt_age "$age"; sub="$st $AGE"; asort="$age"
-      # Past the escalation threshold (#17): the row that already re-notified
+      # Past the escalation threshold: the row that already re-notified
       # wears the same urgency in the queue.
       if [[ "$st" == "wait" ]] && (( ESC > 0 && age >= ESC )); then sub+=" !"; fi
     fi
-    # Diffstat (#19): how big is the thing waiting on me.
+    # Diffstat: how big is the thing waiting on me.
     [[ -n "${ds:-}" && "$ds" != "-" ]] && sub+=" · $ds"
-    # Isolation rung (#11): wt/sbx/ctr when above host.
+    # Isolation rung: wt/sbx/ctr when above host.
     [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
     fp=""
     if [[ "$st" == "wait" && "$pane" != */* ]]; then fp="$(pane_fp "$pane")"; fi
@@ -87,7 +87,7 @@ rows() {
   if [[ -n "$out" ]]; then
     printf '%s' "$out" | sort -t$'\t' -k1,1n -k2,2nr | cut -f3-
   else
-    # Zero-state that reads as ALIVE (#18): what the fleet is doing right now,
+    # Zero-state that reads as ALIVE: what the fleet is doing right now,
     # so an empty queue is reassurance, not a dead end.
     local nw=0 ni=0 tot=0
     while IFS= read -r line; do
@@ -131,6 +131,44 @@ answer() {  # <approve|deny|text> <key> [reply]
   esac
   # Give the agent a beat to consume the keys so the reloaded row reflects it.
   sleep 0.4
+}
+
+# Batch approve: one keystroke clears a queue of waiting approvals.
+# Per pane the gate is the STATUS FILE (hook-written, fresher than the
+# snapshot) re-read at send time — a row that left wait between paint and
+# press is skipped, never blind-fired. Same key semantics as ^y (Enter =
+# the prompt's default); remote rows are skipped like ^y refuses them.
+answer_all() {
+  local line pane st st_now n_ok=0 n_skip=0 n_wait=0 go=""
+  [[ -f "$SNAP" ]] || { echo "no snapshot yet"; sleep 1.5; return 0; }
+  # Confirm first: approving a permission prompt EXECUTES the pending action,
+  # and ^a is also readline muscle-memory — one stray keystroke must never
+  # green-light the whole fleet. The count includes rows a filter hid.
+  while IFS= read -r line; do
+    [[ "$line" == A\ * ]] || continue
+    IFS='|' read -r _ _ _ _ pane _ st _ <<<"${line#A }"
+    [[ "$st" == "wait" && "$pane" != */* ]] && n_wait=$(( n_wait + 1 ))
+  done < "$SNAP"
+  if (( n_wait == 0 )); then echo "nothing waiting"; sleep 1.2; return 0; fi
+  printf 'approve ALL %s waiting agent(s) — including any hidden by your filter? [y/N] ' "$n_wait"
+  IFS= read -r -n1 go || go=""
+  printf '\n'
+  [[ "$go" == "y" || "$go" == "Y" ]] || { echo "cancelled"; sleep 0.8; return 0; }
+  while IFS= read -r line; do
+    [[ "$line" == A\ * ]] || continue
+    IFS='|' read -r _ _ _ _ pane _ st _ <<<"${line#A }"
+    [[ "$st" == "wait" ]] || continue
+    if [[ "$pane" == */* ]]; then n_skip=$(( n_skip + 1 )); continue; fi
+    st_now="$(cat "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true)"
+    if [[ "$st_now" != "wait" ]]; then n_skip=$(( n_skip + 1 )); continue; fi
+    if tx send-keys -t "$pane" Enter 2>/dev/null; then
+      n_ok=$(( n_ok + 1 ))
+    else
+      n_skip=$(( n_skip + 1 ))
+    fi
+  done < "$SNAP"
+  echo "approved $n_ok · skipped $n_skip (moved on / remote / gone)"
+  sleep 1.2
 }
 
 ask() {  # <key> — free-text prompt inside the popup, then send
@@ -204,6 +242,7 @@ case "${1:-}" in
   --rows)    rows; exit 0 ;;
   --preview) preview "${2:-}"; exit 0 ;;
   --answer)  answer "${2:-}" "${3:-}" "${4:-}"; exit 0 ;;
+  --answer-all) answer_all; exit 0 ;;
   --ask)     ask "${2:-}"; exit 0 ;;
   --review)  review "${2:-}"; exit 0 ;;
 esac
@@ -217,12 +256,13 @@ fi
 sel="$(rows | fzf \
   --ansi --no-sort --reverse --cycle --no-scrollbar \
   --delimiter=$'\t' --with-nth=2.. \
-  --header='inbox · ⏎ attach · ^y approve · ^n deny · ^t reply · ^v review · ^r refresh' \
+  --header='inbox · ⏎ attach · ^y approve · ^a approve ALL · ^n deny · ^t reply · ^v review · ^r refresh' \
   --prompt='◆ ' \
   --preview="'$0' --preview {1}" \
   --preview-window=down,55%,border-top \
   --bind="ctrl-r:reload('$0' --rows)" \
   --bind="ctrl-y:execute('$0' --answer approve {1})+reload('$0' --rows)" \
+  --bind="ctrl-a:execute('$0' --answer-all)+reload('$0' --rows)" \
   --bind="ctrl-n:execute('$0' --answer deny {1})+reload('$0' --rows)" \
   --bind="ctrl-t:execute('$0' --ask {1})+reload('$0' --rows)" \
   --bind="ctrl-v:execute('$0' --review {1})+reload('$0' --rows)" \

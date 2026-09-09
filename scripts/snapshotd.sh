@@ -118,12 +118,12 @@ progress_reap() {
 # terminal (see cleanup above).
 # Last tab glyph pushed per window (see build) — change-detection state.
 declare -A WOPT_LAST=()
-# Wait-escalation (#8): at most ONE re-notification per wait episode. The mark
+# Wait-escalation: at most ONE re-notification per wait episode. The mark
 # is set when a wait crosses the threshold and cleared the moment the pane
-# leaves wait. AGENT_FLEET_NOTIFY_ESCALATE = seconds; 0 = off. ON by default
-# (#17): "an agent has been stuck on a question for 10 minutes while you are
-# deep elsewhere" is the product's core case — it must not need discovering
-# an env var first.
+# leaves wait. AGENT_FLEET_NOTIFY_ESCALATE = seconds; 0 = off. ON by default:
+# "an agent has been stuck on a question for 10 minutes while you are deep
+# elsewhere" is the product's core case — it must not need discovering an
+# env var first.
 ESCALATE="${AGENT_FLEET_NOTIFY_ESCALATE:-600}"
 [[ "$ESCALATE" =~ ^[0-9]+$ ]] || ESCALATE=600
 declare -A ESC_DONE=()
@@ -133,9 +133,9 @@ declare -A ESC_DONE=()
 # restarts). Only episodes crossing the threshold on OUR watch notify.
 FIRST_TICK=1
 # Container agents' hooks run INSIDE the container where notify.sh has no
-# desktop to talk to — the daemon edge-detects their transitions host-side
-# (#13). Container panes only: host agents' hooks already notify, and firing
-# here too would double every popup. First observation never fires (boot spam).
+# desktop to talk to — the daemon edge-detects their transitions host-side.
+# Container panes only: host agents' hooks already notify, and firing here
+# too would double every popup. First observation never fires (boot spam).
 declare -A CTR_PREV=()
 progress_emit() {  # <state> <tty>
   [[ "$PROGRESS_ON" == "1" ]] || return 0
@@ -253,7 +253,7 @@ build() {
     if [[ -r "$AF_CACHE/$pane.task" ]]; then
       { read -r tid < "$AF_CACHE/$pane.task"; } 2>/dev/null || true
       if [[ -n "${tid:-}" && -r "$CACHE/tasks/$tid" ]]; then
-        # Full walk, no early break: diffstat lines (#19) are appended
+        # Full walk, no early break: diffstat lines are appended
         # chronologically and the LAST one wins, so the tail must be read.
         # Still builtin-only — the fork-free rule is about forks, not lines.
         # TODO: if long-lived records (weeks of state lines × many agents)
@@ -275,7 +275,7 @@ build() {
     case "$iso" in
       sandbox) iso="sbx" ;; worktree) iso="wt" ;; container) iso="ctr" ;; *) iso="-" ;;
     esac
-    # Session mirror (#13): a container agent's hook captures the session id
+    # Session mirror: a container agent's hook captures the session id
     # into panes/<pane>.session but can't set the pane option (no tmux in the
     # container). Mirror it host-side — one tmux call, once per pane: the
     # option is non-empty on every later tick. persist-save then resumes it.
@@ -321,7 +321,7 @@ build() {
     # Trailing pane_index/age/intent let renderers disambiguate shared windows
     # ("name.2"), show wait/done duration, and title rows by what the agent is
     # FOR; readers of older short rows parse the missing fields as empty
-    # (fields grow at the END — CONTRIBUTING #7).
+    # (fields grow at the END — CONTRIBUTING).
     agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age|$intent|$iso|$ds"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi

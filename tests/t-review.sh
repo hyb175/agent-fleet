@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-review.sh — the review flow (#9): diff a done task, approve to merge/PR,
+# t-review.sh — the review flow: diff a done task, approve to merge/PR,
 # or send notes back into the live agent session.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -56,7 +56,7 @@ check "send-back to a dead session refused" "[[ $rc -ne 0 ]] && grep -q 'agent s
 # --- merge --------------------------------------------------------------------
 af review "$T1" --merge >/dev/null 2>&1
 # Captured, not piped: grep -q on a live git-log pipe SIGPIPEs under pipefail
-# (CONTRIBUTING #3 — this exact check flaked on the slower macOS runner).
+# (capture-then-grep — this exact check flaked on the slower macOS runner).
 # shellcheck disable=SC2034 # mlog read inside the eval'd check() condition below
 mlog="$(git -C "$REPODIR" log --oneline -3)"
 check "merge landed on main" "grep -q 'feature' <<<\"\$mlog\""
@@ -98,7 +98,7 @@ check "open PR is NOT marked merged" "! grep -q '^state merged ' '$REC3'"
 af task clean >/dev/null 2>&1 && rc=0 || rc=$?
 check "bulk clean tolerates an open-PR task" "[[ $rc -eq 0 ]]"
 
-# --- phase 2: diffstat (#19), context line + atomic finish (#20/#21) ---------
+# --- diffstat, context line + atomic finish ---------
 out4="$(af task "atomic finish probe" --repo "$REPODIR" --isolated)"
 T4="${out4%% *}"; P4="${out4##* }"
 sleep 0.4
@@ -153,6 +153,27 @@ check "atomic finish reclaimed the worktree" "[[ ! -e \"\$WT4\" ]]"
 panes_left="$(tx list-panes -a -F '#{pane_id}' 2>/dev/null)"
 check "atomic finish closed the pane" "! grep -qx -- '$P4' <<<\"\$panes_left\""
 check "record settles cleaned" "grep -q '^state cleaned ' '$REC4'"
+
+# --- cross-task conflict warning ------------------------------
+outa="$(af task "conflict a" --repo "$REPODIR" --isolated)"; TA="${outa%% *}"
+outb="$(af task "conflict b" --repo "$REPODIR" --isolated)"; TB="${outb%% *}"
+sleep 0.4
+WTA="$(awk '$1=="worktree"{print $2; exit}' "$XDG_CACHE_HOME/agent-fleet/$SOCK/tasks/$TA")"
+WTB="$(awk '$1=="worktree"{print $2; exit}' "$XDG_CACHE_HOME/agent-fleet/$SOCK/tasks/$TB")"
+echo a > "$WTA/shared.txt"; echo also-a > "$WTA/only-a.txt"
+echo b > "$WTB/shared.txt"
+# shellcheck disable=SC2034 # ls_out read inside the eval'd check() conditions below
+ls_out="$(af task ls)"
+check "overlapping live tasks warn in task ls" \
+  "grep -Eq \"conflict risk: ($TA <-> $TB|$TB <-> $TA): shared.txt\" <<<\"\$ls_out\""
+check "disjoint file does not warn" "! grep -q 'only-a.txt' <<<\"\$ls_out\""
+# shellcheck disable=SC2034
+rv_out="$(af review "$TA" --merge --clean 2>&1 || true)"
+check "review context carries the warning" "grep -q 'conflict risk:' <<<\"\$rv_out\""
+rm -f "$WTA/shared.txt" "$WTA/only-a.txt" "$WTB/shared.txt"
+# shellcheck disable=SC2034
+ls_quiet="$(af task ls)"
+check "clean worktrees stay quiet" "! grep -q 'conflict risk' <<<\"\$ls_quiet\""
 
 rm -rf "$FAKEBIN"
 exit "$FAIL"

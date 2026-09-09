@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-notify.sh — actionable notifications (#8).
+# t-notify.sh — actionable notifications.
 #   - notify.sh leads the body with the task intent and wires a click-to-jump
 #     (terminal-notifier -execute path, exercised via a stub)
 #   - AGENT_FLEET_NOTIFY=0 silences it
@@ -54,7 +54,7 @@ AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_H
   PATH="$STUB:$PATH" nohup "$REPO/scripts/snapshotd.sh" >/dev/null 2>&1 &
 
 # The pane was ALREADY past the threshold when the daemon started: the first
-# tick must seed silently (#17) — a reload/restart never re-fires the backlog
+# tick must seed silently — a reload/restart never re-fires the backlog
 # ("once per wait episode" survives restarts).
 sleep 4
 n0="$(grep -c 'still waiting' "$NLOG" 2>/dev/null || true)"

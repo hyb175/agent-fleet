@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# af-entrypoint.sh — default image entrypoint (#12).
+# af-entrypoint.sh — default image entrypoint.
 # 1. Init the default-deny firewall (root; requires --cap-add NET_ADMIN).
 #    A firewall failure REFUSES to start the agent — the pane shows why and
 #    dies, it never silently runs with open egress under a record that says

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-isolation.sh — isolation ladder (#11).
+# t-isolation.sh — isolation ladder.
 #   - rung resolution: --isolation flag > AGENT_FLEET_ISOLATION env > repo
 #     .agent-fleet file > global config file > host; unknown rungs note + host
 #   - sandbox rung: per-worktree settings overlay (hooks + sandbox superset,

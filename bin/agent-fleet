@@ -269,7 +269,7 @@ ensure_hook_settings() {
   printf '%s' "$f"
 }
 
-# Sandbox-rung overlay (#11): hooks + OS bash sandbox, writes scoped to one
+# Sandbox-rung overlay: hooks + OS bash sandbox, writes scoped to one
 # root — see scripts/overlay.sh for the emission and the failIfUnavailable
 # rationale. Keyed by BOTH cksum fields (CRC + length): a bare CRC-32
 # collision would scope one task's writes to another task's worktree.
@@ -308,7 +308,7 @@ task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
     printf 'pane %s\n'    "$pane"
   } > "$AF_TASKS_DIR/$tid" 2>/dev/null || return 0
   # Pointer write is the atomic claim (noclobber): the hook's auto-adopt
-  # (#16) races this on hand-started agents — first writer wins, the loser
+  # races this on hand-started agents — first writer wins, the loser
   # reuses the winner's record instead of leaving a permanent orphan.
   local ptr="$AF_CACHE_DIR/panes/$pane.task" cur=""
   if ! (set -C; printf '%s\n' "$tid" > "$ptr") 2>/dev/null; then
@@ -325,7 +325,7 @@ task_record_create() {  # <pane_id> <intent> <dir> <kind> -> prints the task id
   printf '%s' "$tid"
 }
 
-# Worktree-per-task (#4): a branch + worktree per task, so parallel agents on
+# Worktree-per-task: a branch + worktree per task, so parallel agents on
 # one repo can't collide in a single checkout. Worktrees live OUTSIDE the repo
 # at a predictable spot: $XDG_STATE_HOME/agent-fleet/worktrees/<repo>-<hash>/
 # <slug> (the 4-digit path hash keeps same-named repos apart). State dir, not
@@ -360,7 +360,7 @@ task_worktree_create() {  # <repo-dir> <slug> -> "path<TAB>branch" (empty = degr
   printf '%s\t%s' "$path" "$branch"
 }
 
-# ---- isolation ladder (#11) --------------------------------------------------
+# ---- isolation ladder --------------------------------------------------
 # host < worktree < sandbox < container: each rung includes the previous ones'
 # guarantees. Resolution: --isolation flag > AGENT_FLEET_ISOLATION (legacy
 # AGENT_FLEET_TASK_ISOLATED=1 = worktree) > <repo>/.agent-fleet 'isolation'
@@ -396,7 +396,7 @@ sandbox_available() {
   esac
 }
 
-# The container rung (#12) needs the docker CLI AND a live daemon. timeout
+# The container rung needs the docker CLI AND a live daemon. timeout
 # where available: a wedged daemon would otherwise hang every `af task`.
 container_available() {
   command -v docker >/dev/null 2>&1 || return 1
@@ -413,7 +413,7 @@ container_available() {
 task_container_stop() {
   command -v docker >/dev/null 2>&1 || return 0
   local cn cdir ids
-  # LAST container line wins: a restore-resume appends a fresh name (#13).
+  # LAST container line wins: a restore-resume appends a fresh name.
   cn="$(awk '$1=="container"{v=$2} END{print v}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
   [[ -n "$cn" ]] && docker stop -t 2 "$cn" >/dev/null 2>&1 || true
   cdir="$(awk '$1=="containerdir"{sub(/^containerdir /,""); print; exit}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
@@ -426,8 +426,8 @@ task_container_stop() {
 }
 
 # build_container_cmd <name> <dir> <repo_dir> <wt_path> <agent_tail> — build
-# the container window command (#12), shared by task creation and restore's
-# _container-resume (#13). Sets CCMD (the command), CNAME (docker name; empty
+# the container window command, shared by task creation and restore's
+# _container-resume. Sets CCMD (the command), CNAME (docker name; empty
 # on the devcontainer path) and CDIR_REC (devcontainer workspace to record).
 # The string runs under the user's default-shell — keep it fish/sh-compatible:
 # no $( ), no arrays, plain "quoted" expansions only.
@@ -726,7 +726,7 @@ cmd_add() {
   # the only quoting-proof way to hand an agent arbitrary text (see cmd_task).
   local pane_id
   # AF_TASK_PRESPAWNED: this spawn writes its own record below — the status
-  # hook's auto-adopt (#16) must not race it with a duplicate.
+  # hook's auto-adopt must not race it with a duplicate.
   pane_id="$(tx new-window -P -F '#{pane_id}' -e AF_TASK_PRESPAWNED=1 ${env_kv:+-e "$env_kv"} -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
   # Mark the agent so the sidenav lists it (per-pane, focus-independent) and so
   # workspace renames can follow it (per-window). Value = agent kind ("claude");
@@ -1310,7 +1310,7 @@ manage_hooks_block() {  # <tool> <conf> <install|remove|status> [post-install no
   esac
 }
 
-# hermes-hooks (#15) — hermes' shell hooks in ~/.hermes/config.yaml. UNLIKE
+# hermes-hooks — hermes' shell hooks in ~/.hermes/config.yaml. UNLIKE
 # the TOML tiers there is NO fenced block: hermes re-serializes config.yaml
 # through PyYAML on many ordinary actions ("allow permanently" at an approval,
 # the model picker, `hermes update`), stripping every comment — a fence would
@@ -1745,7 +1745,7 @@ cmd_restore() {
 # a live INTERACTIVE agent in one step: resolve the repo's workspace, spawn a
 # hooked claude with the prompt as its positional argument (a real TUI you can
 # attach to mid-conversation — never a headless run), and record the intent.
-# review — a done task's deliverable is a DIFF, not scrollback (#9). Show the
+# review — a done task's deliverable is a DIFF, not scrollback. Show the
 # task's full delta vs its merge-base, then act: PR it, merge it locally, or
 # send notes back into the still-live agent session. Interactive menu on a
 # TTY with no action flag; flags make every action scriptable/testable.
@@ -1794,7 +1794,7 @@ cmd_review() {
     mb="$(git -C "$repo" merge-base "$branch" HEAD 2>/dev/null || true)"
   fi
 
-  # Context line (#21): what and how big, before any diff scrolls by. Not on
+  # Context line: what and how big, before any diff scrolls by. Not on
   # --diff-only, whose output must stay scriptable.
   review_context() {
     local ahead="" ss="" dirty=""
@@ -1808,6 +1808,10 @@ cmd_review() {
     [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ]] && dirty=" · uncommitted*"
     echo "review $tid · ${branch:-?}${ahead:+ [$ahead ahead]} ·${ss:- no changes}$dirty"
     [[ -n "$TASK_INTENT" ]] && echo "intent: $TASK_INTENT" || true
+    task_conflicts "$tid"   # overlapping live tasks, before you merge
+    # task_conflicts iterates task_record_get — refill OUR task's globals
+    # (review_pr titles from TASK_INTENT).
+    task_record_get "$tid" || true
   }
 
   review_diff() {  # [color] — color only for the pager path; --diff-only
@@ -1868,7 +1872,7 @@ cmd_review() {
     echo "sent to $rec_pane — the agent returns to working when it picks it up"
   }
 
-  # Atomic finish (#20): merge, then close the pane, then reclaim — the
+  # Atomic finish: merge, then close the pane, then reclaim — the
   # order matters: task_clean's liveness guard refuses a live agent's
   # worktree, so the pane goes first (its work is merged; killing it loses
   # nothing). Any guard tripping stops the chain with its own message.
@@ -1977,7 +1981,7 @@ Records live in $AF_TASKS_DIR; worktrees under $AF_WORKTREES_DIR.
 EOF
 }
 
-# Empty states teach (#18): name the command that fills them, never dead-end.
+# Empty states teach: name the command that fills them, never dead-end.
 _no_tasks_hint()   { echo '(no tasks — spawn one: agent-fleet task "<prompt>", or adopt a pane: agent-fleet task adopt %pane)'; }
 _no_history_hint() { echo '(no completed tasks — history fills as tasks reach done/drop; spawn one: agent-fleet task "<prompt>")'; }
 
@@ -2009,7 +2013,7 @@ task_ls() {
     # A dead pane means the agent is gone but the record (by design) is not.
     mark=" (gone)"
     if [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]]; then mark=""; fi
-    # Worktree column (#5): branch plus * (dirty) / ^ (unmerged) — the two
+    # Worktree column: branch plus * (dirty) / ^ (unmerged) — the two
     # signals clean's safety rails key on, surfaced before you reach for it.
     local wtcol=""
     task_record_get "$tid" || true
@@ -2029,6 +2033,7 @@ task_ls() {
     printf '%-18s %-9s %-6s%s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$wtcol" "$intent"
   done
   [[ -n "$any" ]] || _no_tasks_hint
+  task_conflicts
   task_orphans
 }
 
@@ -2038,7 +2043,64 @@ task_show() {
   cat "$AF_TASKS_DIR/$tid"
 }
 
-# task adopt (#16): bring an EXISTING pane into the record loop — history,
+# Cross-task conflict warning: two live worktree tasks on one repo
+# touching the same files merge painfully — surface the overlap before it
+# hurts. On-demand only (task ls, review) — never the snapshot tick.
+task_conflicts() {  # [tid] — restrict to pairs involving tid when given
+  [[ -d "$AF_TASKS_DIR" ]] || return 0
+  local f tid focus="${1:-}" pane mb flist
+  local -a ctids=() crepos=() cfiles=()
+  local -A LIVE_T=()
+  local lp lt
+  if server_up; then
+    while read -r lp lt; do
+      [[ -n "$lp" && -n "$lt" ]] && LIVE_T[$lp]="$lt"
+    done < <(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null)
+  fi
+  for f in "$AF_TASKS_DIR"/t*; do
+    [[ -e "$f" ]] || continue
+    case "$f" in *.tmp.*) continue ;; esac
+    tid="$(basename "$f")"
+    task_record_get "$tid" || continue
+    case "$TASK_STATE" in merged|abandoned|cleaned) continue ;; esac
+    [[ -n "$TASK_WORKTREE" && -d "$TASK_WORKTREE" ]] || continue
+    pane="$(awk '$1=="pane"{print $2; exit}' "$f" 2>/dev/null || true)"
+    [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]] || continue
+    mb=""
+    if [[ -n "$TASK_REPO" && -n "$TASK_BRANCH" ]]; then
+      mb="$(git -C "$TASK_REPO" merge-base "$TASK_BRANCH" HEAD 2>/dev/null || true)"
+    fi
+    # Committed+staged (vs merge-base; when mb is unresolvable this degrades
+    # to uncommitted-only) plus untracked files, one sorted set. ls-files, not
+    # status --porcelain: porcelain quotes space paths and mangles renames,
+    # which would corrupt the overlap compare.
+    flist="$( { git -C "$TASK_WORKTREE" diff --name-only "${mb:-HEAD}" 2>/dev/null || true
+                git -C "$TASK_WORKTREE" ls-files --others --exclude-standard 2>/dev/null || true
+              } | sort -u )"
+    [[ -n "$flist" ]] || continue
+    ctids+=("$tid"); crepos+=("${TASK_REPO:-$TASK_WORKTREE}"); cfiles+=("$flist")
+  done
+  local i j overlap n first
+  for (( i = 0; i < ${#ctids[@]}; i++ )); do
+    for (( j = i + 1; j < ${#ctids[@]}; j++ )); do
+      [[ "${crepos[$i]}" == "${crepos[$j]}" ]] || continue
+      if [[ -n "$focus" && "$focus" != "${ctids[$i]}" && "$focus" != "${ctids[$j]}" ]]; then
+        continue
+      fi
+      overlap="$(comm -12 <(printf '%s\n' "${cfiles[$i]}") <(printf '%s\n' "${cfiles[$j]}"))"
+      [[ -n "$overlap" ]] || continue
+      n="$(grep -c '' <<<"$overlap")"
+      first="$(head -1 <<<"$overlap")"
+      if (( n > 1 )); then
+        echo "conflict risk: ${ctids[$i]} <-> ${ctids[$j]}: $first (+$(( n - 1 )) more)"
+      else
+        echo "conflict risk: ${ctids[$i]} <-> ${ctids[$j]}: $first"
+      fi
+    done
+  done
+}
+
+# task adopt: bring an EXISTING pane into the record loop — history,
 # review, and intent titles all key on records, and panes from before the
 # record system (or hand-started agents) otherwise stay invisible forever.
 task_adopt() {
@@ -2105,7 +2167,7 @@ task_record_get() {
   return 0
 }
 
-# task done|drop — terminal states (#5). The review flow (#9) will call these;
+# task done|drop — terminal states. The review flow will call these;
 # until then they're the explicit hand-off from "agent finished" to "worktree
 # reclaimable".
 task_mark() {  # <id|%pane> <merged|abandoned>
@@ -2120,7 +2182,7 @@ task_mark() {  # <id|%pane> <merged|abandoned>
   printf -v now '%(%s)T' -1
   printf 'state %s %s\n' "$2" "$now" >> "$AF_TASKS_DIR/$tid" || exit 1
   echo "task $tid -> $2"
-  # Container lifecycle (#12): a terminal task's container has no reason to
+  # Container lifecycle: a terminal task's container has no reason to
   # keep running (its work lives in the mounted worktree).
   task_container_stop "$tid"
   if grep -q '^worktree ' "$AF_TASKS_DIR/$tid" 2>/dev/null; then
@@ -2128,7 +2190,7 @@ task_mark() {  # <id|%pane> <merged|abandoned>
   fi
 }
 
-# task clean — reclaim worktrees/branches of TERMINAL tasks only (#5).
+# task clean — reclaim worktrees/branches of TERMINAL tasks only.
 # Safety is layered: `git worktree remove` itself refuses a dirty tree
 # without --force, and we refuse an unmerged branch without --force — so
 # unreviewed work is never eaten by a typo. --dry-run prints the plan.
@@ -2252,7 +2314,7 @@ task_orphans() {
   done
 }
 
-# task history (#10): what ran and what came of it, read entirely from task
+# task history: what ran and what came of it, read entirely from task
 # records — so it survives fleet restarts and reboots, and needs no server.
 task_history() {
   [[ $# -eq 0 ]] || { echo "error: unexpected arg: $1 (task history takes none)" >&2; exit 2; }
@@ -2352,7 +2414,7 @@ task_history() {
   done < <(printf '%s\n' "${rows[@]}" | sort -s -t $'\t' -k1,1nr)
 }
 
-# _container-resume <tid> (internal, #13): persist-restore points a restored
+# _container-resume <tid> (internal): persist-restore points a restored
 # container task's pane here. Rebuilds the container command from the record
 # (fresh container name appended — last one wins), resumes the recorded claude
 # session when one was captured, and execs it. Docker gone at boot → visible
@@ -2463,7 +2525,7 @@ cmd_task() {
     name="${slug:-task}"
   fi
 
-  # Isolation ladder (#11): resolve the rung, then degrade rung by rung with a
+  # Isolation ladder: resolve the rung, then degrade rung by rung with a
   # visible note wherever a dependency is missing — the record carries what
   # actually ran, never the intent.
   local rung
@@ -2487,7 +2549,7 @@ cmd_task() {
     fi
   fi
 
-  # worktree rung (#4): branch + worktree per task; the agent starts IN the
+  # worktree rung: branch + worktree per task; the agent starts IN the
   # worktree. The workspace keeps the ORIGINAL repo's name (all of a repo's
   # tasks group under one workspace, isolated or not). Non-git dirs degrade
   # to the shared checkout, with a note.
@@ -2526,7 +2588,7 @@ cmd_task() {
   # worktree when one was created, else the shared checkout).
   [[ "$rung" == "sandbox" ]] && add_args+=(--sandbox "$dir")
 
-  # container rung (#12): the window command IS the container — the pane holds
+  # container rung: the window command IS the container — the pane holds
   # its PTY directly (--rm -it), so attach shows the real TUI and killing the
   # pane reaps the container. Everything is mounted at IDENTICAL host paths:
   # the worktree (rw) plus the parent repo's .git (rw — the worktree's .git
@@ -2720,7 +2782,7 @@ main() {
     # Internal: echo the last command-prompt input, parked in a tmux option by
     # the conf's prompt bindings (typed text never touches sh — see the conf).
     _prompt)    tx show-option -gqv @fleet-prompt 2>/dev/null ;;
-    # Internal: restore's relaunch shim for container-rung tasks (#13).
+    # Internal: restore's relaunch shim for container-rung tasks.
     _container-resume) cmd_container_resume "$@" ;;
     -V|--version|version) echo "agent-fleet $AGENT_FLEET_VERSION" ;;
     -h|--help|help) usage ;;

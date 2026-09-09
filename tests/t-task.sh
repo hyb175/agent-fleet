@@ -75,7 +75,7 @@ check "task -- 'ls' creates instead of listing" \
 # --- hook transitions append history (once per transition) --------------------
 hook() {  # <state> [stdin]
   # AF_TASK_PRESPAWNED: cmd_add spawns carry it in the window env — this
-  # helper simulates THAT kind of agent, so the hook's auto-adopt (#16) must
+  # helper simulates THAT kind of agent, so the hook's auto-adopt must
   # stay out of the way exactly as it does live.
   TMUX_PANE="$pane" AF_TASK_PRESPAWNED=1 AGENT_FLEET_NOTIFY=0 bash "$HOOK" "$1" "$SOCK" claude
 }

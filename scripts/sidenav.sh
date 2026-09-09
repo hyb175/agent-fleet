@@ -195,7 +195,7 @@ draw() {
       fi
       shown=$((shown+1))
       # Named fields before the catch-all _: the LAST read var swallows any
-      # newer trailing fields, and intent must never absorb them (CONTRIBUTING #7).
+      # newer trailing fields, and intent must never absorb them (fields grow at the END — CONTRIBUTING).
       IFS='|' read -r s wid _ wn pane label st pidx age intent iso ds _ <<<"$rec"
       glyph_for "$st" "$frame"
       sel=0; [[ "$wid" == "$RAIL_WIN" ]] && sel=1
@@ -214,11 +214,11 @@ draw() {
       if [[ ( "$st" == "wait" || "$st" == "done" ) && "$age" =~ ^[0-9]+$ ]]; then
         fmt_age "$age"; sub+=" · $AGE"
       fi
-      # Diffstat (#19): how big is the thing waiting on me — wait/done only.
+      # Diffstat: how big is the thing waiting on me — wait/done only.
       if [[ "$st" == "wait" || "$st" == "done" ]]; then
         [[ -n "${ds:-}" && "$ds" != "-" ]] && sub+=" · $ds"
       fi
-      # Isolation rung (#11): wt/sbx/ctr when above host.
+      # Isolation rung: wt/sbx/ctr when above host.
       [[ -n "${iso:-}" && "$iso" != "-" ]] && sub+=" · $iso"
       row "$sel" "$GLYPH" "$wn" "$sub"
       line=$((line+2))

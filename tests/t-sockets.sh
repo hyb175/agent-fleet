@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-sockets.sh — socket-scoped cache (issue #14).
+# t-sockets.sh — socket-scoped cache.
 #   - a socket name sanitizes into a scoped dir under $AF_CACHE_ROOT
 #   - the status hook resolves its scoped dir from its OWN socket ARG, not the
 #     ambient AGENT_FLEET_SOCKET, so two fleets never write to the same file

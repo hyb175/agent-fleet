@@ -1,4 +1,4 @@
-# agent-fleet default hardened image (#12) — the container rung's fallback
+# agent-fleet default hardened image — the container rung's fallback
 # when a repo ships no devcontainer. Modeled on Anthropic's reference
 # devcontainer: Claude Code + a default-deny egress firewall (init-firewall.sh
 # documents the allowlist). Built on first use: docker build -t af-default .

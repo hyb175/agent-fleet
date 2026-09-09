@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# init-firewall.sh — default-deny egress for the af-default image (#12).
+# init-firewall.sh — default-deny egress for the af-default image.
 #
 # THE ALLOWLIST (documented contract — the container can reach ONLY these):
 #   api.anthropic.com console.anthropic.com statsig.anthropic.com

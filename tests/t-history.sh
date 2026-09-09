@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-history.sh — task history view (#10).
+# t-history.sh — task history view.
 #   - `task history` (alias `history`) lists finished tasks from records alone:
 #     outcome from the state walk (last merged/abandoned wins, cleaned never
 #     overrides, pr when nothing terminal landed), duration, wait totals

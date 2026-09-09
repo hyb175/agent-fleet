@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# t-hermes.sh — hermes hook-tier support (#15).
+# t-hermes.sh — hermes hook-tier support.
 #   - `agent-fleet hermes-hooks` installs DATA-ANCHORED entries in
 #     ~/.hermes/config.yaml (no fence — hermes re-serializes its config and
 #     strips comments), preserves the user's config, removes cleanly, and
