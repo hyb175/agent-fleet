@@ -340,6 +340,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
 | `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon ticks |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents on restore (`0` = shells) |
+| `AGENT_FLEET_RESTORE_STAGGER` | `0.5` | Seconds between agent relaunches on restore (`0` = all at once); failures land in `restore.log` in the cache dir |
 | `AGENT_FLEET_RESTORE_ANY_SOCKET` | `0` | Allow restoring a layout saved on a different socket |
 | `AGENT_FLEET_REMOTES` | unset | Federated hosts, space/comma separated — overrides `~/.config/agent-fleet/remotes` |
 | `AGENT_FLEET_REMOTE_INTERVAL` | `3` | Seconds between polls of each federated host |

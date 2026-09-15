@@ -34,10 +34,25 @@ CACHE="$AF_CACHE_DIR"
 STATE="$CACHE/fleet.state"
 US=$'\t'   # matches persist-save; every field is non-empty so tab won't collapse
 RESTORE_AGENTS="${AGENT_FLEET_RESTORE_AGENTS:-1}"   # relaunch claude with --resume
+# Pause between agent relaunches. A cold boot that forks every agent at once
+# (each spawning its shell, hooks and MCP servers) starved tmux of forks and
+# left a rail pane with pane_pid -1; spreading the launches keeps the burst
+# below what the machine can absorb. 0 disables (tests).
+RESTORE_STAGGER="${AGENT_FLEET_RESTORE_STAGGER:-0.5}"
+RLOG="$CACHE/restore.log"
 OVERLAY="$CACHE/hooks-settings.json"                # status-hooks settings overlay
 
 [[ -f "$STATE" ]] || exit 1
 tx() { "${TMUX_BIN:-tmux}" -L "$SOCK" "$@"; }
+# respawn <pane> <cmd> — respawn-pane -k, keeping tmux's error (e.g. "fork
+# failed") in restore.log instead of dropping it, so a pane left without a
+# process is diagnosable. Returns tmux's status.
+respawn() {
+  local out
+  if out="$(tx respawn-pane -k -t "$1" "$2" 2>&1)"; then return 0; fi
+  printf '%(%F %T)T respawn %s: %s\n' -1 "$1" "${out:-failed}" >> "$RLOG" 2>/dev/null
+  return 1
+}
 
 # The cache dir is socket-scoped (cache.sh), so this state file already lives
 # under the socket that saved it — but this in-band check stays as a second
@@ -180,8 +195,9 @@ for s in "${sess_order[@]}"; do
     for (( k = 0; k < ${#rails[@]} && k < ${#pane_ids[@]}; k++ )); do
       [[ "${rails[$k]}" == "1" ]] && { railp="${pane_ids[$k]}"; break; }
     done
-    if [[ -n "$railp" ]]; then
-      tx respawn-pane -k -t "$railp" "$rail_cmd" 2>/dev/null || true
+    # Tag the pane as a rail only once the rail is running: a tagged pane with
+    # no process (pane_pid -1) is what the focus hook would otherwise signal.
+    if [[ -n "$railp" ]] && respawn "$railp" "$rail_cmd"; then
       tx set-option -p -t "$railp" @fleet-sidenav 1 2>/dev/null || true
       tx set-option -p -t "$railp" remain-on-exit off 2>/dev/null || true
     fi
@@ -312,7 +328,8 @@ for s in "${sess_order[@]}"; do
           rm -f "$CACHE/panes/$chosen.session" 2>/dev/null || true
           fb="exec bash -i"
         fi
-        tx respawn-pane -k -t "$chosen" "bash -lc '$rc || { $fb; }'" 2>/dev/null || true
+        respawn "$chosen" "bash -lc '$rc || { $fb; }'" || true
+        [[ "$RESTORE_STAGGER" != "0" ]] && sleep "$RESTORE_STAGGER"
       done
     fi
 

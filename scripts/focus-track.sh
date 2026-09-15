@@ -35,12 +35,14 @@ printf '%s\n' "$pane" > "$cur" 2>/dev/null
 
 # Push the new current view and wake the rails to repaint the highlight now.
 # pane_pid is authoritative for live rails (never signal from stale pid files —
-# a recycled pid's default SIGUSR1 disposition is terminate).
+# a recycled pid's default SIGUSR1 disposition is terminate). Positive pids
+# only: a pane whose spawn failed reports pane_pid -1, and `kill -USR1 -1`
+# signals every process the user owns (it took down a whole GUI session once).
 if [[ -n "$sess" && -n "$win" ]]; then
   printf '%s|%s\n' "$sess" "$win" > "$CACHE/focus.now" 2>/dev/null
   SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
   while IFS='|' read -r ppid prail; do
-    [[ "$prail" == "1" && -n "$ppid" ]] && kill -USR1 "$ppid" 2>/dev/null
+    [[ "$prail" == "1" && "$ppid" =~ ^[1-9][0-9]*$ ]] && kill -USR1 "$ppid" 2>/dev/null
   done < <("${TMUX_BIN:-tmux}" -L "$SOCKET" list-panes -a \
              -F '#{pane_pid}|#{?@fleet-sidenav,1,0}' 2>/dev/null)
 fi

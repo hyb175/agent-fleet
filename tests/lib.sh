@@ -26,6 +26,8 @@ XDG_STATE_HOME="$(cd "$(mktemp -d)" && pwd -P)"; export XDG_STATE_HOME
 # Same for the escalation override: the inbox '!' marker tests assume the
 # shipped default.
 unset AGENT_FLEET_THEME AGENT_FLEET_NOTIFY_ESCALATE
+# Restore relaunches are staggered for real machines; tests want speed.
+export AGENT_FLEET_RESTORE_STAGGER=0
 # Pin the default-shell for test servers: window commands run under it, and a
 # login fish rebuilds PATH (93db864) — dropping the fake claude/docker stubs a
 # test put ahead of the real binaries. /bin/sh preserves the inherited PATH, so
