@@ -58,6 +58,14 @@ what it can, this file covers what it can't.
     no `grep -P`. NixOS adds a third shape: `/usr/bin`+`/bin` hold almost
     nothing, so tests building restricted PATHs must include `$(dirname "$BASH")`.
 
+11. **Hook-tier scripts are bash 3.2.** `agent-status-hook.sh`, `notify.sh`,
+    `cache.sh`, `shims/claude` and `pane-shell.sh` run inside the AGENT's
+    process, under whatever `bash` its PATH resolves — a macOS login shell
+    puts `/bin/bash` 3.2 first, ahead of brew/nix. No `%(%s)T` (use `af_now`),
+    no associative arrays, no `mapfile`, no `${var,,}`; `tests/t-bash32.sh`
+    runs them under `/bin/bash`. (A hook aborted with `printf: '(': invalid
+    format character` and `ts: unbound variable` on every Stop event.)
+
 ## Shellcheck policy
 
 `.shellcheckrc` globally disables only SC1090/SC1091 (source-path resolution).

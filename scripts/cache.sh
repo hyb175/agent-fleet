@@ -47,3 +47,17 @@ cache_migrate_default() {
   done
   return 0
 }
+
+# Epoch seconds into AF_NOW. `printf %(%s)T` is fork-free but needs bash 4.2;
+# hook-tier scripts (this file's sourcers in the agent's own process) run
+# under whatever `bash` the agent's PATH resolves — on macOS a login shell
+# puts /bin/bash 3.2 first — so older bash pays one `date` fork instead of
+# aborting under set -u with an unbound timestamp.
+# shellcheck disable=SC2034 # AF_NOW is the out-param, read by the sourcing script
+af_now() {
+  if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 2) )); then
+    printf -v AF_NOW '%(%s)T' -1
+  else
+    AF_NOW="$(date +%s)"
+  fi
+}

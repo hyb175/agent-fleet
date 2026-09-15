@@ -35,7 +35,7 @@ The CLI is `agent-fleet` (alias `af`).
 | Tool | Required | Notes |
 | --- | --- | --- |
 | `tmux` ≥ 3.2 | yes | `display-popup`, `split-window -f`, per-pane options |
-| `bash` ≥ 4 | yes | rail uses associative arrays; macOS ships 3.2 — `brew install bash` and put it ahead of `/bin/bash` on `PATH` |
+| `bash` ≥ 4 | yes | rail and daemon use associative arrays; macOS ships 3.2 — `brew install bash` and put it ahead of `/bin/bash` on `PATH`. The status hooks and the `claude` shim run under the agent's own bash and stay 3.2-compatible |
 | `fzf` | yes | powers the picker |
 | `claude` | optional | default agent command; hooks attach on launch |
 | `git` | optional | branch / ahead-count labels |

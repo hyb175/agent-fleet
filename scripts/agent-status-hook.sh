@@ -49,7 +49,7 @@ input=""
 # record always wins the startup race. Runs BEFORE the transition append
 # below, so even this very event's state lands in the new record.
 if [[ ! -f "$cache/${pane}.task" && "${AF_TASK_PRESPAWNED:-}" != "1" && -n "$kind" ]]; then
-  printf -v _anow '%(%s)T' -1
+  af_now; _anow="$AF_NOW"
   _atid="t$_anow-${pane#%}"
   # Pointer write is the atomic claim (noclobber): `task adopt` can race this
   # from the CLI — first writer wins, and losing here just means the pane is
@@ -134,7 +134,7 @@ if [[ -n "$state" && "$state" != "$prev" && -f "$tf" ]]; then
   rec="${cache%/*}/tasks/$tid"
   if [[ -n "$tid" && -f "$rec" ]] \
      && [[ "$(grep '^state ' "$rec" 2>/dev/null | tail -1)" != "state $state "* ]]; then
-    printf -v ts '%(%s)T' -1
+    af_now; ts="$AF_NOW"
     printf 'state %s %s\n' "$state" "$ts" >> "$rec" 2>/dev/null || true
     # Diffstat on ATTENTION transitions only: the rail answers "how big
     # is the thing waiting on me" without attaching. Never on the per-tool
