@@ -51,6 +51,14 @@ jobs:
           fzf --version
           bash -c '(( BASH_VERSINFO[0] >= 4 ))'
 
+      # run-all.sh reruns the rail-facing tests with the Go renderer when
+      # bin/afui exists, so the suite covers both renderers.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ui/go.mod
+      - name: Build the native UI
+        run: make ui
+
       - name: Run integration suite
         run: bash tests/run-all.sh
 

@@ -75,8 +75,10 @@ rm -rf "$stub"
 # No code may open /dev/tty. On a process orphaned off a dead pane that open()
 # never returns — it sleeps in the kernel holding a device-node lock, and every
 # terminal on the machine hangs behind it. Comments mentioning it are fine.
-tty_opens="$(grep -rn '/dev/tty' "$REPO/bin" "$REPO/scripts" "$REPO/shims" "$REPO/install.sh" 2>/dev/null \
-  | grep -vE '^[^:]+:[0-9]+: *#' || true)"
+# -I skips built binaries (bin/afui carries the string from a library path it
+# never takes: the rail passes its own stdin, see rail.Run); ui/ source is in.
+tty_opens="$(grep -rnI '/dev/tty' "$REPO/bin" "$REPO/scripts" "$REPO/shims" "$REPO/install.sh" "$REPO/ui" 2>/dev/null \
+  | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)"
 check "nothing opens /dev/tty${tty_opens:+ (found: $tty_opens)}" "[[ -z \"\$tty_opens\" ]]"
 
 # config: path lists the files; edit scaffolds local.conf (EDITOR=true = no-op)

@@ -91,7 +91,7 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), or `^v` a done task straight into review.
 
-**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place.
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. Two renderers exist during the native-UI transition: the bash rail (default) and `afui rail` (`AGENT_FLEET_UI=go`, same layout, cell-width truncation); `agent-fleet reload` respawns rails with whichever is selected.
 
 ```
 ┌──────────────────┬─────────────────────────┐
@@ -341,6 +341,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
 | `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon ticks |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents on restore (`0` = shells) |
+| `AGENT_FLEET_UI` | `bash` | Rail renderer: `go` runs `bin/afui rail` (`make ui`; falls back to the bash rail with a note when the binary is missing). Durable form: `~/.config/agent-fleet/ui` containing `go` or `bash`. |
 | `AGENT_FLEET_RESTORE_STAGGER` | `0.5` | Seconds between agent relaunches on restore (`0` = all at once); failures land in `restore.log` in the cache dir |
 | `AGENT_FLEET_RESTORE_ANY_SOCKET` | `0` | Allow restoring a layout saved on a different socket |
 | `AGENT_FLEET_REMOTES` | unset | Federated hosts, space/comma separated — overrides `~/.config/agent-fleet/remotes` |

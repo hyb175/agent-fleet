@@ -50,7 +50,8 @@ rails_running() {
   local ok=1 flag cmd
   while IFS='|' read -r flag cmd; do
     [[ "$flag" == "1" ]] || continue
-    [[ "$cmd" == *sidenav.sh* ]] || ok=0
+    # rail-launch.sh is the rail's start command; it execs the renderer.
+    [[ "$cmd" == *rail-launch.sh* || "$cmd" == *sidenav.sh* ]] || ok=0
   done < <(tx list-panes -a -F '#{?@fleet-sidenav,1,0}|#{pane_start_command}' 2>/dev/null)
   (( ok ))
 }
