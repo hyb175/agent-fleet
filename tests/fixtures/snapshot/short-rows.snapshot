@@ -1,0 +1,5 @@
+T 1789500000
+C -|webapp|@1
+S webapp|wait|main
+A webapp|@1|1|legacy|%3|claude|wait|1|45
+A webapp|@1|1|legacy|%4|claude|idle

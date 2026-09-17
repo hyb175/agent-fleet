@@ -1,0 +1,12 @@
+T 1789500000 1
+C /dev/ttys003|webapp|@2
+C /dev/ttys009|api|@5
+S api|done|main
+S webapp|wait|feature/login ↑2
+S notes|none|notes
+A webapp|@1|1|code-review|%3|claude|working|1|-|review the login flow|wt|-
+A webapp|@2|2|fix-tests|%4|claude|wait|1|240|fix the flaky spec|-|+31-2
+A webapp|@2|2|fix-tests|%7|codex~|idle|2|-|-|-|-
+A api|@5|1|api-fix|%9|claude|wait|1|900|migrate the auth table|sbx|+120-8
+A api|@6|2|docs|%10|claude|done|1|7300|write the changelog|-|+5-0
+A api|@7|3|scratch|%11|opencode|done|1|30|-|-|-
