@@ -42,7 +42,10 @@ what it can, this file covers what it can't.
    `read` variable swallows remaining fields, so appending a field only breaks
    the reader whose last variable was load-bearing — grep every
    `IFS='|' read`/`IFS="$US" read` of that record type before appending
-   (persist `fleet.state` kind field, A-record `pidx`).
+   (persist `fleet.state` kind field, A-record `pidx`). `fleet.snapshot` is
+   specified in `docs/snapshot-format.md`; a change there updates the
+   fixtures in `tests/fixtures/snapshot/`, which `tests/t-fixtures.sh` and the
+   Go parser's tests (`ui/internal/snapshot`) both read.
 
 8. **Names: don't shadow bash builtins or their variables** (`MAPFILE`,
    `REPLY`, `GROUPS`…). `MAPFILE` as a var name collided with the `mapfile`
