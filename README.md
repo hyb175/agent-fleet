@@ -413,7 +413,7 @@ Removes a managed install (`~/.local/share/agent-fleet`); a dev checkout is left
 tests/run-all.sh
 ```
 
-Runs the integration suite (status tiers, layout persistence, multi-reboot resume, kimi/codex hooks, CLI matching, snapshot staleness, theme presets). Every `tests/t-*.sh` is standalone.
+Runs the integration suite (status tiers, layout persistence, multi-reboot resume, kimi/codex hooks, CLI matching, snapshot staleness, theme presets). Every `tests/t-*.sh` is standalone. `make ui-test` vets, format-checks and tests the Go module under `ui/`; `make ui` builds `bin/afui`.
 
 ---
 
