@@ -113,9 +113,14 @@ answer() {  # <approve|deny|text> <key> [reply]
   if [[ "$state" != "wait" ]]; then
     echo "not sent: row is '$state', answers are for waiting agents"; sleep 1.5; exit 1
   fi
+  # No fingerprint means the pane could not be captured at render time, so
+  # there is nothing to prove the user saw the prompt they are answering.
+  if [[ -z "$fp" ]]; then
+    echo "not sent: no fingerprint for this row (pane uncapturable) — attach to answer"; sleep 1.5; exit 1
+  fi
   local -a args=("$pane" "$how")
   [[ "$how" == "text" ]] && args+=("$reply")
-  [[ -n "$fp" ]] && args+=(--fp "$fp")
+  args+=(--fp "$fp")
   "$AF" answer "${args[@]}" || { sleep 1.5; exit 1; }
   # Give the agent a beat to consume the keys so the reloaded row reflects it.
   sleep 0.4
