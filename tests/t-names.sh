@@ -28,6 +28,11 @@ check "split keeps the window's name" "[[ \"\$(tx display-message -p -t '$awid' 
 
 # picker disambiguation from a fabricated snapshot (8-field A records)
 SNAPDIR="$XDG_CACHE_HOME/agent-fleet/$SOCK"; mkdir -p "$SNAPDIR"
+# The conf auto-spawns a snapshotd that rewrites fleet.snapshot every tick;
+# on a slow runner its tick landed between the fabricated write and the read
+# below. Stop it and wait for the lock (its cleanup also rm's the file).
+kill "$(cat "$SNAPDIR/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null || true
+for _ in $(seq 1 30); do [[ -d "$SNAPDIR/snapshotd.lock" ]] || break; sleep 0.2; done
 now="$(date +%s)"
 printf 'T %s 1\nA ws|@9|1|api|%%20|claude|working|1\nA ws|@9|1|api|%%21|claude|idle|2\nA ws|@8|2|solo|%%30|claude|idle|1\n' "$now" \
   > "$SNAPDIR/fleet.snapshot"
