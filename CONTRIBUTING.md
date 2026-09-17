@@ -81,7 +81,9 @@ ticket says otherwise. Rules that carry over from the bash side:
   suite. Read-only `tmux capture-pane` for previews is the exception.
 - **No tmux in the hot path.** A rail re-reads the snapshot on mtime change
   and never polls tmux; N rails add no server load.
-- **No signals to tmux-reported pids.** Wake-ups come from file watches.
+- **The binary sends no signals.** Its own wake-ups come from file watches.
+  It tolerates `focus-track.sh`'s SIGUSR1 as a wake (Go's default for that
+  signal is to exit) until the cutover deletes the signal path.
 - **Never open `/dev/tty`.** Use the inherited fds.
 - **Snapshot fields by position from the front**, unknown trailing fields
   ignored, missing ones read as `-` (`docs/snapshot-format.md`).

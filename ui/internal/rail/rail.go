@@ -204,9 +204,19 @@ func Render(v View) string {
 			}
 			shown++
 			sel := a.WindowID == v.Cfg.Window
+			// Subtitle = workspace · kind, then for wait/done the time in
+			// state and the diffstat (how big is the thing waiting on me),
+			// then the isolation rung when above host. Same order as sidenav.sh.
 			sub := a.Session + " · " + a.Label
-			if (a.State == snapshot.StateWait || a.State == snapshot.StateDone) && a.HasAge {
+			attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
+			if attention && a.HasAge {
 				sub += " · " + snapshot.FormatAge(a.Age)
+			}
+			if attention && a.Diffstat != "" {
+				sub += " · " + a.Diffstat
+			}
+			if a.Isolation != "" {
+				sub += " · " + a.Isolation
 			}
 			row(sel, st.glyph(a.State, v.Frame, sel), a.Title(per), sub)
 		}
