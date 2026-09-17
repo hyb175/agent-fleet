@@ -54,6 +54,28 @@ jobs:
       - name: Run integration suite
         run: bash tests/run-all.sh
 
+  go:
+    name: go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ui/go.mod
+      # The snapshot parser's tests read tests/fixtures/snapshot, the same
+      # fixtures t-fixtures.sh drives through the bash readers.
+      - name: Vet, format, test
+        working-directory: ui
+        run: |
+          go vet ./...
+          test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+          go test ./...
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest

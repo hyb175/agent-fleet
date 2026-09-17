@@ -6,18 +6,13 @@
 # fleet.snapshot atomically. The rails and the picker READ that file instead of
 # each polling tmux — removing the N-rail redundancy that saturated the server.
 #
-# Snapshot format (one record per line):
-#   T <epoch> <interval>                                       freshness
-#   C <client>|<session>|<window_id>                           active view, ONE PER
-#                                                              CLIENT ("-" headless)
-#   S <session>|<rollup_state>|<branch>                        one per workspace
+# Snapshot format: docs/snapshot-format.md (records, sentinels, the
+# fields-grow-at-the-end rule, staleness, federation). Fixtures both the bash
+# readers and ui/internal/snapshot parse live in tests/fixtures/snapshot/.
+#   T <epoch> <interval>
+#   C <client>|<session>|<window_id>                  one per client ("-" headless)
+#   S <session>|<rollup_state>|<branch>               one per workspace
 #   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>|<intent>|<iso>|<diffstat>
-#     age = seconds the current state has been held (hooked agents only, from
-#     the status file's mtime; "-" when unknown). Renderers show it for
-#     wait/done. intent = the task record's intent ("-" when the pane has no
-#     task); renderers title the row with it. iso = isolation rung short code
-#     from the record (wt/sbx/ctr; "-" for host or no task). diffstat =
-#     +A-D from the record's last attention transition ("-" when none).
 
 set -uo pipefail
 
