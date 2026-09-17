@@ -2413,6 +2413,132 @@ task_history() {
     printf '%s\n' "$rrest"
   done < <(printf '%s\n' "${rows[@]}" | sort -s -t $'\t' -k1,1nr)
 }
+# --- answer: guarded keystrokes into a waiting agent ---------------------------
+# The inbox's inline answers used to send keys from the popup script. Sending
+# is a mutation with a guardrail (the pane must still show what the user saw),
+# so it lives here: one implementation for every renderer, covered by the
+# bash suite, and the renderers stay view-only.
+usage_answer() {
+  cat <<EOF
+Usage: agent-fleet answer <task-id|%pane> approve|deny|text "<reply>" [--fp <checksum>]
+       agent-fleet answer <task-id|%pane> fp
+       agent-fleet answer --all approve [--yes]
+
+  approve / deny   Send Enter / Escape into the waiting pane.
+  text "<reply>"   Type the reply, then Enter.
+  fp               Print the pane's content fingerprint (for --fp).
+  --fp <checksum>  Refuse unless the pane still matches this fingerprint —
+                   a reply must never land in a prompt the user did not see.
+  --all approve    Approve every locally waiting agent; asks first unless --yes.
+
+Refusals exit 1 with the reason on stderr; nothing is sent. Only agents in
+'wait' accept answers; federated (host-qualified) panes never do.
+EOF
+}
+
+# Fingerprint of the FULL visible pane, whitespace-normalized. Full, not a
+# tail: permission dialogs share their last lines, so a tail hash would pass
+# across two different questions of the same shape. Empty when uncapturable.
+answer_fp() {  # <pane>
+  local cap=""
+  cap="$(tx capture-pane -p -t "$1" 2>/dev/null)" || { printf ''; return 0; }
+  printf '%s' "$cap" | sed -e 's/[[:space:]]*$//' | cksum | awk '{print $1}'
+}
+
+# State per the snapshot (at most a tick old), else the hook-written status
+# file (fresher, but scrape-tier panes have none).
+answer_state() {  # <pane>
+  local snap="$AF_CACHE_DIR/fleet.snapshot" st=""
+  [[ -f "$snap" ]] && st="$(awk -F'|' -v p="$1" '/^A /{if ($5==p) st=$7} END{print st}' "$snap" 2>/dev/null || true)"
+  [[ -n "$st" ]] || st="$(cat "$AF_CACHE_DIR/panes/$1.status" 2>/dev/null || true)"
+  printf '%s' "$st"
+}
+
+# Batch approve. Per pane the gate is the STATUS FILE re-read at send time —
+# a row that left wait between paint and press is skipped, never blind-fired.
+# Confirms first unless --yes: approving a permission prompt EXECUTES the
+# pending action, and one stray keystroke must never green-light the fleet.
+answer_all() {  # [yes]
+  local snap="$AF_CACHE_DIR/fleet.snapshot" line pane st st_now go="" n_wait=0 n_ok=0 n_skip=0
+  [[ -f "$snap" ]] || { echo "no snapshot yet" >&2; return 1; }
+  while IFS= read -r line; do
+    [[ "$line" == A\ * ]] || continue
+    IFS='|' read -r _ _ _ _ pane _ st _ <<<"${line#A }"
+    [[ "$st" == "wait" && "$pane" != */* ]] && n_wait=$(( n_wait + 1 ))
+  done < "$snap"
+  if (( n_wait == 0 )); then echo "nothing waiting"; return 0; fi
+  if [[ "${1:-}" != "yes" ]]; then
+    printf 'approve ALL %s waiting agent(s) — including any hidden by your filter? [y/N] ' "$n_wait"
+    IFS= read -r -n1 go || go=""
+    printf '\n'
+    [[ "$go" == "y" || "$go" == "Y" ]] || { echo "cancelled"; return 0; }
+  fi
+  while IFS= read -r line; do
+    [[ "$line" == A\ * ]] || continue
+    IFS='|' read -r _ _ _ _ pane _ st _ <<<"${line#A }"
+    [[ "$st" == "wait" ]] || continue
+    if [[ "$pane" == */* ]]; then n_skip=$(( n_skip + 1 )); continue; fi
+    st_now="$(cat "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true)"
+    if [[ "$st_now" != "wait" ]]; then n_skip=$(( n_skip + 1 )); continue; fi
+    if tx send-keys -t "$pane" Enter 2>/dev/null; then n_ok=$(( n_ok + 1 )); else n_skip=$(( n_skip + 1 )); fi
+  done < "$snap"
+  echo "approved $n_ok · skipped $n_skip (moved on / remote / gone)"
+}
+
+cmd_answer() {
+  local target="" how="" reply="" fp="" all="" yes=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --all)      all=1; shift ;;
+      --yes|-y)   yes=1; shift ;;
+      --fp)       fp="${2:?error: --fp needs a checksum}"; shift 2 ;;
+      -h|--help)  usage_answer; return 0 ;;
+      -*) echo "error: unexpected arg: $1" >&2; usage_answer >&2; exit 2 ;;
+      *)  if [[ -z "$target" && -z "$all" ]]; then target="$1"
+          elif [[ -z "$how" ]]; then how="$1"
+          elif [[ -z "$reply" ]]; then reply="$1"
+          else echo "error: unexpected arg: $1" >&2; usage_answer >&2; exit 2; fi
+          shift ;;
+    esac
+  done
+  if [[ -n "$all" ]]; then
+    [[ "$how" == "approve" ]] || { echo "error: --all takes only 'approve'" >&2; exit 2; }
+    answer_all "${yes:+yes}"; return
+  fi
+  [[ -n "$target" && -n "$how" ]] || { usage_answer >&2; exit 2; }
+  refuse() { echo "not sent: $1" >&2; exit 1; }
+
+  # Target: a pane id, or a task id whose record names the pane.
+  local pane="$target" tid
+  if [[ "$target" != %* && "$target" != */* ]]; then
+    tid="$(task_id_for "$target")" || exit 1
+    pane="$(awk '$1=="pane"{p=$2} END{print p}' "$AF_TASKS_DIR/$tid" 2>/dev/null)"
+    [[ -n "$pane" ]] || refuse "task $tid has no pane"
+  fi
+  [[ "$pane" == */* ]] && refuse "remote agent — attach to answer"
+
+  if [[ "$how" == "fp" ]]; then answer_fp "$pane"; printf '\n'; return 0; fi
+
+  local st now_fp
+  st="$(answer_state "$pane")"
+  [[ "$st" == "wait" ]] || refuse "agent moved on (now: ${st:-gone}) — reopen the inbox"
+  if [[ -n "$fp" ]]; then
+    now_fp="$(answer_fp "$pane")"
+    [[ -n "$now_fp" && "$now_fp" == "$fp" ]] \
+      || refuse "the pane changed since this row rendered (stale) — re-read it first"
+  fi
+  case "$how" in
+    approve) tx send-keys -t "$pane" Enter ;;
+    deny)    tx send-keys -t "$pane" Escape ;;
+    text)    [[ -n "$reply" ]] || refuse "empty reply"
+             # tmux strips an unescaped trailing ';' from an argv element (it
+             # terminates the command) — escape it so the reply arrives whole.
+             [[ "$reply" == *';' ]] && reply="${reply%;}\;"
+             tx send-keys -t "$pane" -l -- "$reply" && tx send-keys -t "$pane" Enter ;;
+    *)       echo "error: unknown answer '$how'" >&2; usage_answer >&2; exit 2 ;;
+  esac
+}
+
 
 # _container-resume <tid> (internal): persist-restore points a restored
 # container task's pane here. Rebuilds the container command from the record
@@ -2690,6 +2816,9 @@ Verbs:
   agent-fleet task done|drop|clean Lifecycle: mark terminal, reclaim worktrees (see task -h).
   agent-fleet history              Finished tasks per day: duration, wait time, outcome (task history).
   agent-fleet review <id|%pane>    Diff a done task vs its base; PR / merge / send-back (see review -h).
+  agent-fleet answer <id|%pane> approve|deny|text "<reply>" [--fp <sum>]
+                                   Guarded keystrokes into a waiting agent (see answer -h). --all approve
+                                   clears every local wait after confirming.
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
   agent-fleet back                 Jump to the previously focused pane (bound to Prefix Tab).
   agent-fleet hooks-file           Print (and regenerate) the claude status-hooks overlay path.
@@ -2758,6 +2887,7 @@ main() {
     task)       cmd_task "$@" ;;
     history)    task_history "$@" ;;
     review)     cmd_review "$@" ;;
+    answer)     cmd_answer "$@" ;;
     goto)       cmd_goto "$@" ;;
     back)       cmd_back "$@" ;;
     rename-workspace|rename-ws) cmd_rename_workspace "$@" ;;
