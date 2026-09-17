@@ -95,4 +95,20 @@ poll_until 10 "grep -qx 1 '$WORK/guard.out'"
 check "window env carries the guard for real spawns" "grep -qx 1 '$WORK/guard.out'"
 
 rm -rf "$FAKEBIN"
+# --- rename follows a placeholder intent ---------------------------------
+# An adopted agent's intent is its window name; `rename-tab` (Prefix T) moves
+# the placeholder with the tab. A typed intent never moves.
+rw="$(tx new-window -d -P -F '#{window_id}' -t __boot__: -n oldname 'sleep 60')"
+rp="$(tx list-panes -t "$rw" -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2!="1"{print $1; exit}')"
+RT="$(af task adopt "$rp" | sed -n 's/.*-> \([^ ]*\) .*/\1/p')"
+check "adopted intent is the window name" "grep -qx 'intent oldname' '$CACHE/tasks/$RT'"
+af rename-tab "$rw" "newname" >/dev/null
+check "rename-tab renames the window" "[[ \"\$(tx display-message -p -t '$rw' '#{window_name}')\" == newname ]]"
+check "placeholder intent follows the rename" "grep -qx 'intent newname' '$CACHE/tasks/$RT'"
+af task intent "$rp" "ship the login fix" >/dev/null
+check "task intent sets a typed intent" "grep -qx 'intent ship the login fix' '$CACHE/tasks/$RT'"
+af rename-tab "$rw" "third" >/dev/null
+check "a typed intent does not follow a rename" "grep -qx 'intent ship the login fix' '$CACHE/tasks/$RT'"
+check "record has exactly one intent line" "[[ \"\$(grep -c '^intent ' '$CACHE/tasks/$RT')\" == 1 ]]"
+
 exit "$FAIL"
