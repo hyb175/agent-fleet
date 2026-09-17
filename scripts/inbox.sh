@@ -9,12 +9,11 @@
 # tmux/git only for the row under the cursor.
 #
 # Inline answers: most waits need one key — approve (Enter into the
-# pane), deny (Escape), or a short reply — so the inbox sends them via
-# send-keys without attaching. Attach stays the escape hatch for anything
-# nontrivial; the inline path is sugar over the same live PTY. Guardrail:
-# every row carries a fingerprint of the pane tail from render time, and an
-# answer is refused when the pane's state or content changed since — a reply
-# must never land in a context the user didn't see.
+# pane), deny (Escape), or a short reply — sent through `agent-fleet answer`
+# without attaching. Attach stays the escape hatch for anything nontrivial.
+# Guardrail: every wait row carries a fingerprint of the pane from render
+# time, and the verb refuses when the pane's state or content changed since
+# — a reply must never land in a context the user didn't see.
 #
 # Modes (fzf re-invokes this script):
 #   (none)                       open the popup
@@ -103,71 +102,30 @@ rows() {
   fi
 }
 
-# The guardrail, then the keys. Refusals print WHY and pause so the fzf
-# execute() screen doesn't swallow the message.
+# Answers are mutations with a guardrail (the pane must still show what the
+# user saw), so they route through the CLI: one implementation for every
+# renderer, this script stays view-only. Refusals come back on stderr, which
+# the fzf execute() screen shows — pause so it isn't swallowed by the repaint.
 answer() {  # <approve|deny|text> <key> [reply]
   local how="$1" key="${2#PANE:}" reply="${3:-}"
-  local pane state fp now_fp
+  local pane state fp
   IFS='|' read -r pane state fp <<<"$key"
-  refuse() { echo "not sent: $1"; sleep 1.5; exit 1; }
-  [[ "$pane" == */* ]] && refuse "remote agent — attach to answer (Enter)"
-  [[ "$state" == "wait" ]] || refuse "row is '$state', answers are for waiting agents"
-  # State per the CURRENT snapshot (≤ a tick old), then content fingerprint.
-  local snap_st=""
-  snap_st="$(awk -F'|' -v p="$pane" '/^A /{if ($5==p) st=$7} END{print st}' "$SNAP" 2>/dev/null || true)"
-  [[ "$snap_st" == "wait" ]] || refuse "agent moved on (now: ${snap_st:-gone}) — reopen the inbox"
-  now_fp="$(pane_fp "$pane")"
-  [[ -n "$now_fp" && "$now_fp" == "$fp" ]] \
-    || refuse "the pane changed since this row rendered (stale) — re-read it first"
-  case "$how" in
-    approve) tx send-keys -t "$pane" Enter ;;
-    deny)    tx send-keys -t "$pane" Escape ;;
-    text)    [[ -n "$reply" ]] || refuse "empty reply"
-             # tmux strips an unescaped trailing ';' from an argv element (it
-             # terminates the command) — escape it so the reply arrives whole.
-             [[ "$reply" == *';' ]] && reply="${reply%;}\;"
-             tx send-keys -t "$pane" -l -- "$reply" && tx send-keys -t "$pane" Enter ;;
-    *)       refuse "unknown answer '$how'" ;;
-  esac
+  if [[ "$state" != "wait" ]]; then
+    echo "not sent: row is '$state', answers are for waiting agents"; sleep 1.5; exit 1
+  fi
+  local -a args=("$pane" "$how")
+  [[ "$how" == "text" ]] && args+=("$reply")
+  [[ -n "$fp" ]] && args+=(--fp "$fp")
+  "$AF" answer "${args[@]}" || { sleep 1.5; exit 1; }
   # Give the agent a beat to consume the keys so the reloaded row reflects it.
   sleep 0.4
 }
 
-# Batch approve: one keystroke clears a queue of waiting approvals.
-# Per pane the gate is the STATUS FILE (hook-written, fresher than the
-# snapshot) re-read at send time — a row that left wait between paint and
-# press is skipped, never blind-fired. Same key semantics as ^y (Enter =
-# the prompt's default); remote rows are skipped like ^y refuses them.
+# Batch approve: one keystroke clears a queue of waiting approvals. The CLI
+# confirms on this popup's tty first and re-reads each pane's status at send
+# time; the tally it prints stays on screen for a beat.
 answer_all() {
-  local line pane st st_now n_ok=0 n_skip=0 n_wait=0 go=""
-  [[ -f "$SNAP" ]] || { echo "no snapshot yet"; sleep 1.5; return 0; }
-  # Confirm first: approving a permission prompt EXECUTES the pending action,
-  # and ^a is also readline muscle-memory — one stray keystroke must never
-  # green-light the whole fleet. The count includes rows a filter hid.
-  while IFS= read -r line; do
-    [[ "$line" == A\ * ]] || continue
-    IFS='|' read -r _ _ _ _ pane _ st _ <<<"${line#A }"
-    [[ "$st" == "wait" && "$pane" != */* ]] && n_wait=$(( n_wait + 1 ))
-  done < "$SNAP"
-  if (( n_wait == 0 )); then echo "nothing waiting"; sleep 1.2; return 0; fi
-  printf 'approve ALL %s waiting agent(s) — including any hidden by your filter? [y/N] ' "$n_wait"
-  IFS= read -r -n1 go || go=""
-  printf '\n'
-  [[ "$go" == "y" || "$go" == "Y" ]] || { echo "cancelled"; sleep 0.8; return 0; }
-  while IFS= read -r line; do
-    [[ "$line" == A\ * ]] || continue
-    IFS='|' read -r _ _ _ _ pane _ st _ <<<"${line#A }"
-    [[ "$st" == "wait" ]] || continue
-    if [[ "$pane" == */* ]]; then n_skip=$(( n_skip + 1 )); continue; fi
-    st_now="$(cat "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true)"
-    if [[ "$st_now" != "wait" ]]; then n_skip=$(( n_skip + 1 )); continue; fi
-    if tx send-keys -t "$pane" Enter 2>/dev/null; then
-      n_ok=$(( n_ok + 1 ))
-    else
-      n_skip=$(( n_skip + 1 ))
-    fi
-  done < "$SNAP"
-  echo "approved $n_ok · skipped $n_skip (moved on / remote / gone)"
+  "$AF" answer --all approve
   sleep 1.2
 }
 
