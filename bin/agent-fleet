@@ -859,13 +859,50 @@ cmd_rename_workspace() {
 
 # rename-tab [<target>] <new> — rename a tab (tmux window). Spaces allowed.
 # With one arg, renames the current tab (run from inside the fleet).
+# task_set_intent <tid> <text> — rewrite the record's intent line in place.
+# Records are line-oriented and intent is single-valued: every reader picks
+# ONE intent line (which one has changed before), so the line is replaced,
+# never appended — no reader can then disagree about which intent wins.
+task_set_intent() {
+  local rec="$AF_TASKS_DIR/$1" text="${2//[$'\n\r\t']/ }" line
+  [[ -f "$rec" ]] || return 1
+  {
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      case "$line" in "intent "*) printf 'intent %s\n' "$text" ;; *) printf '%s\n' "$line" ;; esac
+    done < "$rec"
+  } > "$rec.tmp.$$" && mv "$rec.tmp.$$" "$rec"
+}
+
+# task intent <id|%pane> "<text>" — set a task's intent by hand: the rail and
+# picker title the row with it, so an adopted agent can say what it is FOR.
+task_intent() {
+  local target="${1:-}" text="${2:-}" tid
+  [[ -n "$target" && -n "$text" ]] || { echo 'usage: agent-fleet task intent <task-id|%pane> "<text>"' >&2; exit 2; }
+  tid="$(task_id_for "$target")" || exit 1
+  task_set_intent "$tid" "$text" || { echo "error: unreadable task record: $tid" >&2; exit 1; }
+  echo "$tid intent → '$text'"
+}
+
 cmd_rename_tab() {
   local target new
   if [[ $# -ge 2 ]]; then target="$1"; new="$2"
   elif [[ $# -eq 1 ]]; then new="$1"; target="$(current_window)"
   else echo "usage: agent-fleet rename-tab [<session:window>] <new>" >&2; exit 2; fi
   [[ -n "$target" ]] || { echo "error: no current tab — run inside the fleet or pass <target>" >&2; exit 1; }
-  tx rename-window -t "$target" "$new" && echo "tab → '$new'"
+  local old; old="$(tx display-message -p -t "$target" '#{window_name}' 2>/dev/null || true)"
+  tx rename-window -t "$target" -- "$new" || exit 1
+  # An adopted agent's intent is a copy of its window name at adoption — a
+  # placeholder, not something the user typed. Renaming the tab is how they
+  # say what it is for, so a record still carrying that placeholder follows
+  # the rename; a real intent (task "<prompt>", task intent) is left alone.
+  local pane tf tid rec
+  while IFS= read -r pane; do
+    tf="$AF_CACHE_DIR/panes/$pane.task"; [[ -r "$tf" ]] || continue
+    tid=""; { read -r tid < "$tf"; } 2>/dev/null || true
+    rec="$AF_TASKS_DIR/$tid"; [[ -n "$tid" && -f "$rec" ]] || continue
+    grep -qxF "intent $old" "$rec" 2>/dev/null && task_set_intent "$tid" "$new"
+  done < <(tx list-panes -t "$target" -F '#{pane_id}' 2>/dev/null)
+  echo "tab → '$new'"
 }
 
 # move [<target>] --to <workspace> — move a tab (tmux window) to another
@@ -2600,6 +2637,7 @@ cmd_task() {
       ls)        shift; task_ls "$@"; return 0 ;;
       show)      shift; task_show "$@"; return 0 ;;
       adopt)     shift; task_adopt "$@"; return 0 ;;
+      intent)    shift; task_intent "$@"; return 0 ;;
       history)   shift; task_history "$@"; return 0 ;;
       done)      shift; task_mark "${1:?usage: agent-fleet task done <task-id|%pane>}" merged; return 0 ;;
       drop)      shift; task_mark "${1:?usage: agent-fleet task drop <task-id|%pane>}" abandoned; return 0 ;;
@@ -2813,6 +2851,8 @@ Verbs:
                                    in a task record. Prints "<task-id> <pane-id>".
   agent-fleet task ls              List task records with their current state.
   agent-fleet task show <id|%pane> Print a task record (intent, dir, state history).
+  agent-fleet task intent <id|%pane> "<text>"
+                                   Set a task's intent (the rail/picker row title).
   agent-fleet task done|drop|clean Lifecycle: mark terminal, reclaim worktrees (see task -h).
   agent-fleet history              Finished tasks per day: duration, wait time, outcome (task history).
   agent-fleet review <id|%pane>    Diff a done task vs its base; PR / merge / send-back (see review -h).
