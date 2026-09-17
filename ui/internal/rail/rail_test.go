@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -110,11 +111,139 @@ func TestOverflowCountsTheRest(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@9", "none", 16)))
 	// 16 rows: header, blank, 3 spaces rows (6), blank, header, blank = 11 lines
 	// before agents; (16-11-3)/2 = 1 agent row, then "+5 more".
-	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " +5 more (prefix+o)") {
+	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " ↓5 more") {
 		t.Fatalf("overflow:\n%s", out)
 	}
 	if strings.Contains(out, "fix the flaky spec") {
-		t.Fatalf("second agent must be hidden behind the more-row:\n%s", out)
+		t.Fatalf("second agent must be hidden behind the more-line:\n%s", out)
+	}
+}
+
+func TestScrollAndCursorKeepRowVisible(t *testing.T) {
+	v := view(t, "mixed.snapshot", "@9", "none", 16) // one agent row fits
+	v.Scroll(2)
+	out := plain(Render(v))
+	if !strings.Contains(out, "fix-tests.2") || !strings.Contains(out, " ↑2 ↓3 more") {
+		t.Fatalf("wheel scroll:\n%s", out)
+	}
+	v.Scroll(100)
+	if v.Offset != 5 || !strings.Contains(plain(Render(v)), "scratch") {
+		t.Fatalf("scroll clamps to the last row, offset=%d", v.Offset)
+	}
+	v.Offset = 0
+	v.Cursor = -1
+	for i := 0; i < 3+4; i++ { // 3 spaces rows, then into the agents
+		v.Move(1)
+	}
+	if got := v.Selected(); got.Kind != AgentTarget || got.ID != "%9" {
+		t.Fatalf("cursor after 7 moves: %+v", got)
+	}
+	if v.Offset != 3 {
+		t.Fatalf("viewport must follow the cursor, offset=%d", v.Offset)
+	}
+	if !strings.Contains(plain(Render(v)), "›") || !v.Focus {
+		t.Fatal("focus mode must mark the cursor row")
+	}
+}
+
+func TestFiltersAndFold(t *testing.T) {
+	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
+	v.WaitOnly = true
+	rows := v.Rows()
+	if len(rows) != 3+2 {
+		t.Fatalf("wait-only: %d rows", len(rows))
+	}
+	if !strings.Contains(plain(Render(v)), " agents                   wait") {
+		t.Fatalf("header must show the filter:\n%s", plain(Render(v)))
+	}
+	v.WaitOnly = false
+	v.Filter = "AUTH"
+	if rows := v.Rows(); len(rows) != 3+1 || rows[3].Target.ID != "%9" {
+		t.Fatalf("text filter is case-insensitive over the title: %+v", rows)
+	}
+	v.Filter = "codex"
+	if rows := v.Rows(); len(rows) != 3+1 || rows[3].Target.ID != "%7" {
+		t.Fatalf("text filter covers the subtitle: %+v", rows)
+	}
+	v.Filter = "nothing-matches"
+	if !strings.Contains(plain(Render(v)), "(none match)") {
+		t.Fatal("empty filter result must say so")
+	}
+	v.Filter = ""
+	v.Cursor = 1 // webapp workspace row
+	v.ToggleFold()
+	out := plain(Render(v))
+	if !strings.Contains(out, "▸ webapp") || !strings.Contains(out, "feature/login ↑2 · 3 fol") {
+		t.Fatalf("fold marker:\n%s", out)
+	}
+	if strings.Contains(out, "fix the flaky spec") || !strings.Contains(out, "migrate the auth table") {
+		t.Fatalf("folded workspace hides its agents only:\n%s", out)
+	}
+	v.ToggleFold()
+	if len(v.Rows()) != 3+6 {
+		t.Fatal("unfold restores every row")
+	}
+}
+
+func TestClickMapPointsAtRows(t *testing.T) {
+	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
+	_, lines := RenderMap(v)
+	if lines[0].Kind != NoTarget || lines[1].Kind != NoTarget {
+		t.Fatal("header and blank carry no target")
+	}
+	if lines[2].Kind != SessionTarget || lines[2].ID != "api" || lines[3].ID != "api" {
+		t.Fatalf("workspace row lines: %+v %+v", lines[2], lines[3])
+	}
+	if lines[11].Kind != AgentTarget || lines[11].ID != "%3" || lines[12].ID != "%3" {
+		t.Fatalf("agent row lines: %+v %+v", lines[11], lines[12])
+	}
+	if lines[len(lines)-1].Kind != NoTarget {
+		t.Fatal("footer carries no target")
+	}
+}
+
+func TestKeysDriveTheView(t *testing.T) {
+	m := model{view: view(t, "mixed.snapshot", "@2", "webapp", 0)}
+	m.view.Cursor = -1
+	press := func(k string) tea.Cmd {
+		var msg tea.KeyMsg
+		switch k {
+		case "enter":
+			msg = tea.KeyMsg{Type: tea.KeyEnter}
+		case "esc":
+			msg = tea.KeyMsg{Type: tea.KeyEsc}
+		default:
+			msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)}
+		}
+		nm, cmd := m.Update(msg)
+		m = nm.(model)
+		return cmd
+	}
+	press("j")
+	press("j")
+	if m.view.Selected().ID != "webapp" || !m.view.Focus {
+		t.Fatalf("j j lands on the second workspace: %+v", m.view.Selected())
+	}
+	if cmd := press("enter"); cmd == nil || m.view.Focus {
+		t.Fatal("enter on a row yields a jump command and leaves focus mode")
+	}
+	press("w")
+	if !m.view.WaitOnly {
+		t.Fatal("w toggles wait-only")
+	}
+	press("/au") // one read carrying three keystrokes, as tmux send-keys delivers them
+	if !m.view.Filtering || m.view.Filter != "au" {
+		t.Fatalf("typing builds the filter: %q filtering=%v", m.view.Filter, m.view.Filtering)
+	}
+	press("enter")
+	if m.view.Filtering || m.view.Filter != "au" {
+		t.Fatal("enter keeps the filter and stops typing")
+	}
+	if cmd := press("esc"); cmd == nil || m.view.Focus {
+		t.Fatal("esc runs back and leaves focus mode")
+	}
+	if m.view.Filter != "au" {
+		t.Fatal("esc keeps the filter")
 	}
 }
 

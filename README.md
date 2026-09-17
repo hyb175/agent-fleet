@@ -91,7 +91,7 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), or `^v` a done task straight into review.
 
-**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. Two renderers exist during the native-UI transition: the bash rail (default) and `afui rail` (`AGENT_FLEET_UI=go`, same layout, cell-width truncation); `agent-fleet reload` respawns rails with whichever is selected.
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. Two renderers exist during the native-UI transition: the bash rail (default) and `afui rail` (`AGENT_FLEET_UI=go`): same layout, plus a scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. `agent-fleet reload` respawns rails with whichever is selected.
 
 ```
 ┌──────────────────┬─────────────────────────┐
@@ -238,6 +238,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 | `Prefix w` | Quick workspace switch (picker → spaces view) |
 | `Prefix f` | Picker → connect view: recent folders + unvisited siblings (git repos first). `Enter` spawns a shell workspace, `^a` with a claude agent, `^r` names it. |
 | `Prefix b` | Toggle the sidenav rail |
+| `Prefix B` | Focus the rail (Go renderer): `j`/`k` move, `⏎` jumps, `w` waiting only, `/` text filter, `z` folds a workspace, `Esc` back to the work pane. Wheel scrolls the agent list. |
 | `Prefix c` | New plain shell window (tmux default) |
 | `Prefix C` | Add a Claude agent — menu picks a new tab or a new workspace; starts in the current dir, jumps to it |
 | `Prefix R` | Force-repaint the focused pane (fixes a stale Claude frame) |

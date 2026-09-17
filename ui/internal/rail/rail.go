@@ -10,7 +10,14 @@
 //     would be wrong);
 //   - the spinner animates only while this rail is visible on some client
 //     and some agent is working;
-//   - a stale snapshot (daemon gone) is announced, never rendered as live.
+//   - a stale snapshot (daemon gone) is announced, never rendered as live;
+//   - every mutation (jumping, connecting, going back) is an `agent-fleet`
+//     verb; the rail itself never drives tmux.
+//
+// On top of parity the rail scrolls, takes the mouse (tmux forwards clicks
+// and the wheel to a pane that enabled tracking), and has a keyboard focus
+// mode (Prefix B selects the pane): j/k move, Enter jumps, w shows waiting
+// agents only, / filters by text, z folds a workspace, Esc returns focus.
 package rail
 
 import (
@@ -18,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -46,9 +54,32 @@ type Config struct {
 	Session  string // this rail's session name: highlights its workspace
 	Snapshot string // path of fleet.snapshot
 	FocusNow string // path of focus.now ("session|window_id")
+	AF       string // path of the agent-fleet CLI (the command plane)
 	Theme    theme.Theme
 	Width    int // 0 = take it from the terminal
 	Height   int // 0 = unknown, render uncapped
+}
+
+// TargetKind says what a row stands for.
+type TargetKind int
+
+const (
+	NoTarget TargetKind = iota
+	SessionTarget
+	AgentTarget
+)
+
+// Target is what a rendered line points at; clicks and Enter resolve to it.
+type Target struct {
+	Kind TargetKind
+	ID   string // session name or pane id (host-qualified when federated)
+	Row  int    // index into View.Rows
+}
+
+// Row is one visible entry of the combined list, in render order.
+type Row struct {
+	Target Target
+	Sess   string // session (for folding)
 }
 
 // View is the rail's state at one instant, render-ready. It holds no I/O.
@@ -58,6 +89,64 @@ type View struct {
 	Now     int64
 	Frame   int
 	Visible bool // some client's active window is this rail's window
+
+	// Interaction state.
+	Focus     bool            // keyboard focus mode (a key arrived)
+	Cursor    int             // index into Rows(), -1 = none
+	Offset    int             // first agent row shown (scroll position)
+	WaitOnly  bool            // w: only agents in wait
+	Filter    string          // /: case-insensitive substring on title or subtitle
+	Filtering bool            // typing the filter
+	Folded    map[string]bool // sessions whose agents are hidden
+}
+
+// Rows is the combined, filtered list the cursor moves over: every
+// workspace row, then every agent row that passes the filters and is not
+// folded. Agents keep snapshot order (the daemon's), as the bash rail does.
+func (v View) Rows() []Row {
+	var rows []Row
+	if v.Snap == nil {
+		return rows
+	}
+	for _, sp := range v.Snap.Spaces {
+		rows = append(rows, Row{Target: Target{Kind: SessionTarget, ID: sp.Session}, Sess: sp.Session})
+	}
+	per := v.Snap.AgentsPerWindow()
+	needle := strings.ToLower(v.Filter)
+	for _, a := range v.Snap.Agents {
+		if v.Folded[a.Session] {
+			continue
+		}
+		if v.WaitOnly && a.State != snapshot.StateWait {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(a.Title(per)+" "+subtitle(a)), needle) {
+			continue
+		}
+		rows = append(rows, Row{Target: Target{Kind: AgentTarget, ID: a.Pane}, Sess: a.Session})
+	}
+	for i := range rows {
+		rows[i].Target.Row = i
+	}
+	return rows
+}
+
+// subtitle = workspace · kind, then for wait/done the time in state and
+// the diffstat (how big is the thing waiting on me), then the isolation
+// rung when above host. Same order as sidenav.sh.
+func subtitle(a snapshot.Agent) string {
+	sub := a.Session + " · " + a.Label
+	attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
+	if attention && a.HasAge {
+		sub += " · " + snapshot.FormatAge(a.Age)
+	}
+	if attention && a.Diffstat != "" {
+		sub += " · " + a.Diffstat
+	}
+	if a.Isolation != "" {
+		sub += " · " + a.Isolation
+	}
+	return sub
 }
 
 // styles are built once per theme; every selected-row segment carries the
@@ -65,6 +154,7 @@ type View struct {
 type styles struct {
 	fg, dim, accent, wait, working, done, muted                      lipgloss.Style
 	hlFg, hlDim, hlAccent, hlWait, hlWorking, hlDone, hlMuted, hlPad lipgloss.Style
+	cursor                                                           lipgloss.Style
 }
 
 func newStyles(t theme.Theme) styles {
@@ -86,6 +176,7 @@ func newStyles(t theme.Theme) styles {
 	s.hlDone = s.done.Background(hl)
 	s.hlMuted = s.muted.Background(hl)
 	s.hlPad = lipgloss.NewStyle().Background(hl)
+	s.cursor = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent)).Bold(true)
 	return s
 }
 
@@ -122,14 +213,22 @@ func trunc(s string, n int) string {
 
 // Render draws the rail. Pure: same View, same string.
 func Render(v View) string {
+	s, _ := RenderMap(v)
+	return s
+}
+
+// RenderMap draws the rail and returns, per output line, what that line
+// points at (NoTarget for headers and blanks) — the click map.
+func RenderMap(v View) (string, []Target) {
 	w := v.Cfg.Width
 	if w <= 0 {
 		w = 30
 	}
 	st := newStyles(v.Cfg.Theme)
 	var b strings.Builder
-	lines := 0
-	line := func(s string) { b.WriteString(s); b.WriteByte('\n'); lines++ }
+	var lines []Target
+	line := func(s string, t Target) { b.WriteString(s); b.WriteByte('\n'); lines = append(lines, t) }
+	none := Target{}
 	pad := func(s string) string { // pad plain-or-styled text to the width
 		if d := w - lipgloss.Width(s); d > 0 {
 			return s + strings.Repeat(" ", d)
@@ -141,11 +240,14 @@ func Render(v View) string {
 		if p < 1 {
 			p = 1
 		}
-		line(st.dim.Render(" " + l + strings.Repeat(" ", p) + r))
+		line(st.dim.Render(" "+l+strings.Repeat(" ", p)+r), none)
 	}
-	row := func(sel bool, glyph, name, sub string) {
+	rows := v.Rows()
+	row := func(t Target, sel bool, glyph, name, sub string) {
 		// Name line prefix is " g " (3 cells) or "▎ g " when selected (4);
-		// the subtitle prefix is 3 cells either way.
+		// the subtitle prefix is 3 cells either way. In focus mode the cursor
+		// row swaps its leading cell for ›.
+		cursor := v.Focus && t.Kind != NoTarget && v.Cursor == t.Row
 		nameCap := w - 3
 		if sel {
 			nameCap = w - 4
@@ -153,12 +255,20 @@ func Render(v View) string {
 		name = trunc(name, nameCap)
 		sub = trunc(sub, w-3)
 		if sel {
-			bar := st.hlAccent.Render("▎")
-			line(st.hlPad.Render(pad(bar + st.hlPad.Render(" ") + glyph + st.hlPad.Render(" ") + st.hlFg.Render(name))))
-			line(st.hlPad.Render(pad(bar + st.hlPad.Render("  ") + st.hlDim.Render(sub))))
+			bar := "▎"
+			if cursor {
+				bar = "›"
+			}
+			barS := st.hlAccent.Render(bar)
+			line(st.hlPad.Render(pad(barS+st.hlPad.Render(" ")+glyph+st.hlPad.Render(" ")+st.hlFg.Render(name))), t)
+			line(st.hlPad.Render(pad(barS+st.hlPad.Render("  ")+st.hlDim.Render(sub))), t)
 		} else {
-			line(" " + glyph + " " + st.fg.Render(name))
-			line("   " + st.dim.Render(sub))
+			lead := " "
+			if cursor {
+				lead = st.cursor.Render("›")
+			}
+			line(lead+glyph+" "+st.fg.Render(name), t)
+			line("   "+st.dim.Render(sub), t)
 		}
 	}
 
@@ -168,62 +278,103 @@ func Render(v View) string {
 		snap = &snapshot.Snapshot{Interval: 1}
 	}
 	if snap.Epoch > 0 && snap.Stale(v.Now) {
-		line(st.wait.Render(" ⚠ stale — daemon down?"))
+		line(st.wait.Render(" ⚠ stale — daemon down?"), none)
 	}
-	line("")
+	line("", none)
+	ri := 0 // index into rows
 	if len(snap.Spaces) == 0 {
-		line(st.dim.Render(" (no workspaces)"))
+		line(st.dim.Render(" (no workspaces)"), none)
 	} else {
+		folded := map[string]int{}
+		for _, a := range snap.Agents {
+			if v.Folded[a.Session] {
+				folded[a.Session]++
+			}
+		}
 		for _, sp := range snap.Spaces {
-			row(sp.Session == v.Cfg.Session, st.glyph(sp.Rollup, v.Frame, sp.Session == v.Cfg.Session), sp.Session, sp.Branch)
+			sel := sp.Session == v.Cfg.Session
+			name, sub := sp.Session, sp.Branch
+			if v.Folded[sp.Session] {
+				name = "▸ " + name
+				sub += fmt.Sprintf(" · %d folded", folded[sp.Session])
+			}
+			row(rows[ri].Target, sel, st.glyph(sp.Rollup, v.Frame, sel), name, sub)
+			ri++
 		}
 	}
-	line("")
-	header("agents", "all")
-	line("")
+	line("", none)
+	right := "all"
+	if v.WaitOnly {
+		right = "wait"
+	}
+	if v.Filter != "" || v.Filtering {
+		right += " /" + v.Filter
+		if v.Filtering {
+			right += "▏"
+		}
+	}
+	header("agents", right)
+	line("", none)
+	agentRows := rows[ri:]
 	if len(snap.Agents) == 0 {
-		line(st.dim.Render(" (no agents)"))
+		line(st.dim.Render(" (no agents)"), none)
+	} else if len(agentRows) == 0 {
+		line(st.dim.Render(" (none match)"), none)
 	} else {
 		per := snap.AgentsPerWindow()
-		total := len(snap.Agents)
+		byPane := make(map[string]snapshot.Agent, len(snap.Agents))
+		for _, a := range snap.Agents {
+			byPane[a.Pane] = a
+		}
+		total := len(agentRows)
 		avail := total
 		if v.Cfg.Height > 0 {
-			// Rows past the pane bottom are invisible anyway: count what is
-			// left instead of truncating silently. Two lines per row; three
-			// reserved for the footer and the more-row itself.
-			avail = (v.Cfg.Height - lines - 3) / 2
+			// Rows past the pane bottom are invisible anyway: show a window
+			// of them and say how many sit above and below. Two lines per
+			// row; three reserved for the footer and the more-line.
+			avail = (v.Cfg.Height - len(lines) - 3) / 2
 			if avail < 1 {
 				avail = 1
 			}
 		}
-		shown := 0
-		for _, a := range snap.Agents {
-			if shown >= avail && total > avail {
-				line(st.dim.Render(fmt.Sprintf(" +%d more (prefix+o)", total-shown)))
-				break
-			}
-			shown++
+		offset := v.Offset
+		if offset > total-avail {
+			offset = total - avail
+		}
+		if offset < 0 {
+			offset = 0
+		}
+		end := offset + avail
+		if end > total {
+			end = total
+		}
+		for _, r := range agentRows[offset:end] {
+			a := byPane[r.Target.ID]
 			sel := a.WindowID == v.Cfg.Window
-			// Subtitle = workspace · kind, then for wait/done the time in
-			// state and the diffstat (how big is the thing waiting on me),
-			// then the isolation rung when above host. Same order as sidenav.sh.
-			sub := a.Session + " · " + a.Label
-			attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
-			if attention && a.HasAge {
-				sub += " · " + snapshot.FormatAge(a.Age)
+			row(r.Target, sel, st.glyph(a.State, v.Frame, sel), a.Title(per), subtitle(a))
+		}
+		if offset > 0 || end < total {
+			more := ""
+			if offset > 0 {
+				more += fmt.Sprintf(" ↑%d", offset)
 			}
-			if attention && a.Diffstat != "" {
-				sub += " · " + a.Diffstat
+			if end < total {
+				more += fmt.Sprintf(" ↓%d", total-end)
 			}
-			if a.Isolation != "" {
-				sub += " · " + a.Isolation
-			}
-			row(sel, st.glyph(a.State, v.Frame, sel), a.Title(per), sub)
+			line(st.dim.Render(more+" more"), none)
 		}
 	}
-	line("")
-	b.WriteString(st.dim.Render(" prefix+o open · prefix+b hide")) // no trailing newline: an exact-fit frame must not scroll
-	return b.String()
+	line("", none)
+	foot := " prefix+o open · prefix+b hide"
+	if v.Filtering {
+		foot = " type to filter · ⏎ keep · esc clear"
+	} else if v.Focus {
+		foot = " j/k ⏎ jump · w wait · / find · z fold · esc"
+	}
+	// No trailing newline: an exact-fit frame must not scroll.
+	b.WriteString(st.dim.Render(trunc(foot, w)))
+	lines = append(lines, none)
+	return b.String(), lines
 }
 
 // Animate reports whether the spinner should run: something is working and
@@ -240,22 +391,134 @@ func (v View) Animate() bool {
 	return false
 }
 
+// --- interaction (pure) ------------------------------------------------------
+
+// availAgents mirrors RenderMap's viewport arithmetic (0 = uncapped).
+func (v View) availAgents() int {
+	if v.Cfg.Height <= 0 || v.Snap == nil {
+		return 0
+	}
+	lines := 1 + 1 + 2*len(v.Snap.Spaces) + 1 + 1 + 1 // headers, blanks, spaces rows
+	if v.Snap.Epoch > 0 && v.Snap.Stale(v.Now) {
+		lines++
+	}
+	avail := (v.Cfg.Height - lines - 3) / 2
+	if avail < 1 {
+		avail = 1
+	}
+	return avail
+}
+
+// clamp keeps the cursor on a row and scrolls the agent window to show it.
+func (v *View) clamp() {
+	rows := v.Rows()
+	if len(rows) == 0 {
+		v.Cursor = -1
+		v.Offset = 0
+		return
+	}
+	if v.Cursor >= len(rows) {
+		v.Cursor = len(rows) - 1
+	}
+	if v.Cursor < 0 {
+		v.Cursor = 0
+	}
+	first := len(v.Snap.Spaces) // first agent row index
+	if v.Cursor < first {
+		return
+	}
+	ai := v.Cursor - first
+	avail := v.availAgents()
+	if ai < v.Offset {
+		v.Offset = ai
+	} else if avail > 0 && ai >= v.Offset+avail {
+		v.Offset = ai - avail + 1
+	}
+}
+
+// Move shifts the cursor by d rows.
+func (v *View) Move(d int) {
+	v.Focus = true
+	if v.Cursor < 0 {
+		v.Cursor = 0
+	} else {
+		v.Cursor += d
+	}
+	v.clamp()
+}
+
+// Scroll shifts the agent viewport by d rows (the wheel).
+func (v *View) Scroll(d int) {
+	v.Offset += d
+	if v.Snap != nil {
+		if n := len(v.Rows()) - len(v.Snap.Spaces); v.Offset > n-1 {
+			v.Offset = n - 1
+		}
+	}
+	if v.Offset < 0 {
+		v.Offset = 0
+	}
+}
+
+// Selected is the cursor's target, or NoTarget.
+func (v View) Selected() Target {
+	rows := v.Rows()
+	if v.Cursor < 0 || v.Cursor >= len(rows) {
+		return Target{}
+	}
+	return rows[v.Cursor].Target
+}
+
+// ToggleFold folds/unfolds the cursor row's workspace.
+func (v *View) ToggleFold() {
+	rows := v.Rows()
+	if v.Cursor < 0 || v.Cursor >= len(rows) {
+		return
+	}
+	if v.Folded == nil {
+		v.Folded = map[string]bool{}
+	}
+	s := rows[v.Cursor].Sess
+	v.Folded[s] = !v.Folded[s]
+	v.clamp()
+}
+
 // --- Bubble Tea program -----------------------------------------------------
 
 type tickMsg time.Time
 type wakeMsg struct{}
+type ranMsg struct{ err error }
 
 type model struct {
 	view     View
 	snapMod  time.Time
 	focusMod time.Time
-	err      error
 }
 
 func (m model) Init() tea.Cmd { return tick(dataEvery) }
 
 func tick(d time.Duration) tea.Cmd {
 	return tea.Tick(d, func(t time.Time) tea.Msg { return tickMsg(t) })
+}
+
+// run executes an agent-fleet verb without blocking the render loop.
+func (m model) run(args ...string) tea.Cmd {
+	af := m.view.Cfg.AF
+	return func() tea.Msg {
+		cmd := exec.Command(af, args...)
+		return ranMsg{cmd.Run()}
+	}
+}
+
+// jump resolves a target to its verb: agents are `goto`, workspaces `connect`.
+func (m model) jump(t Target) tea.Cmd {
+	switch t.Kind {
+	case AgentTarget:
+		return m.run("goto", t.ID)
+	case SessionTarget:
+		return m.run("connect", t.ID)
+	}
+	return nil
 }
 
 func (m *model) reload(force bool) {
@@ -297,15 +560,23 @@ func (m *model) reload(force bool) {
 			m.view.Visible = true
 		}
 	}
+	if m.view.Cursor >= 0 {
+		m.view.clamp()
+	}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.view.Cfg.Width, m.view.Cfg.Height = msg.Width, msg.Height
+		if m.view.Cursor >= 0 {
+			m.view.clamp()
+		}
 		return m, nil
 	case wakeMsg:
 		m.reload(true)
+		return m, nil
+	case ranMsg:
 		return m, nil
 	case tickMsg:
 		m.reload(false)
@@ -315,12 +586,96 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tick(spinEvery)
 		}
 		return m, tick(dataEvery)
+	case tea.MouseMsg:
+		return m.mouse(msg)
 	case tea.KeyMsg:
-		// Parity: the bash rail takes no keys. Ctrl-C still quits so a
-		// hand-run rail can be stopped.
-		if msg.Type == tea.KeyCtrlC {
-			return m, tea.Quit
+		return m.key(msg)
+	}
+	return m, nil
+}
+
+func (m model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case msg.Button == tea.MouseButtonWheelUp:
+		m.view.Scroll(-1)
+	case msg.Button == tea.MouseButtonWheelDown:
+		m.view.Scroll(1)
+	case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+		// The click map is the current frame's line->target table; a
+		// re-render here is one string build, cheaper than caching it.
+		_, lines := RenderMap(m.view)
+		if msg.Y >= 0 && msg.Y < len(lines) {
+			if t := lines[msg.Y]; t.Kind != NoTarget {
+				return m, m.jump(t)
+			}
 		}
+	}
+	return m, nil
+}
+
+func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Runes that arrive in one read (tmux send-keys, a paste) come as a
+	// single KeyMsg; treat them as the keystrokes they are, in order.
+	if msg.Type == tea.KeyRunes && len(msg.Runes) > 1 {
+		var cur tea.Model = m
+		var cmd tea.Cmd
+		for _, r := range msg.Runes {
+			cur, cmd = cur.(model).key(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+		}
+		return cur, cmd
+	}
+	v := &m.view
+	if v.Filtering {
+		switch msg.Type {
+		case tea.KeyEsc:
+			v.Filter, v.Filtering = "", false
+		case tea.KeyEnter:
+			v.Filtering = false
+		case tea.KeyBackspace:
+			if r := []rune(v.Filter); len(r) > 0 {
+				v.Filter = string(r[:len(r)-1])
+			}
+		case tea.KeyRunes:
+			v.Filter += string(msg.Runes)
+		}
+		v.clamp()
+		return m, nil
+	}
+	switch msg.String() {
+	case "ctrl+c":
+		return m, tea.Quit
+	case "j", "down":
+		v.Move(1)
+	case "k", "up":
+		v.Move(-1)
+	case "g", "home":
+		v.Focus = true
+		v.Cursor = 0
+		v.clamp()
+	case "G", "end":
+		v.Focus = true
+		v.Cursor = len(v.Rows()) - 1
+		v.clamp()
+	case "enter":
+		v.Focus = true
+		if t := v.Selected(); t.Kind != NoTarget {
+			v.Focus = false
+			return m, m.jump(t)
+		}
+	case "w":
+		v.Focus = true
+		v.WaitOnly = !v.WaitOnly
+		v.clamp()
+	case "/":
+		v.Focus, v.Filtering = true, true
+	case "z":
+		v.Focus = true
+		v.ToggleFold()
+	case "esc", "q":
+		// Back to the work pane this focus interrupted. Filters stay: the
+		// rail shows them in its header until w or / clears them.
+		v.Focus = false
+		return m, m.run("back")
 	}
 	return m, nil
 }
@@ -357,6 +712,7 @@ func Load(getenv func(string) string, root string) (Config, error) {
 		Session:  getenv("AGENT_FLEET_RAIL_SESS"),
 		Snapshot: cache.Snapshot(getenv),
 		FocusNow: cache.FocusNow(getenv),
+		AF:       filepath.Join(root, "bin", "agent-fleet"),
 		Theme:    th,
 	}
 	if cfg.Window == "" {
@@ -377,12 +733,14 @@ func Run(cfg Config) error {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	// Fixed, so lipgloss never queries the terminal's background color.
 	lipgloss.SetHasDarkBackground(true)
-	m := model{view: View{Cfg: cfg, Now: time.Now().Unix()}}
+	m := model{view: View{Cfg: cfg, Now: time.Now().Unix(), Cursor: -1}}
 	m.reload(true)
 	// Explicit stdin/stdout: with its default input Bubble Tea opens
 	// /dev/tty when stdin is not a terminal, and an open() on the tty of a
 	// dead pane blocks forever (CONTRIBUTING). The pane's own fds are enough.
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout))
+	// Mouse cell motion: tmux forwards clicks and the wheel to a pane that
+	// enabled tracking (its default MouseDown1Pane/WheelUpPane bindings).
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithMouseCellMotion())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGUSR1)
 	go func() {
