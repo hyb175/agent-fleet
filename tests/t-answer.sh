@@ -51,6 +51,13 @@ af answer "$tp" text "yes please;" >/dev/null
 for _ in $(seq 1 20); do [[ -s "$WORK/ans2" ]] && break; sleep 0.2; done
 check "text reply arrives whole (incl. trailing ;)" "[[ \"\$(cat '$WORK/ans2' 2>/dev/null)\" == 'answered:yes please;' ]]"
 
+# The inbox never sends without a fingerprint: a wait row whose pane could not
+# be captured at render time carries an empty fp and is refused up front.
+# shellcheck disable=SC2034 # read inside the eval'd check() condition
+nofp="$(AGENT_FLEET_ROOT="$REPO" AGENT_FLEET_SOCKET="$SOCK" bash "$REPO/scripts/inbox.sh" --answer approve "PANE:$sp|wait|" 2>&1)" && rc=0 || rc=$?
+check "inbox refuses a wait row without a fingerprint" "[[ $rc -ne 0 ]] && grep -q 'no fingerprint' <<<\"\$nofp\""
+check "nothing sent for the fingerprint-less row" "[[ ! -s '$WORK/ans3' ]]"
+
 # Stale: content changed under the caller's fingerprint -> refused, nothing sent.
 sfp="$(af answer "$sp" fp)"
 tx send-keys -t "$sp" -l "unexpected input"
