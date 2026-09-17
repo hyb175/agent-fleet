@@ -3,3 +3,6 @@
 
 # nix build output
 /result
+
+# native UI binary (make ui)
+/bin/afui

@@ -69,6 +69,25 @@ what it can, this file covers what it can't.
     runs them under `/bin/bash`. (A hook aborted with `printf: '(': invalid
     format character` and `ts: unbound variable` on every Stop event.)
 
+## Go (`ui/`)
+
+The native surfaces live in one module under `ui/` and ship as `bin/afui`
+(`make ui`; `make ui-test` is what CI runs). Standard library only unless a
+ticket says otherwise. Rules that carry over from the bash side:
+
+- **View-only.** The binary reads `fleet.snapshot`, `focus.now`, the theme
+  presets and the cache dir. Anything that changes tmux or task state goes
+  through an `agent-fleet` verb — one implementation, covered by the bash
+  suite. Read-only `tmux capture-pane` for previews is the exception.
+- **No tmux in the hot path.** A rail re-reads the snapshot on mtime change
+  and never polls tmux; N rails add no server load.
+- **No signals to tmux-reported pids.** Wake-ups come from file watches.
+- **Never open `/dev/tty`.** Use the inherited fds.
+- **Snapshot fields by position from the front**, unknown trailing fields
+  ignored, missing ones read as `-` (`docs/snapshot-format.md`).
+- Version comes from `bin/agent-fleet` via `-ldflags -X main.version`; CI
+  fails on drift.
+
 ## Shellcheck policy
 
 `.shellcheckrc` globally disables only SC1090/SC1091 (source-path resolution).
