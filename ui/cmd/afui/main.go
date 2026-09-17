@@ -1,9 +1,9 @@
 // afui is the fleet's native terminal UI: the rail, the picker, the inbox
 // and the move-tab popup, one binary. It is view-only — it reads
 // fleet.snapshot and the theme, and runs `agent-fleet` verbs for anything
-// that changes state. Surfaces land one per ticket; until then a subcommand
-// says so and exits 2, and sidenav-toggle/the keybinds keep using the bash
-// renderers.
+// that changes state. Surfaces land one per ticket; a subcommand that has
+// not landed says so and exits 2, and the keybinds keep using the bash
+// renderers. scripts/rail-launch.sh picks the rail renderer.
 package main
 
 import (
@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/hyb175/agent-fleet/ui/internal/cache"
+	"github.com/hyb175/agent-fleet/ui/internal/rail"
 	"github.com/hyb175/agent-fleet/ui/internal/theme"
 )
 
@@ -63,7 +64,17 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("theme=%s accent=%s\n", th.Name, th.Accent)
-	case "rail", "pick", "inbox", "move":
+	case "rail":
+		cfg, err := rail.Load(os.Getenv, root())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "afui rail: %v\n", err)
+			os.Exit(1)
+		}
+		if err := rail.Run(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "afui rail: %v\n", err)
+			os.Exit(1)
+		}
+	case "pick", "inbox", "move":
 		fmt.Fprintf(os.Stderr, "afui %s: not implemented yet — the bash renderer is still in charge\n", os.Args[1])
 		os.Exit(2)
 	case "-h", "--help", "help":

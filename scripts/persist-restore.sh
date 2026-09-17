@@ -128,7 +128,7 @@ tx set-option -g @fleet-sidenav-auto off 2>/dev/null || true
 tx set-environment -g AGENT_FLEET_ROOT "$ROOT" 2>/dev/null || true
 tx set-environment -g AGENT_FLEET_SOCKET "$SOCK" 2>/dev/null || true
 
-rail_cmd="exec env AGENT_FLEET_SOCKET='$SOCK' AGENT_FLEET_ROOT='$ROOT' '$ROOT/scripts/sidenav.sh'"
+rail_cmd="exec env AGENT_FLEET_SOCKET='$SOCK' AGENT_FLEET_ROOT='$ROOT' '$ROOT/scripts/rail-launch.sh'"
 
 for s in "${sess_order[@]}"; do
   # The scratch name is reserved; a real session that somehow carries it can't

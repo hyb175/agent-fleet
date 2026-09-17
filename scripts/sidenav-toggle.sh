@@ -54,8 +54,12 @@ create_rail() {
   # layout — a true side rail, not a sub-split.
   # `exec env …` replaces the launching shell so the pane process IS the rail
   # (no fish wrapper to leak/orphan), and kill-pane signals it directly.
+  # The rail's own session, resolved here (one call at creation) so the
+  # renderer never has to ask tmux for it.
+  local sess
+  sess="$(tx display-message -p -t "$win" '#{session_name}' 2>/dev/null || true)"
   newp="$(tx split-window -h -b -f -d -l "$WIDTH" -t "$win" -P -F '#{pane_id}' \
-          "exec env AGENT_FLEET_SOCKET='$SOCKET' AGENT_FLEET_ROOT='$ROOT' AGENT_FLEET_RAIL_WIN='$win' '$ROOT/scripts/sidenav.sh'")"
+          "exec env AGENT_FLEET_SOCKET='$SOCKET' AGENT_FLEET_ROOT='$ROOT' AGENT_FLEET_RAIL_WIN='$win' AGENT_FLEET_RAIL_SESS='$sess' '$ROOT/scripts/rail-launch.sh'")"
   tx set -p -t "$newp" @fleet-sidenav 1
   tx set -p -t "$newp" remain-on-exit off
   redraw   # split -l already set the width; just paint cleanly
