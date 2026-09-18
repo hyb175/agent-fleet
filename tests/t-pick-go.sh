@@ -44,7 +44,7 @@ pp="$(tx new-window -d -P -F '#{pane_id}' -t t: -n picker \
   "env AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/bin/afui' pick")"
 wait_for 10 "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
 check "fleet view lists the agent by intent" "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
-wait_for 5 "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU'"
+wait_for 5 "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU' && tx capture-pane -p -t '$pp' | grep -q 'zebra quest.*t:[0-9]'"
 check "row sits under the NEEDS YOU header with its workspace:index" "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU' && tx capture-pane -p -t '$pp' | grep -q 'zebra quest.*t:[0-9]'"
 tx send-keys -t "$pp" zbq   # fuzzy: z…b…q
 wait_for 5 "tx capture-pane -p -t '$pp' | grep -q '1 of '"
