@@ -58,12 +58,10 @@ tx send-keys -t "$tp" -l "unexpected input"
 for _ in $(seq 1 25); do tx capture-pane -p -t "$tp" | grep -q 'unexpected input' && break; sleep 0.2; done
 # The preview (and its fingerprint) is the user's last look: it does not
 # follow the snapshot tick, so the CLI's recapture now differs -> refused.
+# (The popup is narrow here, so the CLI's "…(stale)…" tail may be cut; match its head.)
 tx send-keys -t "$ib" C-y
-wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'stale'"
-if ! tx capture-pane -p -t "$ib" | grep -q 'stale'; then
-  tx capture-pane -p -t "$ib" | grep -v '^$' | sed -n '1,8p' | sed 's/^/  [debug] /'
-fi
-check "approve on a changed pane is refused as stale" "tx capture-pane -p -t '$ib' | grep -q 'stale'"
+wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'pane changed'"
+check "approve on a changed pane is refused as stale" "tx capture-pane -p -t '$ib' | grep -q 'not sent: the pane changed'"
 check "nothing was sent to the changed pane" "[[ ! -s '$WORK/ans2' ]]"
 
 # Refresh the preview (^r reloads), then reply with ^t.
@@ -73,8 +71,12 @@ tx send-keys -t "$ib" C-t
 wait_for 5 "tx capture-pane -p -t '$ib' | grep -q '⏎ send'"
 tx send-keys -t "$ib" -l "yes please"
 tx send-keys -t "$ib" Enter
-for _ in $(seq 1 25); do [[ -s "$WORK/ans2" ]] && break; sleep 0.2; done
-if [[ ! -s "$WORK/ans2" ]]; then tx capture-pane -p -t "$ib" | grep -v '^$' | sed -n '1,8p' | sed 's/^/  [debug] /'; fi
+for _ in $(seq 1 25); do grep -q 'yes please' "$WORK/ans2" 2>/dev/null && break; sleep 0.2; done
+if ! grep -q 'yes please' "$WORK/ans2" 2>/dev/null; then
+  echo "  [debug] ans2=[$(cat "$WORK/ans2" 2>/dev/null)]"
+  tx capture-pane -p -t "$ib" | grep -v '^$' | sed -n '1,6p' | sed 's/^/  [debug] /'
+  tx capture-pane -p -t "$tp" | grep -v '^$' | tail -3 | sed 's/^/  [debug reader] /'
+fi
 check "^t reply arrives (after the typed text the pane already had)" "grep -q 'yes please' '$WORK/ans2' 2>/dev/null"
 
 # Batch approve with confirmation.
