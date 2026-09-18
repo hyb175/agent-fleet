@@ -635,7 +635,7 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if r := []rune(v.Filter); len(r) > 0 {
 				v.Filter = string(r[:len(r)-1])
 			}
-		case tea.KeyRunes:
+		case tea.KeyRunes, tea.KeySpace: // a space arrives as its own key type
 			v.Filter += string(msg.Runes)
 		}
 		v.clamp()

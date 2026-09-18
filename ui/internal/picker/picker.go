@@ -761,7 +761,7 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if r := []rune(m.name); len(r) > 0 {
 				m.name = string(r[:len(r)-1])
 			}
-		case tea.KeyRunes:
+		case tea.KeyRunes, tea.KeySpace: // a space arrives as its own key type
 			m.name += string(msg.Runes)
 		}
 		return m, nil
@@ -822,7 +822,7 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refilter()
 		}
 	default:
-		if msg.Type == tea.KeyRunes {
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
 			m.query += string(msg.Runes)
 			m.cursor = 0
 			m.refilter()

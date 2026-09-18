@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -135,5 +136,20 @@ func TestViewLayout(t *testing.T) {
 	nm, cmd = m.answer("approve", "")
 	if cmd != nil || !strings.Contains(nm.(model).note, "answers are for waiting agents") {
 		t.Fatalf("done row refusal: %q", nm.(model).note)
+	}
+}
+
+func TestTypingKeepsSpaces(t *testing.T) {
+	th, _ := theme.Load("../../..", "tokyo-night")
+	m := model{cfg: Config{Width: 78, Height: 26}, p: tui.NewPalette(th)}
+	m.items = Items(load(t, "mixed.snapshot"), 600)
+	m.refilter()
+	m.mode = typing
+	for _, k := range []tea.KeyMsg{{Type: tea.KeyRunes, Runes: []rune("yes")}, {Type: tea.KeySpace, Runes: []rune{' '}}, {Type: tea.KeyRunes, Runes: []rune("please")}} {
+		nm, _ := m.Update(k)
+		m = nm.(model)
+	}
+	if m.reply != "yes please" {
+		t.Fatalf("reply lost the space: %q", m.reply)
 	}
 }
