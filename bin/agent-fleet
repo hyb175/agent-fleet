@@ -2823,7 +2823,7 @@ cmd_task() {
 cmd_pick() {
   ensure_server
   if in_fleet_tmux; then
-    tx display-popup -E -w 85% -h 80% "$ROOT_DIR/scripts/pick.sh"
+    tx display-popup -E -w 85% -h 80% "$ROOT_DIR/scripts/ui-launch.sh pick"
   else
     cmd_attach
   fi

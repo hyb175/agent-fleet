@@ -1,12 +1,13 @@
 module github.com/hyb175/agent-fleet/ui
 
-go 1.24.0
+go 1.24.5
 
 require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/muesli/termenv v0.16.0
+	github.com/sahilm/fuzzy v0.1.3
 )
 
 require (

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/hyb175/agent-fleet/ui/internal/cache"
+	"github.com/hyb175/agent-fleet/ui/internal/picker"
 	"github.com/hyb175/agent-fleet/ui/internal/rail"
 	"github.com/hyb175/agent-fleet/ui/internal/theme"
 )
@@ -23,9 +24,9 @@ func usage() {
 	fmt.Fprint(os.Stderr, `usage: afui <rail|pick [fleet|spaces|connect]|inbox|move|version|env>
 
   rail     the sidenav rail (runs inside a tmux pane)
-  pick     the picker popup
+  pick     the picker popup (fleet | spaces | connect)
   inbox    the attention inbox popup
-  move     the move-tab destination picker
+  move     the move-tab destination picker ([@window-id])
   version  print the fleet version this binary was built with
   env      print the resolved root, cache dir, snapshot path and theme
 `)
@@ -74,8 +75,28 @@ func main() {
 			fmt.Fprintf(os.Stderr, "afui rail: %v\n", err)
 			os.Exit(1)
 		}
-	case "pick", "inbox", "move":
-		fmt.Fprintf(os.Stderr, "afui %s: not implemented yet — the bash renderer is still in charge\n", os.Args[1])
+	case "pick", "move":
+		view := picker.Move
+		moveWin := ""
+		if os.Args[1] == "pick" {
+			view = picker.Fleet
+			if len(os.Args) > 2 {
+				view = picker.ParseView(os.Args[2])
+			}
+		} else if len(os.Args) > 2 {
+			moveWin = os.Args[2] // an explicit window id wins (CLI/tests)
+		}
+		cfg, err := picker.Load(os.Getenv, root(), view, moveWin)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "afui %s: %v\n", os.Args[1], err)
+			os.Exit(1)
+		}
+		if err := picker.Run(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "afui %s: %v\n", os.Args[1], err)
+			os.Exit(1)
+		}
+	case "inbox":
+		fmt.Fprintf(os.Stderr, "afui inbox: not implemented yet — the bash renderer is still in charge\n")
 		os.Exit(2)
 	case "-h", "--help", "help":
 		usage()
