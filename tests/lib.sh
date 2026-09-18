@@ -33,6 +33,9 @@ export AGENT_FLEET_RESTORE_STAGGER=0
 # test put ahead of the real binaries. /bin/sh preserves the inherited PATH, so
 # stubs stay stubs. Tests about shell behavior (t-shim) pin SHELL per call.
 export SHELL=/bin/sh
+# Hermetic git: the developer's global config (commit signing, hooks, aliases)
+# must not reach the repos the tests build; identity comes per command.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 WORK="$(cd "$(mktemp -d)" && pwd -P)"
 
 tx() { tmux -L "$SOCK" "$@"; }

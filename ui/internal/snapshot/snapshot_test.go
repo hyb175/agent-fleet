@@ -33,6 +33,16 @@ func TestEveryFixtureParses(t *testing.T) {
 	}
 }
 
+func TestRaceField(t *testing.T) {
+	s := load(t, "race.snapshot")
+	if s.Agents[0].Race != "1/2" || s.Agents[1].Race != "2/2" {
+		t.Fatalf("race badges: %q %q", s.Agents[0].Race, s.Agents[1].Race)
+	}
+	if s.Agents[2].Race != "" {
+		t.Fatalf("12-field row reads no race, got %q", s.Agents[2].Race)
+	}
+}
+
 func TestMixedFields(t *testing.T) {
 	s := load(t, "mixed.snapshot")
 	if s.Epoch != 1789500000 || s.Interval != 1 {

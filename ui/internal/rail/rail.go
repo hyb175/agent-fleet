@@ -131,7 +131,7 @@ func (v View) Rows() []Row {
 
 // subtitle = workspace · kind, then for wait/done the time in state and
 // the diffstat (how big is the thing waiting on me), then the isolation
-// rung when above host. Same order as sidenav.sh.
+// rung when above host, then the race attempt (⑂k/N).
 func subtitle(a snapshot.Agent) string {
 	sub := a.Session + " · " + a.Label
 	attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
@@ -143,6 +143,9 @@ func subtitle(a snapshot.Agent) string {
 	}
 	if a.Isolation != "" {
 		sub += " · " + a.Isolation
+	}
+	if a.Race != "" {
+		sub += " · ⑂" + a.Race
 	}
 	return sub
 }
