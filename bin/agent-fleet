@@ -1691,14 +1691,10 @@ cmd_reload() {
 # ui_renderer_status — which renderer the launchers will pick, and why, so a
 # reload after a branch switch or a missing binary is not a silent fallback.
 ui_renderer_status() {
-  local ui="${AGENT_FLEET_UI:-}" f="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/ui" note=""
-  if [[ -z "$ui" && -r "$f" ]]; then { read -r ui < "$f"; } 2>/dev/null || true; fi
-  # The setting picked between two renderers; only the Go one is left.
-  if [[ "$ui" == "bash" ]]; then note=" — AGENT_FLEET_UI=bash is ignored: the bash renderers were removed"; fi
   if [[ -x "$ROOT_DIR/bin/afui" ]]; then
-    echo "$("$ROOT_DIR/bin/afui" version 2>/dev/null || echo afui)$note"
+    "$ROOT_DIR/bin/afui" version 2>/dev/null || echo afui
   else
-    echo "bin/afui MISSING — no rail, picker or inbox until 'make ui' or a tagged install$note"
+    echo "bin/afui MISSING — no rail, picker or inbox until 'make ui' or a tagged install"
   fi
 }
 

@@ -15,17 +15,6 @@ case "$surface" in
   *) echo "ui-launch: unknown surface '$surface'" >&2; exit 2 ;;
 esac
 
-# AGENT_FLEET_UI chose between two renderers while both existed. The bash
-# ones are gone; the setting is read only to say so (dropped next release).
-ui="${AGENT_FLEET_UI:-}"
-if [[ -z "$ui" ]]; then
-  f="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/ui"
-  if [[ -r "$f" ]]; then read -r ui < "$f" 2>/dev/null || true; fi
-fi
-if [[ "$ui" == "bash" ]]; then
-  echo "agent-fleet: the bash renderers were removed — AGENT_FLEET_UI and ~/.config/agent-fleet/ui are ignored" >&2
-fi
-
 if [[ -x "$ROOT/bin/afui" ]]; then
   exec "$ROOT/bin/afui" "$surface" "$@"
 fi
