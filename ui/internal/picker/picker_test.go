@@ -283,3 +283,19 @@ func TestMatchHighlightStaysInsideTitle(t *testing.T) {
 		t.Fatalf("headers must be state-colored:\n%q", out)
 	}
 }
+
+func TestSearchBoxKeepsCountInNarrowPopup(t *testing.T) {
+	m := model{cfg: Config{Width: 48, Height: 20}, view: Fleet, st: newStyles(themeForTest())}
+	m.items = FleetItems(load(t, "mixed.snapshot"))
+	m.query = "a very long query that would not fit in the box at all"
+	m.refilter()
+	lines := strings.Split(plainText(m.View()), "\n")
+	if !strings.Contains(lines[2], fmt.Sprintf("%d of %d", len(m.shown), len(m.items))) {
+		t.Fatalf("count must survive a long query: %q", lines[2])
+	}
+	for i, l := range lines[:4] {
+		if w := runewidthWidth(l); w != 48 && i > 0 {
+			t.Fatalf("box line %d is %d cells wide, want 48: %q", i, w, l)
+		}
+	}
+}

@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -850,6 +851,11 @@ func trunc(s string, n int) string {
 	return runewidth.Truncate(s, n, "…")
 }
 
+// plain strips styling so a styled placeholder can be re-truncated.
+func plain(s string) string { return ansiSeq.ReplaceAllString(s, "") }
+
+var ansiSeq = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
 func padRight(s string, w int) string {
 	if d := w - lipgloss.Width(s); d > 0 {
 		return s + strings.Repeat(" ", d)
@@ -887,14 +893,22 @@ func (m model) searchBox(w int) string {
 			text = m.st.dim.Render("type to filter")
 		}
 	}
-	count := m.st.dim.Render(fmt.Sprintf("%d of %d", len(m.shown), len(m.items)))
+	countText := fmt.Sprintf("%d of %d", len(m.shown), len(m.items))
+	count := m.st.dim.Render(countText)
+	// The count is never cut: the typed text yields first.
+	room := inner - runewidth.StringWidth(countText) - 2 - lipgloss.Width(prompt)
+	if room < 1 {
+		room = 1
+	}
+	if lipgloss.Width(text) > room {
+		text = trunc(plain(text), room)
+	}
 	left := prompt + text + m.st.accent.Render("▏")
-	gap := inner - lipgloss.Width(left) - lipgloss.Width(count)
+	gap := inner - lipgloss.Width(left) - runewidth.StringWidth(countText)
 	if gap < 1 {
 		gap = 1
 	}
-	body := " " + left + strings.Repeat(" ", gap) + count + " "
-	body = padRight(trunc(body, w-2), w-2)
+	body := padRight(" "+left+strings.Repeat(" ", gap)+count+" ", w-2)
 	top := m.st.border.Render("╭" + strings.Repeat("─", w-2) + "╮")
 	mid := m.st.border.Render("│") + body + m.st.border.Render("│")
 	bot := m.st.border.Render("╰" + strings.Repeat("─", w-2) + "╯")

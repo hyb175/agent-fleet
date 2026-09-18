@@ -523,7 +523,10 @@ current_window()  { [[ -n "${TMUX_PANE:-}" ]] && tx display-message -p -t "$TMUX
 go_to_session() {
   local target="$1"
   if in_fleet_tmux; then
-    tx switch-client -t "=$target"
+    # Headless server (tests, a fleet nobody is attached to): the window and
+    # pane were already selected server-side, and there is no client to move
+    # — that is not a failure of the jump.
+    tx switch-client -t "=$target" 2>/dev/null || [[ -z "$(tx list-clients 2>/dev/null)" ]]
   elif [[ -n "${TMUX:-}" ]]; then
     echo "error: you're inside a different tmux server" >&2
     echo "       detach (Prefix-d) and run \`agent-fleet attach $target\` from a plain shell" >&2
