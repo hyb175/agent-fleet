@@ -8,7 +8,7 @@
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
 
-      version = "0.3.0";
+      version = "0.4.0";
 
       # The native UI (rail, picker, inbox, move popup). Static Go binary;
       # the version is embedded from the same value the CLI reports.
