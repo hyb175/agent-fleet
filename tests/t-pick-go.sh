@@ -25,7 +25,8 @@ route() {  # <ui> <surface…> -> what ui-launch.sh would exec (ROUTE_ROOT overr
 export REPO
 check "launcher: bash renderer execs pick.sh"   "route bash pick spaces | grep -q 'pick.sh spaces'"
 check "launcher: go renderer execs afui move"    "route go move | grep -q 'afui move'"
-check "launcher: inbox stays bash under go"      "route go inbox | grep -q 'inbox.sh'"
+check "launcher: inbox is afui under go"          "route go inbox | grep -q 'afui inbox'"
+check "launcher: unknown surface is refused"      "! route go rail-x 2>/dev/null | grep -q exec"
 check "launcher: go without the binary falls back" "ROUTE_ROOT='$WORK' route go pick | grep -q 'pick.sh'"
 
 # An agent in a second window to jump to.
@@ -44,6 +45,7 @@ pp="$(tx new-window -d -P -F '#{pane_id}' -t t: -n picker \
   "env AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/bin/afui' pick")"
 wait_for 10 "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
 check "fleet view lists the agent by intent" "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
+wait_for 5 "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU'"
 check "row sits under the NEEDS YOU header with its workspace:index" "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU' && tx capture-pane -p -t '$pp' | grep -q 'zebra quest.*t:[0-9]'"
 tx send-keys -t "$pp" zbq   # fuzzy: z…b…q
 wait_for 5 "tx capture-pane -p -t '$pp' | grep -q '1 of '"
