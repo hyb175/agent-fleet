@@ -12,7 +12,7 @@
 #   T <epoch> <interval>
 #   C <client>|<session>|<window_id>                  one per client ("-" headless)
 #   S <session>|<rollup_state>|<branch>               one per workspace
-#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>|<intent>|<iso>|<diffstat>
+#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>|<intent>|<iso>|<diffstat>|<race>
 
 set -uo pipefail
 
@@ -215,7 +215,7 @@ build() {
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent iso ds tid trec fsess fsid
+  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent iso ds race tid trec fsess fsid
   local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
   local -A TAB_BEST=() TAB_STATE=()
   while IFS='|' read -r s wid wn widx pane cmd tty kind sid _ pidx fsess _; do
@@ -244,7 +244,7 @@ build() {
     # line. Builtin reads only — no forks added to the tick path. tid MUST
     # reset per pane: if gc deletes the pointer between the -r test and the
     # read, a stale tid would title this pane with another agent's intent.
-    intent="-"; iso="-"; ds="-"; tid=""
+    intent="-"; iso="-"; ds="-"; race="-"; tid=""
     if [[ -r "$AF_CACHE/$pane.task" ]]; then
       { read -r tid < "$AF_CACHE/$pane.task"; } 2>/dev/null || true
       if [[ -n "${tid:-}" && -r "$CACHE/tasks/$tid" ]]; then
@@ -259,6 +259,7 @@ build() {
             "intent "*)    intent="${trec#intent }" ;;
             "isolation "*) iso="${trec#isolation }" ;;
             "diffstat "*)  ds="${trec#diffstat }"; ds="${ds%% *}" ;;
+            "race "*)      race="${trec##* }" ;;   # "<rid> <k>/<N>": the badge is k/N
           esac
         done < "$CACHE/tasks/$tid"
       fi
@@ -266,6 +267,7 @@ build() {
     # The enum-like fields are CLI-controlled; ds is hook-written but format-
     # checked here so a corrupt record can't smuggle a '|' into the snapshot.
     [[ "$ds" =~ ^\+[0-9]+-[0-9]+$ ]] || ds="-"
+    [[ "$race" =~ ^[0-9]+/[0-9]+$ ]] || race="-"
     # Short code for the rail/picker; the enum is CLI-controlled, no scrubbing.
     case "$iso" in
       sandbox) iso="sbx" ;; worktree) iso="wt" ;; container) iso="ctr" ;; *) iso="-" ;;
@@ -317,7 +319,7 @@ build() {
     # ("name.2"), show wait/done duration, and title rows by what the agent is
     # FOR; readers of older short rows parse the missing fields as empty
     # (fields grow at the END — CONTRIBUTING).
-    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age|$intent|$iso|$ds"$'\n'
+    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age|$intent|$iso|$ds|$race"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
     # Most-urgent agent state per active window drives that window's bar.

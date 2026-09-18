@@ -13,7 +13,7 @@ CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 SNAPF="$CACHE/fleet.snapshot"
 mkdir -p "$CACHE/panes" "$CACHE/tasks"
 
-# Live daemon: A records carry exactly the documented 12 fields, sentinels
+# Live daemon: A records carry exactly the documented 13 fields, sentinels
 # where a value is unknown, and the T record carries the interval.
 boot_server t "$WORK"
 PANES="$CACHE/panes"
@@ -26,8 +26,8 @@ tx set-option -p -t "$sp" @fleet-agent-kind codex
 # writer produces the file. Wait for both agents to appear.
 wait_for 10 "grep -q '|$hp|' '$SNAPF' 2>/dev/null && grep -q '|$sp|' '$SNAPF' 2>/dev/null"
 check "T record has epoch and interval" "grep -Eq '^T [0-9]+ [0-9]+$' '$SNAPF'"
-check "every A record has 12 fields" "[[ -z \"\$(grep '^A ' '$SNAPF' | awk -F'|' 'NF!=12')\" ]]"
-check "unknown values are the - sentinel (scrape-tier row)" "grep -Eq '^A [^|]*\\|[^|]*\\|[^|]*\\|[^|]*\\|$sp\\|codex~\\|[a-z]+\\|[0-9]+\\|-\\|-\\|-\\|-$' '$SNAPF'"
+check "every A record has 13 fields" "[[ -z \"\$(grep '^A ' '$SNAPF' | awk -F'|' 'NF!=13')\" ]]"
+check "unknown values are the - sentinel (scrape-tier row)" "grep -Eq '^A [^|]*\\|[^|]*\\|[^|]*\\|[^|]*\\|$sp\\|codex~\\|[a-z]+\\|[0-9]+\\|-\\|-\\|-\\|-\\|-$' '$SNAPF'"
 check "no raw | inside a field: field count is stable across rows" "[[ \"\$(grep '^A ' '$SNAPF' | awk -F'|' '{print NF}' | sort -u | wc -l | tr -d ' ')\" == '1' ]]"
 
 exit "$FAIL"

@@ -61,6 +61,7 @@ type Agent struct {
 	Intent      string // task intent, "" when the pane has no task
 	Isolation   string // wt / sbx / ctr, "" for host or no task
 	Diffstat    string // +A-D from the last attention transition, "" when none
+	Race        string // "k/N" when the task is one attempt of a race, "" otherwise
 	Index       int    // arrival order in the file, the stable sort tail
 }
 
@@ -109,11 +110,11 @@ func Parse(r io.Reader) (*Snapshot, error) {
 			f := fields(body, 3)
 			s.Spaces = append(s.Spaces, Space{Session: f[0], Rollup: f[1], Branch: f[2]})
 		case 'A':
-			f := fields(body, 12)
+			f := fields(body, 13)
 			a := Agent{
 				Session: f[0], WindowID: f[1], WindowIndex: f[2], WindowName: f[3],
 				Pane: f[4], Label: f[5], State: f[6], PaneIndex: f[7],
-				Intent: blank(f[9]), Isolation: blank(f[10]), Diffstat: blank(f[11]),
+				Intent: blank(f[9]), Isolation: blank(f[10]), Diffstat: blank(f[11]), Race: blank(f[12]),
 				Index: len(s.Agents),
 			}
 			if age, err := strconv.Atoi(f[8]); err == nil && age >= 0 {

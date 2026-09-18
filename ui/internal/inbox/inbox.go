@@ -47,6 +47,7 @@ type Item struct {
 	Session   string
 	Right     string // time in state, "!" appended past the escalation threshold
 	Diff, Iso string
+	Race      string // "k/N" for one attempt of a race
 	Age       int
 	Remote    bool
 	Search    string
@@ -68,7 +69,7 @@ func Items(s *snapshot.Snapshot, escalate int) []Item {
 		}
 		it := Item{
 			Pane: a.Pane, State: a.State, Title: a.Title(per), Session: a.Session,
-			Diff: a.Diffstat, Iso: a.Isolation, Remote: snapshot.IsRemote(a.Pane),
+			Diff: a.Diffstat, Iso: a.Isolation, Race: a.Race, Remote: snapshot.IsRemote(a.Pane),
 			Group: "done",
 		}
 		if a.State == snapshot.StateWait {
@@ -81,7 +82,7 @@ func Items(s *snapshot.Snapshot, escalate int) []Item {
 				it.Right += " !"
 			}
 		}
-		it.Search = strings.Join([]string{it.Title, it.Session, a.State, it.Diff, it.Iso}, " ")
+		it.Search = strings.Join([]string{it.Title, it.Session, a.State, it.Diff, it.Iso, it.Race}, " ")
 		items = append(items, it)
 	}
 	return items
@@ -709,6 +710,9 @@ func (m model) row(it Item, sel bool, w int) string {
 	}
 	if it.Iso != "" {
 		detail += dim.Render(" [" + it.Iso + "]")
+	}
+	if it.Race != "" {
+		detail += dim.Render(" ⑂" + it.Race)
 	}
 	right := ""
 	if it.Right != "" {

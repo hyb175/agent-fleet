@@ -1813,6 +1813,7 @@ cmd_restore() {
 usage_review() {
   cat <<EOF
 Usage: agent-fleet review <task-id|%pane> [action]
+       agent-fleet review --race <race-id> [--pick <k|task-id>] [--keep-branches]
 
 Actions (default: show the diff, then an interactive menu on a TTY):
   --diff-only      Print the diff and exit.
@@ -1822,13 +1823,102 @@ Actions (default: show the diff, then an interactive menu on a TTY):
                    task's pane and reclaim its worktree+branch — the whole
                    happy path in one verb. Guards still refuse dirty/unmerged.
   --send <notes>   Type the notes into the task's LIVE agent pane (returns it to work).
+  --race <rid>     Compare a race's attempts (state, branch, commits ahead, diff
+                   size, dirtiness); on a TTY, prompt for the winner.
+  --pick <k|id>    Decide the race: merge that attempt (atomic finish) and drop
+                   the others — abandoned, panes closed, worktrees and branches
+                   reclaimed (--keep-branches keeps the losers' branches).
 EOF
 }
 
+# review --race: every attempt side by side, then (TTY or --pick) the decision.
+review_race() {  # <rid> <pick> <keepbr>
+  local rid="$1" pick="$2" keepbr="$3"
+  race_members "$rid" || { echo "error: no attempts recorded for race $rid" >&2; exit 1; }
+  local -A LIVE_T=()
+  local lp lt
+  if server_up; then
+    while read -r lp lt; do
+      if [[ -n "$lp" && -n "$lt" ]]; then LIVE_T[$lp]="$lt"; fi
+    done < <(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null)
+  fi
+  local tid pane st live mb ahead ss dirty decided=""
+  task_record_get "${RACE_TIDS[0]}" || true
+  echo "race $rid — ${#RACE_TIDS[@]} of ${RACE_N} attempts · intent: ${TASK_INTENT:--}"
+  printf '  %-2s %-18s %-14s %-5s %-28s %s\n' "#" "task" "state" "pane" "branch" "vs merge-base"
+  for tid in "${RACE_TIDS[@]}"; do
+    task_record_get "$tid" || continue
+    pane="$(awk '$1=="pane"{print $2; exit}' "$AF_TASKS_DIR/$tid" 2>/dev/null || true)"
+    st="${TASK_STATE:-idle}"; live=" (gone)"
+    if [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]]; then live=""; fi
+    ahead="-"; ss="no changes"; dirty=""
+    if [[ -n "$TASK_REPO" && -n "$TASK_BRANCH" && -d "$TASK_WORKTREE" ]]; then
+      mb="$(git -C "$TASK_REPO" merge-base "$TASK_BRANCH" HEAD 2>/dev/null || true)"
+      if [[ -n "$mb" ]]; then
+        ahead="$(git -C "$TASK_WORKTREE" rev-list --count "$mb"..HEAD 2>/dev/null || echo 0)"
+        ss="$(git -C "$TASK_WORKTREE" diff --shortstat "$mb" 2>/dev/null | sed 's/^ *//')"
+        [[ -n "$ss" ]] || ss="no changes"
+      fi
+      if [[ -n "$(git -C "$TASK_WORKTREE" status --porcelain 2>/dev/null | head -1)" ]]; then dirty=" · uncommitted*"; fi
+    elif [[ -n "$TASK_BRANCH" ]]; then
+      ss="worktree gone"
+    fi
+    # Ever merged, not the last state: the winner ends 'cleaned' like the losers.
+    if [[ -n "$TASK_MERGED" ]]; then decided="$tid"; fi
+    printf '  %-2s %-18s %-14s %-5s %-28s %s ahead · %s%s\n' "$TASK_RACE_K" "$tid" "$st$live" "${pane:--}" "${TASK_BRANCH:--}" "$ahead" "$ss" "$dirty"
+  done
+  if [[ -n "$decided" ]]; then
+    echo "decided: $decided won"
+    [[ -z "$pick" ]] || { echo "error: race $rid is already decided" >&2; exit 1; }
+    return 0
+  fi
+  if [[ -z "$pick" ]]; then
+    [[ -t 0 ]] || return 0
+    printf '\npick the winner [1-%s] — merges it and drops the rest (q quits): ' "$RACE_N"
+    IFS= read -r -n1 pick || pick=""
+    printf '\n'
+    [[ "$pick" =~ ^[0-9]+$ ]] || return 0
+  fi
+  race_pick "$rid" "$pick" "$keepbr"
+}
+
+race_pick() {  # <rid> <k|tid> <keepbr>
+  local rid="$1" pick="$2" keepbr="$3" tid win="" t
+  race_members "$rid" || { echo "error: no attempts recorded for race $rid" >&2; exit 1; }
+  for tid in "${RACE_TIDS[@]}"; do
+    task_record_get "$tid" || continue
+    if [[ -n "$TASK_MERGED" ]]; then
+      echo "error: race $rid is already decided ($tid won)" >&2; exit 1
+    fi
+    if [[ "$tid" == "$pick" || "$TASK_RACE_K" == "$pick" ]]; then win="$tid"; fi
+  done
+  [[ -n "$win" ]] || { echo "error: no attempt '$pick' in race $rid" >&2; exit 1; }
+  echo "winner: attempt $pick ($win) — merging it, then dropping the others"
+  # Winner first: the atomic finish's guards (dirty tree, failed merge) stop
+  # everything before a loser is touched.
+  cmd_review "$win" --merge --clean || exit 1
+  local -a losers=()
+  for t in "${RACE_TIDS[@]}"; do
+    if [[ "$t" != "$win" ]]; then losers+=("$t"); fi
+  done
+  for t in ${losers[@]+"${losers[@]}"}; do
+    task_mark "$t" abandoned >/dev/null
+    task_pane_close "$t"
+    # Losers are dirty and unmerged by definition; --force is the decision.
+    # Subshell: task_clean exits nonzero on a refusal, and one loser must
+    # not stop the others.
+    ( task_clean "$t" --force ${keepbr:+--keep-branch} ) | grep -E '^(cleaned|refuse) ' || true
+  done
+  echo "race $rid decided: $win merged, ${#losers[@]} dropped"
+}
+
 cmd_review() {
-  local target="" action="" notes="" doclean=""
+  local target="" action="" notes="" doclean="" race="" pick="" keepbr=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --race)      race="${2:?error: --race needs a race id}"; shift 2 ;;
+      --pick)      pick="${2:?error: --pick needs an attempt number or task id}"; shift 2 ;;
+      --keep-branches) keepbr=1; shift ;;
       --diff-only) action="diff"; shift ;;
       --pr)        action="pr"; shift ;;
       --merge)     action="merge"; shift ;;
@@ -1842,6 +1932,11 @@ cmd_review() {
   if [[ -n "$doclean" && "$action" != "merge" ]]; then
     echo "error: --clean goes with --merge (atomic finish)" >&2; exit 2
   fi
+  if [[ -n "$race" ]]; then
+    [[ -z "$target$action" ]] || { echo "error: --race takes no task or action besides --pick" >&2; exit 2; }
+    review_race "$race" "$pick" "$keepbr"; return 0
+  fi
+  [[ -z "$pick" ]] || { echo "error: --pick goes with --race" >&2; exit 2; }
   [[ -n "$target" ]] || { usage_review >&2; exit 2; }
   local tid
   tid="$(task_id_for "$target")" || exit 1
@@ -1869,6 +1964,9 @@ cmd_review() {
     [[ -n "$(git -C "$wt" status --porcelain 2>/dev/null | head -1)" ]] && dirty=" · uncommitted*"
     echo "review $tid · ${branch:-?}${ahead:+ [$ahead ahead]} ·${ss:- no changes}$dirty"
     [[ -n "$TASK_INTENT" ]] && echo "intent: $TASK_INTENT" || true
+    if [[ -n "$TASK_RACE" ]]; then
+      echo "race: attempt $TASK_RACE_K/$TASK_RACE_N of $TASK_RACE — compare them: agent-fleet review --race $TASK_RACE"
+    fi
     task_conflicts "$tid"   # overlapping live tasks, before you merge
     # task_conflicts iterates task_record_get — refill OUR task's globals
     # (review_pr titles from TASK_INTENT).
@@ -1947,30 +2045,21 @@ cmd_review() {
       return 1
     fi
     review_merge || return 1
-    local rp cur others
-    rp="$(awk '$1=="pane"{print $2; exit}' "$AF_TASKS_DIR/$tid" 2>/dev/null || true)"
-    cur="$(tx display-message -p -t "$rp" '#{@fleet-task}' 2>/dev/null || true)"
-    if [[ -n "$rp" && "$cur" == "$tid" ]]; then
-      # Last non-rail pane in the window -> close the whole tab (a rail-only
-      # window is a husk); otherwise just this pane.
-      others="$(tx list-panes -t "$rp" -F '#{pane_id} #{?@fleet-sidenav,1,0}' 2>/dev/null | awk '$2 != "1"' | wc -l)"
-      if (( others <= 1 )); then
-        tx kill-window -t "$rp" 2>/dev/null || true
-      else
-        tx kill-pane -t "$rp" 2>/dev/null || true
-      fi
-    fi
+    task_pane_close "$tid"
     task_clean "$tid"
   }
 
+  # Explicit status: called from race_pick under `||`, set -e is off inside
+  # here, and a refused finish must still come back as a failure.
+  local rc=0
   case "$action" in
     diff)  review_diff; return 0 ;;
-    pr)    review_context; review_pr ;;
+    pr)    review_context; review_pr || rc=$? ;;
     merge) review_context
-           if [[ -n "$doclean" ]]; then review_finish; else review_merge; fi ;;
-    send)  review_send ;;
+           if [[ -n "$doclean" ]]; then review_finish || rc=$?; else review_merge || rc=$?; fi ;;
+    send)  review_send || rc=$? ;;
   esac
-  if [[ -n "$action" ]]; then return 0; fi
+  if [[ -n "$action" ]]; then return "$rc"; fi
 
   # No flag: context, diff through the pager, then (TTY only) the action menu.
   review_context
@@ -1994,6 +2083,7 @@ usage_task() {
   cat <<EOF
 Usage: agent-fleet task "<prompt>" [options]
        agent-fleet task -- "<prompt>" [options]   (force create — prompt may be a subcommand or -*)
+       agent-fleet task race <N> "<prompt>" [options]   (N isolated attempts, one race id)
        agent-fleet task ls
        agent-fleet task show <task-id|%pane>
        agent-fleet task adopt [%pane] ["intent"]
@@ -2028,6 +2118,11 @@ Options (create form):
                  (AGENT_FLEET_TASK_ISOLATED=1 still means worktree by default.)
   --focus        Jump to the new agent.
   -h, --help     Show this help.
+
+'race N' spawns N attempts at the prompt, each a worktree task (own branch,
+pane, record) tagged with one race id; the rail, picker and inbox badge them
+⑂k/N. Compare with 'agent-fleet review --race <rid>' and decide with
+'--pick <k>': the winner is merged and reclaimed, the rest are dropped.
 
 'adopt' brings an EXISTING pane into the loop (hooked agents auto-adopt on
 their first event; adopt covers panes whose agents are idle, or older panes).
@@ -2091,7 +2186,7 @@ task_ls() {
       fi
       wtcol+="]"
     fi
-    printf '%-18s %-9s %-6s%s%s  %s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$wtcol" "$intent"
+    printf '%-18s %-9s %-6s%s%s  %s%s\n' "$tid" "${st:-idle}" "$pane" "$mark" "$wtcol" "$intent" "${TASK_RACE:+ ⑂$TASK_RACE_K/$TASK_RACE_N}"
   done
   [[ -n "$any" ]] || _no_tasks_hint
   task_conflicts
@@ -2212,11 +2307,12 @@ task_adopt() {
 task_record_get() {
   local f="$AF_TASKS_DIR/$1" k v
   TASK_STATE=""; TASK_WORKTREE=""; TASK_BRANCH=""; TASK_REPO=""; TASK_INTENT=""
-  TASK_DIR=""; TASK_SESSION=""
+  TASK_DIR=""; TASK_SESSION=""; TASK_RACE=""; TASK_RACE_K=""; TASK_RACE_N=""; TASK_MERGED=""
   [[ -f "$f" ]] || return 1
   while read -r k v; do
     case "$k" in
-      state)     TASK_STATE="${v%% *}" ;;
+      state)     TASK_STATE="${v%% *}"; [[ "$TASK_STATE" == "merged" ]] && TASK_MERGED=1 ;;
+      race)      TASK_RACE="${v%% *}"; TASK_RACE_K="${v##* }"; TASK_RACE_N="${TASK_RACE_K##*/}"; TASK_RACE_K="${TASK_RACE_K%%/*}" ;;
       worktree)  TASK_WORKTREE="$v" ;;
       branch)    TASK_BRANCH="$v" ;;
       repo)      TASK_REPO="$v" ;;
@@ -2391,23 +2487,41 @@ task_history() {
       [[ -n "$lp" && -n "$lt" ]] && LIVE_T[$lp]="$lt"
     done < <(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null)
   fi
-  local f k v tid intent dir pane created
+  local f k v tid intent dir repo pane created rid rn
   local sname sepoch prev pepoch term tepoch prepoch postpr lastepoch
   local outcome ended wsum dur day wcol repob
   local -a rows=()
   local -A DAY_N=() DAY_M=()
+  # A race is one entry: its attempts fold into these, keyed by race id.
+  local -A RACE_N_=() RACE_LIVE=() RACE_OUT=() RACE_TID=() RACE_END=() RACE_CREATED=() RACE_W=() RACE_INTENT=() RACE_DIR=()
+  # One history row: appends to rows and the per-day counters.
+  history_row() {  # <ended> <created> <wsum> <tid> <outcome> <dir> <intent>
+    local ended="$1" created="$2" wsum="$3" dur="-" wcol="-" repob day
+    if (( created > 0 && ended >= created )); then
+      fmt_age "$(( ended - created ))"; dur="$AGE"
+    fi
+    if (( wsum > 0 )); then fmt_age "$wsum"; wcol="w:$AGE"; fi
+    repob="${6%/}"; repob="${repob##*/}"; [[ -n "$repob" ]] || repob="-"
+    printf -v day '%(%Y-%m-%d)T' "$ended"
+    DAY_N[$day]=$(( ${DAY_N[$day]:-0} + 1 ))
+    [[ "$5" == "merged" ]] && DAY_M[$day]=$(( ${DAY_M[$day]:-0} + 1 ))
+    rows+=("$(printf '%s\t%s\t  %-18s %-10s %5s %-6s %-14s %s' \
+      "$ended" "$day" "$4" "$5" "$dur" "$wcol" "$repob" "${7:--}")")
+  }
   for f in "$AF_TASKS_DIR"/t*; do
     [[ -e "$f" ]] || continue
     case "$f" in *.tmp.*) continue ;; esac
-    tid=""; intent=""; dir=""; pane=""; created=""
+    tid=""; intent=""; dir=""; repo=""; pane=""; created=""; rid=""; rn=""
     prev=""; pepoch=0; term=""; tepoch=0; prepoch=0; postpr=""; lastepoch=0; wsum=0
     while read -r k v; do
       case "$k" in
         id)      tid="$v" ;;
         intent)  intent="$v" ;;
         dir)     dir="$v" ;;
+        repo)    repo="$v" ;;   # the checkout; dir is the worktree for isolated tasks
         pane)    pane="$v" ;;
         created) created="$v" ;;
+        race)    rid="${v%% *}"; rn="${v##*/}" ;;
         state)
           sname="${v%% *}"; sepoch="${v##* }"
           [[ -z "$sepoch" || "$sepoch" == *[!0-9]* ]] && sepoch=0
@@ -2441,7 +2555,10 @@ task_history() {
       # back) and is still alive: that's current work, not history.
       outcome="pr"; ended="$prepoch"
     elif [[ -n "$pane" && "${LIVE_T[$pane]:-}" == "$tid" ]]; then
-      continue   # live and non-terminal: current work (task ls), not history
+      # live and non-terminal: current work (task ls), not history — and a
+      # race with a live attempt is still running as a whole
+      [[ -n "$rid" ]] && RACE_LIVE[$rid]=1
+      continue
     else
       outcome="abandoned~"; ended="$lastepoch"
     fi
@@ -2449,18 +2566,26 @@ task_history() {
     # rather than filing the row under 1970-01-01.
     (( ended > 0 )) || ended="$lastepoch"
     (( ended > 0 )) || ended="$created"
-    dur="-"
-    if (( created > 0 && ended >= created )); then
-      fmt_age "$(( ended - created ))"; dur="$AGE"
+    if [[ -n "$rid" ]]; then
+      # Fold into the race: latest end, earliest start, summed waits; the
+      # merged attempt names the entry and decides the outcome.
+      RACE_N_[$rid]="$rn"; RACE_INTENT[$rid]="$intent"; RACE_DIR[$rid]="${repo:-$dir}"
+      (( ended > ${RACE_END[$rid]:-0} )) && RACE_END[$rid]="$ended"
+      if [[ -z "${RACE_CREATED[$rid]:-}" ]] || (( created > 0 && created < RACE_CREATED[$rid] )); then RACE_CREATED[$rid]="$created"; fi
+      RACE_W[$rid]=$(( ${RACE_W[$rid]:-0} + wsum ))
+      if [[ "$outcome" == "merged" || -z "${RACE_TID[$rid]:-}" ]]; then RACE_TID[$rid]="$tid"; fi
+      case "$outcome" in
+        merged) RACE_OUT[$rid]="merged" ;;
+        pr)     [[ "${RACE_OUT[$rid]:-}" == "merged" ]] || RACE_OUT[$rid]="pr" ;;
+        *)      [[ -n "${RACE_OUT[$rid]:-}" ]] || RACE_OUT[$rid]="$outcome" ;;
+      esac
+      continue
     fi
-    wcol="-"
-    if (( wsum > 0 )); then fmt_age "$wsum"; wcol="w:$AGE"; fi
-    repob="${dir%/}"; repob="${repob##*/}"; [[ -n "$repob" ]] || repob="-"
-    printf -v day '%(%Y-%m-%d)T' "$ended"
-    DAY_N[$day]=$(( ${DAY_N[$day]:-0} + 1 ))
-    [[ "$outcome" == "merged" ]] && DAY_M[$day]=$(( ${DAY_M[$day]:-0} + 1 ))
-    rows+=("$(printf '%s\t%s\t  %-18s %-10s %5s %-6s %-14s %s' \
-      "$ended" "$day" "$tid" "$outcome" "$dur" "$wcol" "$repob" "${intent:--}")")
+    history_row "$ended" "$created" "$wsum" "$tid" "$outcome" "${repo:-$dir}" "$intent"
+  done
+  for rid in "${!RACE_N_[@]}"; do
+    [[ -n "${RACE_LIVE[$rid]:-}" ]] && continue
+    history_row "${RACE_END[$rid]}" "${RACE_CREATED[$rid]:-0}" "${RACE_W[$rid]}" "${RACE_TID[$rid]}" "${RACE_OUT[$rid]}" "${RACE_DIR[$rid]}" "${RACE_INTENT[$rid]} ⑂${RACE_N_[$rid]} attempts"
   done
   (( ${#rows[@]} )) || { _no_history_hint; return 0; }
   local line lastday="" rday rrest
@@ -2648,6 +2773,118 @@ cmd_container_resume() {
   exec bash -c "$CCMD"
 }
 
+task_resolve_dir() {  # <--repo arg or empty> -> absolute dir; 1 when it does not exist
+  local dir="$1"
+  if [[ -n "$dir" ]]; then
+    [[ -d "$dir" ]] || { echo "error: no such directory: $dir" >&2; return 1; }
+    # CDPATH= : an exported CDPATH makes cd echo the resolved path, which the
+    # substitution would capture as a doubled, newline-joined dir.
+    dir="$(CDPATH='' cd -- "$dir" && pwd)"
+  elif in_fleet_tmux && [[ -n "${TMUX_PANE:-}" ]]; then
+    dir="$(tx display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
+    [[ -z "$dir" ]] && dir="$PWD"
+  else
+    dir="$PWD"
+  fi
+  printf '%s' "$dir"
+}
+
+# Default name: a slug of the prompt's first four words. read -ra, not a bare
+# word split — an unquoted $prompt would glob ("fix *.py" picks up files).
+task_default_name() {  # <prompt>
+  local w slug="" count=0
+  local -a words=()
+  read -ra words <<<"$1" || true
+  for w in ${words[@]+"${words[@]}"}; do
+    w="$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+    [[ -n "$w" ]] || continue
+    slug+="${slug:+-}$w"
+    count=$(( count + 1 )); (( count >= 4 )) && break
+  done
+  printf '%s' "${slug:-task}"
+}
+
+# task race N "<prompt>" — N isolated attempts at one intent, one race id.
+# Each attempt is an ordinary worktree task (its own branch, pane, record)
+# plus a `race <rid> <k>/<N>` line; `review --race <rid>` compares them and
+# `--pick` merges the winner and drops the rest.
+task_race() {
+  local n="${1:-}" prompt="${2:-}"
+  if [[ ! "$n" =~ ^[0-9]+$ ]] || (( n < 2 || n > 9 )); then
+    echo "error: a race is 2–9 attempts: agent-fleet task race <N> \"<prompt>\" [options]" >&2; exit 2
+  fi
+  [[ -n "$prompt" ]] || { echo "error: a race needs a prompt" >&2; exit 2; }
+  shift 2
+  local dir="" name="" focus="" iso_flag=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --repo|--dir) dir="$2"; shift 2 ;;
+      --name)       name="$2"; shift 2 ;;
+      --focus)      focus=1; shift ;;
+      --isolation)  iso_flag="${2:?usage: --isolation worktree|sandbox|container}"; shift 2 ;;
+      *) echo "error: unexpected arg: $1" >&2; usage_task >&2; exit 2 ;;
+    esac
+  done
+  dir="$(task_resolve_dir "$dir")" || exit 1
+  git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 \
+    || { echo "error: a race needs a git repo — every attempt gets its own worktree, and $dir is not one" >&2; exit 1; }
+  local rung; rung="$(resolve_isolation "$dir" "$iso_flag")"
+  if [[ "$rung" == "host" ]]; then
+    echo "note: attempts cannot share a checkout — racing at the worktree rung" >&2; rung="worktree"
+  fi
+  [[ -n "$name" ]] || name="$(task_default_name "$prompt")"
+  local rid now k out tid pane f
+  printf -v now '%(%s)T' -1; rid="r$now-$$"
+  echo "race $rid — $n attempts · intent: $prompt"
+  for (( k = 1; k <= n; k++ )); do
+    local -a extra=()
+    if (( k == 1 )) && [[ -n "$focus" ]]; then extra=(--focus); fi
+    out="$(cmd_task -- "$prompt" --repo "$dir" --name "$name-$k" --isolation "$rung" ${extra[@]+"${extra[@]}"})"
+    tid="${out%% *}"; pane="${out##* }"; f="$AF_TASKS_DIR/$tid"
+    if [[ "$tid" != "-" && -f "$f" ]]; then
+      printf 'race %s %s/%s\n' "$rid" "$k" "$n" >> "$f" 2>/dev/null || true
+      grep -q '^worktree ' "$f" 2>/dev/null \
+        || echo "warning: attempt $k has no worktree — it shares the checkout with the others" >&2
+    fi
+    printf '  %s  %s %s\n' "$k" "$tid" "$pane"
+  done
+  echo "compare: agent-fleet review --race $rid   ·   decide: agent-fleet review --race $rid --pick <k>"
+}
+
+# Every attempt of a race, in attempt order -> RACE_TIDS, RACE_N. On-demand
+# (review, history), never the snapshot tick: one grep per record.
+race_members() {  # <rid>
+  RACE_TIDS=(); RACE_N=""
+  local f line tid kn
+  local -a byk=()
+  for f in "$AF_TASKS_DIR"/t*; do
+    [[ -e "$f" ]] || continue
+    case "$f" in *.tmp.*) continue ;; esac
+    line="$(grep -m1 "^race $1 " "$f" 2>/dev/null || true)"
+    [[ -n "$line" ]] || continue
+    tid="$(basename "$f")"; kn="${line##* }"; RACE_N="${kn##*/}"
+    byk[${kn%%/*}]="$tid"
+  done
+  local i
+  for (( i = 1; i <= ${RACE_N:-0}; i++ )); do
+    if [[ -n "${byk[$i]:-}" ]]; then RACE_TIDS+=("${byk[$i]}"); fi
+  done
+  (( ${#RACE_TIDS[@]} > 0 ))
+}
+
+# Close a task's live pane: the whole tab when it is the last work pane (a
+# rail-only window is a husk), else just the pane.
+task_pane_close() {  # <tid>
+  local rp cur others
+  rp="$(awk '$1=="pane"{print $2; exit}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
+  [[ -n "$rp" ]] || return 0
+  cur="$(tx display-message -p -t "$rp" '#{@fleet-task}' 2>/dev/null || true)"
+  [[ "$cur" == "$1" ]] || return 0
+  others="$(tx list-panes -t "$rp" -F '#{pane_id} #{?@fleet-sidenav,1,0}' 2>/dev/null | awk '$2 != "1"' | wc -l)"
+  if (( others <= 1 )); then tx kill-window -t "$rp" 2>/dev/null || true
+  else tx kill-pane -t "$rp" 2>/dev/null || true; fi
+}
+
 cmd_task() {
   # `task -- "<prompt>"` forces the create form — for scripted callers whose
   # prompt could collide with a subcommand ('ls', 'show') or start with '-'.
@@ -2663,6 +2900,7 @@ cmd_task() {
       adopt)     shift; task_adopt "$@"; return 0 ;;
       intent)    shift; task_intent "$@"; return 0 ;;
       history)   shift; task_history "$@"; return 0 ;;
+      race)      shift; task_race "$@"; return 0 ;;
       done)      shift; task_mark "${1:?usage: agent-fleet task done <task-id|%pane>}" merged; return 0 ;;
       drop)      shift; task_mark "${1:?usage: agent-fleet task drop <task-id|%pane>}" abandoned; return 0 ;;
       clean)     shift; task_clean "$@"; return 0 ;;
@@ -2686,32 +2924,8 @@ cmd_task() {
     esac
   done
 
-  if [[ -n "$dir" ]]; then
-    [[ -d "$dir" ]] || { echo "error: no such directory: $dir" >&2; exit 1; }
-    # CDPATH= : an exported CDPATH makes cd echo the resolved path, which the
-    # substitution would capture as a doubled, newline-joined dir.
-    dir="$(CDPATH='' cd -- "$dir" && pwd)"
-  elif in_fleet_tmux && [[ -n "${TMUX_PANE:-}" ]]; then
-    dir="$(tx display-message -p -t "$TMUX_PANE" '#{pane_current_path}' 2>/dev/null || echo "$PWD")"
-    [[ -z "$dir" ]] && dir="$PWD"
-  else
-    dir="$PWD"
-  fi
-
-  # Default name: a slug of the prompt's first four words. read -ra, not a bare
-  # word split — an unquoted $prompt would glob ("fix *.py" picks up files).
-  if [[ -z "$name" ]]; then
-    local w slug="" count=0
-    local -a words=()
-    read -ra words <<<"$prompt" || true
-    for w in ${words[@]+"${words[@]}"}; do
-      w="$(printf '%s' "$w" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
-      [[ -n "$w" ]] || continue
-      slug+="${slug:+-}$w"
-      count=$(( count + 1 )); (( count >= 4 )) && break
-    done
-    name="${slug:-task}"
-  fi
+  dir="$(task_resolve_dir "$dir")" || exit 1
+  [[ -n "$name" ]] || name="$(task_default_name "$prompt")"
 
   # Isolation ladder: resolve the rung, then degrade rung by rung with a
   # visible note wherever a dependency is missing — the record carries what

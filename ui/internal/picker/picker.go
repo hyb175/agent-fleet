@@ -75,6 +75,7 @@ type Item struct {
 	Meta   string // dim detail after the title (workspace:index, branch, path)
 	Diff   string // "+A-D" from the record, colored when rendered ("" = none)
 	Iso    string // isolation rung badge ("" = host)
+	Race   string // "k/N" for one attempt of a race ("" = not racing)
 	Right  string // right-aligned column: time in state, agent count, branch
 	Search string // what the fuzzy filter matches against
 	Match  []int  // rune indexes into Search the current query matched (accented when inside Title)
@@ -121,7 +122,7 @@ func FleetItems(s *snapshot.Snapshot) []Item {
 	for _, a := range agents {
 		it := Item{
 			Key: "PANE:" + a.Pane, State: a.State, Group: groupOf(a.State),
-			Title: a.Title(per), Meta: a.Session + ":" + a.WindowIndex, Iso: a.Isolation,
+			Title: a.Title(per), Meta: a.Session + ":" + a.WindowIndex, Iso: a.Isolation, Race: a.Race,
 		}
 		if a.State == snapshot.StateWait || a.State == snapshot.StateDone {
 			if a.HasAge {
@@ -129,7 +130,7 @@ func FleetItems(s *snapshot.Snapshot) []Item {
 			}
 			it.Diff = a.Diffstat
 		}
-		it.Search = strings.Join([]string{it.Title, it.Meta, a.State, it.Diff, it.Iso, a.Label}, " ")
+		it.Search = strings.Join([]string{it.Title, it.Meta, a.State, it.Diff, it.Iso, it.Race, a.Label}, " ")
 		items = append(items, it)
 	}
 	for _, sp := range s.Spaces {
@@ -992,6 +993,9 @@ func (m model) row(it Item, sel bool, w int) string {
 	}
 	if it.Iso != "" {
 		detail += dim.Render(" [" + it.Iso + "]")
+	}
+	if it.Race != "" {
+		detail += dim.Render(" ⑂" + it.Race)
 	}
 	// Right column is pinned to the edge; the detail gets what is left.
 	avail := w - lipgloss.Width(left) - lipgloss.Width(right) - 2

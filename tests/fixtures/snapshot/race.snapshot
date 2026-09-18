@@ -1,0 +1,5 @@
+T 1789500000 1
+S api|wait|main
+A api|@5|1|auth-1|%9|claude|wait|1|900|migrate the auth table|wt|+120-8|1/2
+A api|@6|2|auth-2|%10|claude|working|1|-|migrate the auth table|wt|-|2/2
+A api|@7|3|scratch|%11|claude|idle|1|-|-|-|-
