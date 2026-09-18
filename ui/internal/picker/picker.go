@@ -75,6 +75,7 @@ type Item struct {
 	Iso    string // isolation rung badge ("" = host)
 	Right  string // right-aligned column: time in state, agent count, branch
 	Search string // what the fuzzy filter matches against
+	Match  []int  // rune indexes into Search the current query matched (accented when inside Title)
 }
 
 // Config is what the popup needs from its environment.
@@ -298,7 +299,9 @@ func Filter(items []Item, query string) []Item {
 	matches := fuzzy.Find(query, src)
 	out := make([]Item, 0, len(matches))
 	for _, m := range matches {
-		out = append(out, items[m.Index])
+		it := items[m.Index]
+		it.Match = m.MatchedIndexes
+		out = append(out, it)
 	}
 	return out
 }
@@ -380,33 +383,30 @@ type model struct {
 }
 
 type styles struct {
-	dim, faint, bold, accent, border, tab, tabOn, key, wait, working, done, muted, plus, minus, badge lipgloss.Style
-	hlRow, hlBold, hlDim, hlBar                                                                       lipgloss.Style
+	dim, bold, accent, border, tab, tabOn, key, wait, working, done, muted lipgloss.Style
+	hlRow, hlBold, hlDim, hlBar, hlAccent                                  lipgloss.Style
 }
 
 func newStyles(t theme.Theme) styles {
 	c := func(s string) lipgloss.Color { return lipgloss.Color(s) }
 	hl := c(t.HL)
 	return styles{
-		dim:     lipgloss.NewStyle().Foreground(c(t.Muted)),
-		faint:   lipgloss.NewStyle().Foreground(c(t.Surface)),
-		bold:    lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true),
-		accent:  lipgloss.NewStyle().Foreground(c(t.Accent)),
-		border:  lipgloss.NewStyle().Foreground(c(t.HL)),
-		tab:     lipgloss.NewStyle().Foreground(c(t.Muted)).Padding(0, 1),
-		tabOn:   lipgloss.NewStyle().Foreground(c(t.BG)).Background(c(t.Accent)).Bold(true).Padding(0, 1),
-		key:     lipgloss.NewStyle().Foreground(c(t.FG)),
-		wait:    lipgloss.NewStyle().Foreground(c(t.Wait)),
-		working: lipgloss.NewStyle().Foreground(c(t.Working)),
-		done:    lipgloss.NewStyle().Foreground(c(t.Done)),
-		muted:   lipgloss.NewStyle().Foreground(c(t.Muted)),
-		plus:    lipgloss.NewStyle().Foreground(c(t.Done)),
-		minus:   lipgloss.NewStyle().Foreground(c(t.Wait)),
-		badge:   lipgloss.NewStyle().Foreground(c(t.Muted)).Background(c(t.Surface)).Padding(0, 1),
-		hlRow:   lipgloss.NewStyle().Background(hl),
-		hlBold:  lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true).Background(hl),
-		hlDim:   lipgloss.NewStyle().Foreground(c(t.Muted)).Background(hl),
-		hlBar:   lipgloss.NewStyle().Foreground(c(t.Accent)).Background(hl),
+		dim:      lipgloss.NewStyle().Foreground(c(t.Muted)),
+		bold:     lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true),
+		accent:   lipgloss.NewStyle().Foreground(c(t.Accent)),
+		border:   lipgloss.NewStyle().Foreground(c(t.HL)),
+		tab:      lipgloss.NewStyle().Foreground(c(t.Muted)).Padding(0, 1),
+		tabOn:    lipgloss.NewStyle().Foreground(c(t.BG)).Background(c(t.Accent)).Bold(true).Padding(0, 1),
+		key:      lipgloss.NewStyle().Foreground(c(t.FG)),
+		wait:     lipgloss.NewStyle().Foreground(c(t.Wait)),
+		working:  lipgloss.NewStyle().Foreground(c(t.Working)),
+		done:     lipgloss.NewStyle().Foreground(c(t.Done)),
+		muted:    lipgloss.NewStyle().Foreground(c(t.Muted)),
+		hlRow:    lipgloss.NewStyle().Background(hl),
+		hlBold:   lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true).Background(hl),
+		hlDim:    lipgloss.NewStyle().Foreground(c(t.Muted)).Background(hl),
+		hlBar:    lipgloss.NewStyle().Foreground(c(t.Accent)).Background(hl),
+		hlAccent: lipgloss.NewStyle().Foreground(c(t.Accent)).Bold(true).Background(hl),
 	}
 }
 
@@ -884,7 +884,7 @@ func (m model) searchBox(w int) string {
 		prompt = m.st.accent.Render("› ")
 		text = m.query
 		if text == "" {
-			text = m.st.faint.Render("type to filter")
+			text = m.st.dim.Render("type to filter")
 		}
 	}
 	count := m.st.dim.Render(fmt.Sprintf("%d of %d", len(m.shown), len(m.items)))
@@ -901,25 +901,56 @@ func (m model) searchBox(w int) string {
 	return top + "\n" + mid + "\n" + bot
 }
 
-// diff renders "+A-D" as two colored numbers.
-func (m model) diff(d string, sel bool) string {
+// diff spaces "+A-D" into "+A −D"; muted like the rest of the detail, so
+// state colors stay reserved for the glyph.
+func diff(d string) string {
 	plus, minus, ok := strings.Cut(d, "-")
 	if !ok || !strings.HasPrefix(plus, "+") {
-		return m.st.dim.Render(d)
+		return d
 	}
-	p, mi := m.st.plus, m.st.minus
-	if sel {
-		p, mi = p.Background(m.st.hlRow.GetBackground()), mi.Background(m.st.hlRow.GetBackground())
+	return plus + " −" + minus
+}
+
+// highlight renders text with the matched rune positions in accent, the
+// way fzf marks its hits; positions beyond the text are ignored.
+func highlight(text string, match []int, base, hit lipgloss.Style) string {
+	if len(match) == 0 {
+		return base.Render(text)
 	}
-	return p.Render(plus) + " " + mi.Render("−"+minus)
+	set := map[int]bool{}
+	for _, i := range match {
+		set[i] = true
+	}
+	var b strings.Builder
+	run, hitRun := "", false
+	flush := func() {
+		if run == "" {
+			return
+		}
+		if hitRun {
+			b.WriteString(hit.Render(run))
+		} else {
+			b.WriteString(base.Render(run))
+		}
+		run = ""
+	}
+	for i, r := range []rune(text) {
+		if set[i] != hitRun {
+			flush()
+			hitRun = set[i]
+		}
+		run += string(r)
+	}
+	flush()
+	return b.String()
 }
 
 func (m model) row(it Item, sel bool, w int) string {
 	bar, glyph := " ", m.glyphFor(it, sel)
-	title, meta, dim := m.st.bold, m.st.dim, m.st.dim
+	title, meta, dim, hit := m.st.bold, m.st.dim, m.st.dim, m.st.accent.Bold(true)
 	if sel {
 		bar = m.st.hlBar.Render("▎")
-		title, meta, dim = m.st.hlBold, m.st.hlDim, m.st.hlDim
+		title, meta, dim, hit = m.st.hlBold, m.st.hlDim, m.st.hlDim, m.st.hlAccent
 	}
 	right := ""
 	if it.Right != "" {
@@ -936,13 +967,15 @@ func (m model) row(it Item, sel bool, w int) string {
 	if m.view == Connect {
 		titleW = 24
 	}
-	left := bar + " " + glyph + "  " + title.Render(runewidth.FillRight(trunc(it.Title, titleW), titleW)) + "  "
+	shown := trunc(it.Title, titleW)
+	titleCell := highlight(shown, it.Match, title, hit) + title.Render(strings.Repeat(" ", titleW-runewidth.StringWidth(shown)))
+	left := bar + " " + glyph + "  " + titleCell + "  "
 	detail := meta.Render(it.Meta)
 	if it.Diff != "" {
-		detail += dim.Render(" · ") + m.diff(it.Diff, sel)
+		detail += dim.Render(" · " + diff(it.Diff))
 	}
 	if it.Iso != "" {
-		detail += " " + m.st.badge.Render(it.Iso)
+		detail += dim.Render(" [" + it.Iso + "]")
 	}
 	// Right column is pinned to the edge; the detail gets what is left.
 	avail := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
@@ -982,7 +1015,7 @@ func (m model) footer(w int) string {
 	if m.naming {
 		parts = []string{hint("⏎", "create"), hint("esc", "back")}
 	}
-	return " " + trunc(strings.Join(parts, m.st.faint.Render("  ·  ")), w-1)
+	return " " + trunc(strings.Join(parts, m.st.dim.Render("  ·  ")), w-1)
 }
 
 func (m model) View() string {
@@ -1010,7 +1043,7 @@ func (m model) View() string {
 	for _, ln := range lines[m.offset:end] {
 		switch ln.kind {
 		case lineHeader:
-			b.WriteString("   " + m.st.faint.Render(strings.ToUpper(m.shown[ln.idx].Group)) + "\n")
+			b.WriteString("   " + m.st.dim.Render(strings.ToUpper(m.shown[ln.idx].Group)) + "\n")
 		case lineItem:
 			b.WriteString(m.row(m.shown[ln.idx], ln.idx == m.cursor, w) + "\n")
 		}
