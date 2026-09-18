@@ -60,10 +60,11 @@ body="${body//\\/}"; body="${body//\"/}"; body="${body//[[:cntrl:]]/}"
 # One tmux call: each attached client's tty, terminal, and the tty of the pane
 # it is looking at. Passthrough only leaves tmux from a visible pane, so the
 # sequence goes to that pane's tty, not the notifying pane's.
-osc_seq() {  # <termtype> <termname> -> the DCS-wrapped notification, or nothing
+DCS=$'\033Ptmux;\033'; ST=$'\033\\'   # tmux passthrough wrapper: DCS tmux; <ESC-doubled payload> ST
+osc_seq() {  # <termtype> <termname> -> the wrapped notification, or nothing
   case "$(printf '%s %s' "$1" "$2" | tr '[:upper:]' '[:lower:]')" in
-    *iterm*)                        printf '\033Ptmux;\033\033]9;%s\007\033\\' "agent-fleet: $body" ;;
-    *ghostty*|*wezterm*|*foot*|*rxvt*) printf '\033Ptmux;\033\033]777;notify;agent-fleet;%s\007\033\\' "$body" ;;
+    *iterm*)                           printf '%s\033]9;%s\007%s' "$DCS" "agent-fleet: $body" "$ST" ;;
+    *ghostty*|*wezterm*|*foot*|*rxvt*) printf '%s\033]777;notify;agent-fleet;%s\007%s' "$DCS" "$body" "$ST" ;;
   esac
 }
 tty_fire() {  # <tty> <bytes> — never block the hook: a pane whose master is gone hangs open()
@@ -78,7 +79,7 @@ if [[ "$via" != "desktop" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; 
     case " $sent " in *" $ptty "*) continue ;; esac
     seq="$(osc_seq "$ctermtype" "$ctermname")"
     if [[ -z "$seq" && "$via" == "terminal" ]]; then
-      seq="$(printf '\033Ptmux;\033\033]777;notify;agent-fleet;%s\007\033\\' "$body")"
+      seq="$(printf '%s\033]777;notify;agent-fleet;%s\007%s' "$DCS" "$body" "$ST")"
     fi
     [[ -n "$seq" ]] || continue
     tty_fire "$ptty" "$seq"; sent="$sent $ptty"
