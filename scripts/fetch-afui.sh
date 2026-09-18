@@ -16,7 +16,8 @@
 # (download error, checksum mismatch, build error; nothing is left behind).
 #
 # AGENT_FLEET_RELEASE_BASE overrides the release URL (tests point it at a
-# file:// directory).
+# file:// directory); AGENT_FLEET_ASSUME_NO_GO=1 hides the toolchain (CI
+# runners ship /usr/bin/go, so no PATH is Go-free there).
 
 set -uo pipefail
 
@@ -49,7 +50,7 @@ install_file() {  # <tmpfile>
 }
 
 is_tag()  { [[ "$ref" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
-have_go() { command -v go >/dev/null 2>&1; }
+have_go() { [[ -z "${AGENT_FLEET_ASSUME_NO_GO:-}" ]] && command -v go >/dev/null 2>&1; }
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
