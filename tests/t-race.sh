@@ -18,6 +18,7 @@ printf '#!/usr/bin/env bash\nsleep 300\n' > "$FAKEBIN/claude"
 chmod +x "$FAKEBIN/claude"
 export PATH="$FAKEBIN:$PATH"
 af() { AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" "$REPO/bin/agent-fleet" "$@"; }
+dump() { local l; while IFS= read -r l; do printf '  [%s] %s\n' "$1" "$l"; done; }  # show a verb's output in the log
 G=(-c user.email=t@t -c user.name=t)
 
 REPODIR="$WORK/myrepo"; mkdir -p "$REPODIR"
@@ -34,7 +35,7 @@ check "non-git dir refused (rc=$rc)" "[[ $rc -eq 1 ]] && grep -q 'needs a git re
 
 # --- spawn ------------------------------------------------------------------------
 out="$(af task race 3 "try three ways" --repo "$REPODIR" 2>"$WORK/race.err")"; rc=$?
-echo "$out" | sed 's/^/  [race] /'
+dump race <<<"$out"
 RID="$(sed -n 's/^race \(r[0-9]*-[0-9]*\) .*/\1/p' <<<"$out")"
 check "race spawned (rc=$rc) with an id ($RID)" "[[ $rc -eq 0 && -n '$RID' ]]"
 check "host rung raised to worktree with a note" "grep -q 'worktree rung' '$WORK/race.err'"
@@ -64,7 +65,7 @@ git -C "$WT2" "${G[@]}" add answer.txt && git -C "$WT2" "${G[@]}" commit -qm "at
 
 # --- compare ------------------------------------------------------------------
 cmp="$(af review --race "$RID" 2>&1 </dev/null)"; rc=$?
-echo "$cmp" | sed 's/^/  [cmp] /'
+dump cmp <<<"$cmp"
 check "compare lists all three attempts (rc=$rc)" "[[ $rc -eq 0 ]] && grep -c 'af/task/try-three-ways-' <<<\"\$cmp\" | grep -qx 3"
 check "attempt 2 shows 1 ahead" "grep -F -- \"$T2\" <<<\"\$cmp\" | grep -q '1 ahead'"
 check "attempt 1 shows uncommitted work" "grep -F -- \"$T1\" <<<\"\$cmp\" | grep -q 'uncommitted'"
@@ -75,7 +76,7 @@ check "…and nothing was merged" "! grep -q 'attempt two' <<<\"\$(git -C '$REPO
 
 # --- decide -------------------------------------------------------------------
 dec="$(af review --race "$RID" --pick 2 2>&1)"; rc=$?
-echo "$dec" | sed 's/^/  [pick] /'
+dump pick <<<"$dec"
 check "pick exits clean (rc=$rc)" "[[ $rc -eq 0 ]]"
 check "winner's commit landed on main" "grep -q 'attempt two' <<<\"\$(git -C '$REPODIR' log --oneline)\""
 check "winner marked merged" "grep -q '^state merged ' '$TASKS/$T2'"
@@ -92,7 +93,7 @@ check "compare after the decision names the winner" "grep -q 'decided: $T2 won' 
 
 # --- history: one entry ---------------------------------------------------------
 hist="$(af task history 2>&1)"
-echo "$hist" | sed 's/^/  [hist] /'
+dump hist <<<"$hist"
 check "history shows the race once" "[[ \"\$(grep -c 'try three ways' <<<\"\$hist\")\" == 1 ]]"
 check "…as the merged winner with the attempt count" "grep -F -- \"$T2\" <<<\"\$hist\" | grep -q 'merged' && grep -q '⑂3 attempts' <<<\"\$hist\""
 check "…counted as one task, one merged" "grep -q '1 tasks, 1 merged' <<<\"\$hist\""
