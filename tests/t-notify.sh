@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# t-notify.sh — actionable notifications.
-#   - notify.sh leads the body with the task intent and wires a click-to-jump
-#     (terminal-notifier -execute path, exercised via a stub)
+# t-notify.sh — notifications.
+#   - desktop route: notify.sh leads the body with the task intent and wires a
+#     click-to-jump (terminal-notifier -execute path, exercised via a stub)
+#   - terminal route: with a Ghostty client attached (tmux stubbed), the
+#     notification is an OSC 777 DCS-wrapped through the client's active pane
+#     tty and the desktop tools are not called; an unknown terminal falls back
+#     to desktop under auto; AGENT_FLEET_NOTIFY_VIA picks explicitly
 #   - AGENT_FLEET_NOTIFY=0 silences it
 #   - snapshotd escalates a long wait at most ONCE per episode
 set -uo pipefail
@@ -28,6 +32,7 @@ printf 't1\n' > "$CACHE/panes/%7.task"
 notify() { AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
            bash "$REPO/scripts/notify.sh" "$@"; }
 
+# No client attached to the test server: auto takes the desktop route.
 notify "$SOCK" %7 "needs your input"
 check "body leads with the task intent" "grep -q 'review the login flow — ' '$NLOG'"
 check "click action jumps to the pane" "grep -q 'goto %7' '$NLOG'"
@@ -36,6 +41,57 @@ check "message text present" "grep -q 'needs your input' '$NLOG'"
 : > "$NLOG"
 AGENT_FLEET_NOTIFY=0 notify "$SOCK" %7 "needs your input"
 check "AGENT_FLEET_NOTIFY=0 silences" "[[ ! -s '$NLOG' ]]"
+
+# --- terminal route: stub tmux reports one attached client whose active pane
+# tty is a FIFO we read; TERMTYPE picks the terminal it claims to be.
+TTY="$WORK/pane.tty"; mkfifo "$TTY"
+cat > "$STUB/tmux" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *list-clients*) printf '%s|%s|%s\n' "\${TERMTYPE-ghostty 1.3.1}" "\${TERMNAME-xterm-ghostty}" "$TTY" ;;
+  *display-message*) printf 'ws/win\n' ;;
+esac
+EOF
+chmod +x "$STUB/tmux"
+export TMUX_BIN="$STUB/tmux"
+read_tty() { ( head -c 400 < "$TTY" > "$WORK/got" ) & }
+
+: > "$NLOG"; : > "$WORK/got"; read_tty
+notify "$SOCK" %7 "needs your input"
+wait_for 5 "[[ -s '$WORK/got' ]]"
+# shellcheck disable=SC2034 # read inside the eval'd check() conditions
+got="$(cat "$WORK/got" 2>/dev/null)"
+check "ghostty client: OSC 777 notify reaches the client's pane tty" "[[ \"\$got\" == *\$'\\033Ptmux;\\033\\033]777;notify;agent-fleet;'* ]]"
+check "…DCS-wrapped, body with intent and label" "[[ \"\$got\" == *'review the login flow — ws/win needs your input'\$'\\007\\033\\\\'* ]]"
+check "…and the desktop tool is not called" "[[ ! -s '$NLOG' ]]"
+
+: > "$NLOG"; : > "$WORK/got"; read_tty
+TERMTYPE="iTerm2 3.5" TERMNAME=xterm-256color notify "$SOCK" %7 "finished"
+wait_for 5 "[[ -s '$WORK/got' ]]"
+check "iTerm2 client: OSC 9 form" "[[ \"\$(cat '$WORK/got')\" == *\$'\\033]9;agent-fleet: '* ]]"
+
+: > "$NLOG"
+TERMTYPE="" TERMNAME=xterm-256color notify "$SOCK" %7 "finished"
+check "unknown terminal under auto: desktop route" "grep -q 'finished' '$NLOG'"
+
+: > "$NLOG"; : > "$WORK/got"; read_tty
+TERMTYPE="" TERMNAME=xterm-256color AGENT_FLEET_NOTIFY_VIA=terminal notify "$SOCK" %7 "finished"
+wait_for 5 "[[ -s '$WORK/got' ]]"
+check "VIA=terminal forces OSC 777 to an unknown terminal" "[[ \"\$(cat '$WORK/got')\" == *']777;notify;agent-fleet;'* ]] && [[ ! -s '$NLOG' ]]"
+
+: > "$NLOG"
+AGENT_FLEET_NOTIFY_VIA=desktop notify "$SOCK" %7 "finished"
+check "VIA=desktop skips the terminal even with ghostty attached" "grep -q 'finished' '$NLOG'"
+
+# Control characters in the body never reach the escape sequence.
+printf 'id t2\nintent bad\033]0;pwned\007intent\npane %%8\n' > "$CACHE/tasks/t2"
+printf 't2\n' > "$CACHE/panes/%8.task"
+: > "$WORK/got"; read_tty
+notify "$SOCK" %8 "x"
+wait_for 5 "[[ -s '$WORK/got' ]]"
+check "control characters stripped from the body" "[[ \"\$(cat '$WORK/got')\" == *'bad]0;pwnedintent'* ]]"
+
+unset TMUX_BIN; rm -f "$STUB/tmux"
 
 # --- escalation: once per wait episode ---------------------------------------
 boot_server t "$WORK"
