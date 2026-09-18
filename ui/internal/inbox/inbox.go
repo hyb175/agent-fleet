@@ -164,6 +164,7 @@ type itemsMsg struct {
 	stale       bool
 	note        string
 	nw, ni, tot int
+	refetch     bool // also re-read the selected row's preview (^r, after an answer)
 }
 type previewMsg Preview
 type doneMsg struct {
@@ -204,7 +205,10 @@ func tick() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func (m model) load() tea.Cmd {
+func (m model) load() tea.Cmd { return m.loadWith(false) }
+
+// loadWith re-reads the snapshot; refetch also refreshes the preview.
+func (m model) loadWith(refetch bool) tea.Cmd {
 	cfg := m.cfg
 	return func() tea.Msg {
 		f, err := os.Open(cfg.Snapshot)
@@ -216,7 +220,7 @@ func (m model) load() tea.Cmd {
 		if err != nil {
 			return itemsMsg{note: "snapshot unreadable"}
 		}
-		msg := itemsMsg{items: Items(s, cfg.Escalate), stale: s.Stale(time.Now().Unix()), tot: len(s.Agents)}
+		msg := itemsMsg{items: Items(s, cfg.Escalate), stale: s.Stale(time.Now().Unix()), tot: len(s.Agents), refetch: refetch}
 		for _, a := range s.Agents {
 			switch a.State {
 			case snapshot.StateWorking:
@@ -458,10 +462,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.clamp()
-		if it, ok := m.selected(); ok {
+		// The preview is the user's last look at the pane, and its
+		// fingerprint guards the answer — so it is fetched when the cursor
+		// lands on a row, on ^r, and after an answer; not on every snapshot
+		// tick, which would silently re-bless a prompt nobody has re-read.
+		it, ok := m.selected()
+		if !ok {
+			m.preview = Preview{}
+			return m, nil
+		}
+		if m.preview.Pane != it.Pane || msg.refetch {
 			return m, m.fetchPreview(it)
 		}
-		m.preview = Preview{}
 		return m, nil
 	case previewMsg:
 		if it, ok := m.selected(); ok && it.Pane == msg.Pane {
@@ -490,7 +502,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Let the agent consume the keys, then re-read the row and its preview.
 		return m, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg { return refreshMsg{} })
 	case refreshMsg:
-		return m, m.load()
+		return m, m.loadWith(true)
 	case tea.MouseMsg:
 		switch {
 		case msg.Button == tea.MouseButtonWheelUp:
@@ -645,7 +657,7 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.ExecProcess(c, func(error) tea.Msg { return refreshMsg{} })
 		}
 	case "ctrl+r":
-		return m, m.load()
+		return m, m.loadWith(true)
 	case "backspace":
 		if r := []rune(m.query); len(r) > 0 {
 			m.query = string(r[:len(r)-1])

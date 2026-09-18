@@ -56,9 +56,13 @@ tx send-keys -t "$ib" Down
 wait_for 10 "tx capture-pane -p -t '$ib' | grep -q 'Reply?'"
 tx send-keys -t "$tp" -l "unexpected input"
 for _ in $(seq 1 25); do tx capture-pane -p -t "$tp" | grep -q 'unexpected input' && break; sleep 0.2; done
-# The snapshot has not changed, so the preview (and its fingerprint) is still the old one.
+# The preview (and its fingerprint) is the user's last look: it does not
+# follow the snapshot tick, so the CLI's recapture now differs -> refused.
 tx send-keys -t "$ib" C-y
 wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'stale'"
+if ! tx capture-pane -p -t "$ib" | grep -q 'stale'; then
+  tx capture-pane -p -t "$ib" | grep -v '^$' | sed -n '1,8p' | sed 's/^/  [debug] /'
+fi
 check "approve on a changed pane is refused as stale" "tx capture-pane -p -t '$ib' | grep -q 'stale'"
 check "nothing was sent to the changed pane" "[[ ! -s '$WORK/ans2' ]]"
 
@@ -66,10 +70,11 @@ check "nothing was sent to the changed pane" "[[ ! -s '$WORK/ans2' ]]"
 tx send-keys -t "$ib" C-r
 sleep 0.8
 tx send-keys -t "$ib" C-t
-wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'reply'"
+wait_for 5 "tx capture-pane -p -t '$ib' | grep -q '⏎ send'"
 tx send-keys -t "$ib" -l "yes please"
 tx send-keys -t "$ib" Enter
 for _ in $(seq 1 25); do [[ -s "$WORK/ans2" ]] && break; sleep 0.2; done
+if [[ ! -s "$WORK/ans2" ]]; then tx capture-pane -p -t "$ib" | grep -v '^$' | sed -n '1,8p' | sed 's/^/  [debug] /'; fi
 check "^t reply arrives (after the typed text the pane already had)" "grep -q 'yes please' '$WORK/ans2' 2>/dev/null"
 
 # Batch approve with confirmation.
@@ -80,9 +85,11 @@ sleep 0.6
 wait_for 10 "grep -q '|$b1|' '$CACHE/fleet.snapshot' && grep -q '|$b2|' '$CACHE/fleet.snapshot'"
 ib="$(launch)"
 wait_for 10 "tx capture-pane -p -t '$ib' | grep -q 'batch one'"
+# Four waits: the two batch readers plus the two earlier stubs, whose status
+# files stay 'wait' (they have no hooks to clear them).
 tx send-keys -t "$ib" C-a
-wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'approve ALL 2'"
-check "^a asks before approving all" "tx capture-pane -p -t '$ib' | grep -q 'approve ALL 2 waiting'"
+wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'approve ALL'"
+check "^a asks before approving all" "tx capture-pane -p -t '$ib' | grep -q 'approve ALL 4 waiting'"
 tx send-keys -t "$ib" n
 wait_for 5 "tx capture-pane -p -t '$ib' | grep -q 'cancelled'"
 check "n cancels" "[[ ! -s '$WORK/b1' && ! -s '$WORK/b2' ]]"
