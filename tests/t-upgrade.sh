@@ -68,7 +68,7 @@ check "the release's afui landed in the new tree" "[[ \"\$('$data/bin/afui' 2>/d
 # --- a release with no binary for this machine is refused before the swap ---
 printf '[{"name":"v0.3.0"},{"name":"v0.2.0"}]\n' > "$WORK/tags-030.json"
 mkdir -p "$WORK/releases/v0.3.0"; printf 'deadbeef  afui-plan9-mips\n' > "$WORK/releases/v0.3.0/SHA256SUMS"
-out="$(PATH="$(dirname "$BASH"):/usr/bin:/bin:/usr/sbin:/sbin" AGENT_FLEET_TAGS_URL="file://$WORK/tags-030.json" AGENT_FLEET_TARBALL="file://$WORK/new.tgz" run upgrade -y 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 AGENT_FLEET_TAGS_URL="file://$WORK/tags-030.json" AGENT_FLEET_TARBALL="file://$WORK/new.tgz" run upgrade -y 2>&1)"; rc=$?
 check "upgrade without a renderer refuses (rc=$rc)" "[[ $rc -ne 0 ]] && grep -q 'not upgrading' <<<\"\$out\""
 check "…naming the supported targets" "grep -q 'darwin/arm64 darwin/amd64' <<<\"\$out\""
 check "…and the tree is untouched (still 0.2.0)" "[[ \"\$($MANAGED --version 2>/dev/null)\" == 'agent-fleet 0.2.0' ]]"

@@ -17,9 +17,6 @@ case "$os" in Darwin) os=darwin ;; Linux) os=linux ;; esac
 case "$arch" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=amd64 ;; esac
 asset="afui-$os-$arch"
 export AGENT_FLEET_RELEASE_BASE="file://$WORK/releases"
-# System dirs only: no Go there on any machine this runs on (NixOS keeps bash
-# elsewhere, hence $(dirname "$BASH")).
-NOGO="$(dirname "$BASH"):/usr/bin:/bin:/usr/sbin:/sbin"
 
 # A fake release: the "binary" is a script that prints a version.
 REL="$WORK/releases/v9.9.9"; mkdir -p "$REL"
@@ -32,7 +29,7 @@ out="$(bash "$F" "$ROOT" v9.9.9 2>&1)"; rc=$?
 check "release asset installs (rc=$rc)" "[[ $rc -eq 0 && -x '$ROOT/bin/afui' ]]"
 check "installed binary runs" "[[ \"\$('$ROOT/bin/afui')\" == 'afui 9.9.9' ]]"
 check "reports what it installed" "grep -q 'installed $asset (v9.9.9)' <<<\"\$out\""
-out="$(PATH="$NOGO" bash "$F" probe v9.9.9 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 bash "$F" probe v9.9.9 2>&1)"; rc=$?
 check "probe: release with our asset is fine without Go (rc=$rc)" "[[ $rc -eq 0 ]] && grep -q 'has $asset' <<<\"\$out\""
 
 # Corrupt the asset -> checksum mismatch -> nothing installed.
@@ -43,20 +40,20 @@ check "…and says so" "grep -q 'checksum mismatch' <<<\"\$out\""
 
 # A release with no asset for this platform: without Go nothing can be done.
 mkdir -p "$WORK/releases/v9.9.8"; printf 'deadbeef  afui-plan9-mips\n' > "$WORK/releases/v9.9.8/SHA256SUMS"
-out="$(PATH="$NOGO" bash "$F" "$ROOT" v9.9.8 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 bash "$F" "$ROOT" v9.9.8 2>&1)"; rc=$?
 check "missing asset without Go is rc 3 (rc=$rc)" "[[ $rc -eq 3 && ! -e '$ROOT/bin/afui' ]]"
 check "…naming the missing asset and the supported targets" "grep -q 'has no $asset' <<<\"\$out\" && grep -q 'darwin/arm64 darwin/amd64 linux/arm64 linux/amd64' <<<\"\$out\""
-out="$(PATH="$NOGO" bash "$F" probe v9.9.8 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 bash "$F" probe v9.9.8 2>&1)"; rc=$?
 check "probe agrees (rc=$rc)" "[[ $rc -eq 3 ]] && grep -q 'has no $asset' <<<\"\$out\""
 
 # A release that publishes nothing at all, same story.
-out="$(PATH="$NOGO" bash "$F" "$ROOT" v0.0.1 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 bash "$F" "$ROOT" v0.0.1 2>&1)"; rc=$?
 check "release without binaries, no Go: rc 3 (rc=$rc)" "[[ $rc -eq 3 ]] && grep -q 'publishes no binaries' <<<\"\$out\""
 
 # Non-release ref, no Go on PATH.
-out="$(PATH="$NOGO" bash "$F" "$ROOT" master 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 bash "$F" "$ROOT" master 2>&1)"; rc=$?
 check "branch ref without Go is rc 3 (rc=$rc)" "[[ $rc -eq 3 ]] && grep -q 'not a release and no Go' <<<\"\$out\""
-out="$(PATH="$NOGO" bash "$F" probe master 2>&1)"; rc=$?
+out="$(AGENT_FLEET_ASSUME_NO_GO=1 bash "$F" probe master 2>&1)"; rc=$?
 check "probe agrees on the branch ref (rc=$rc)" "[[ $rc -eq 3 ]]"
 
 # With Go: a branch ref and a release with nothing for us both build from
