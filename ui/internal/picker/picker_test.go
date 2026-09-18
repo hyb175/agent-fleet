@@ -1,6 +1,7 @@
 package picker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -267,5 +268,18 @@ func TestMatchHighlightStaysInsideTitle(t *testing.T) {
 	}
 	if got := highlight("abc", []int{0, 2, 9}, lipgloss.NewStyle(), lipgloss.NewStyle().Bold(true)); plainText(got) != "abc" {
 		t.Fatalf("out-of-range match indexes must be ignored: %q", got)
+	}
+	// Section headers wear their state's color: NEEDS YOU in the wait color, IDLE muted.
+	m.query = ""
+	m.refilter()
+	th := themeForTest()
+	hex := func(h string) string { // "#rrggbb" -> the SGR truecolor parameters lipgloss emits
+		var r, g, b int
+		fmt.Sscanf(h, "#%02x%02x%02x", &r, &g, &b)
+		return fmt.Sprintf("38;2;%d;%d;%d", r, g, b)
+	}
+	out := m.View()
+	if !strings.Contains(out, hex(th.Wait)+"mNEEDS YOU") || !strings.Contains(out, hex(th.Muted)+"mIDLE") {
+		t.Fatalf("headers must be state-colored:\n%q", out)
 	}
 }
