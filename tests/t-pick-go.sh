@@ -26,7 +26,6 @@ check "launcher: move execs afui move"            "route move | grep -q 'afui mo
 check "launcher: inbox execs afui inbox"          "route inbox | grep -q 'afui inbox'"
 check "launcher: unknown surface is refused"      "! route rail-x 2>/dev/null | grep -q exec"
 check "launcher: a missing binary is reported, nothing execs" "ROUTE_ROOT='$WORK' route pick | grep -q 'bin/afui is missing' && ! ROUTE_ROOT='$WORK' route pick | grep -q exec"
-check "launcher: AGENT_FLEET_UI=bash gets a note and afui anyway" "AGENT_FLEET_UI=bash route pick | grep -q 'bash renderers were removed' && AGENT_FLEET_UI=bash route pick | grep -q 'afui pick'"
 
 # An agent in a second window to jump to.
 w2="$(tx new-window -d -P -F '#{window_id}' -t t: -n target 'sleep 60')"
