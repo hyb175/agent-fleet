@@ -999,6 +999,22 @@ func (m model) row(it Item, sel bool, w int) string {
 
 func (m model) glyphFor(it Item, sel bool) string { return m.st.glyph(it, m.frame, sel) }
 
+// headerStyle colors a state group with its state's color — the same code
+// the glyphs use, so a section reads at a glance; other groups stay muted.
+func (m model) headerStyle(group string) lipgloss.Style {
+	switch group {
+	case "needs you":
+		return m.st.wait
+	case "working":
+		return m.st.working
+	case "done":
+		return m.st.done
+	case "current":
+		return m.st.accent
+	}
+	return m.st.dim
+}
+
 func (m model) footer(w int) string {
 	hint := func(k, what string) string { return m.st.key.Render(k) + " " + m.st.dim.Render(what) }
 	var parts []string
@@ -1043,7 +1059,8 @@ func (m model) View() string {
 	for _, ln := range lines[m.offset:end] {
 		switch ln.kind {
 		case lineHeader:
-			b.WriteString("   " + m.st.dim.Render(strings.ToUpper(m.shown[ln.idx].Group)) + "\n")
+			g := m.shown[ln.idx].Group
+			b.WriteString("   " + m.headerStyle(g).Render(strings.ToUpper(g)) + "\n")
 		case lineItem:
 			b.WriteString(m.row(m.shown[ln.idx], ln.idx == m.cursor, w) + "\n")
 		}
