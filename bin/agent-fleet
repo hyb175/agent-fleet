@@ -11,7 +11,7 @@
 # Everything runs on a dedicated tmux socket (default: agent-fleet), fully
 # isolated from your daily tmux server, config, and keybinds.
 #
-# The primary surface is a single fzf popup (Prefix o inside the fleet);
+# The primary surface is the afui picker popup (Prefix o inside the fleet);
 # this CLI is the verb layer the popup and your shell call.
 
 set -euo pipefail
@@ -1278,6 +1278,11 @@ cmd_upgrade() {
     esac
   fi
 
+  # No rail, picker or inbox without bin/afui: refuse before the swap when
+  # neither the release nor a Go toolchain can provide one for this machine.
+  bash "$ROOT_DIR/scripts/fetch-afui.sh" probe "$ref" \
+    || { echo "error: not upgrading — $ref has no native UI binary for this machine" >&2; exit 1; }
+
   # --- download (AGENT_FLEET_TARBALL overrides the source, for tests) ---
   command -v tar >/dev/null 2>&1 || { echo "error: tar is required" >&2; exit 1; }
   local tmp url src; tmp="$(mktemp -d)"
@@ -1301,10 +1306,11 @@ cmd_upgrade() {
   rm -rf "$tmp"
   echo "upgraded $installed → ${ref#v}."
   # The native UI binary lives inside the tree, so a rollback swaps it back
-  # along with everything else. rc 3 = nothing to install here (no asset for
-  # this platform, no Go): the bash renderers carry on.
-  bash "$data_dir/scripts/fetch-afui.sh" "$data_dir" "$ref" || [[ $? -eq 3 ]] \
-    || echo "warning: native UI binary did not install — bash renderers stay active" >&2
+  # along with everything else.
+  if ! bash "$data_dir/scripts/fetch-afui.sh" "$data_dir" "$ref"; then
+    echo "error: the native UI binary did not install — no rail, picker or inbox until it does:" >&2
+    echo "  make -C \"$data_dir\" ui   or   agent-fleet upgrade --rollback" >&2
+  fi
   _reload_live
   echo "rollback if needed:  agent-fleet upgrade --rollback"
 }
@@ -1685,17 +1691,14 @@ cmd_reload() {
 # ui_renderer_status — which renderer the launchers will pick, and why, so a
 # reload after a branch switch or a missing binary is not a silent fallback.
 ui_renderer_status() {
-  local ui="${AGENT_FLEET_UI:-}" f="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/ui"
+  local ui="${AGENT_FLEET_UI:-}" f="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/ui" note=""
   if [[ -z "$ui" && -r "$f" ]]; then { read -r ui < "$f"; } 2>/dev/null || true; fi
-  ui="${ui:-bash}"
-  if [[ "$ui" == "go" ]]; then
-    if [[ -x "$ROOT_DIR/bin/afui" ]]; then
-      echo "go ($("$ROOT_DIR/bin/afui" version 2>/dev/null || echo afui))"
-    else
-      echo "go requested but bin/afui is missing — bash renderers active (make ui, or a tagged install)"
-    fi
+  # The setting picked between two renderers; only the Go one is left.
+  if [[ "$ui" == "bash" ]]; then note=" — AGENT_FLEET_UI=bash is ignored: the bash renderers were removed"; fi
+  if [[ -x "$ROOT_DIR/bin/afui" ]]; then
+    echo "$("$ROOT_DIR/bin/afui" version 2>/dev/null || echo afui)$note"
   else
-    echo "bash"
+    echo "bin/afui MISSING — no rail, picker or inbox until 'make ui' or a tagged install$note"
   fi
 }
 
@@ -1928,7 +1931,7 @@ cmd_review() {
       echo "error: the task's agent session is gone — send-back needs the LIVE pane (spawn a new task instead)" >&2
       return 1
     fi
-    # A trailing ';' would be eaten by tmux argv parsing (see inbox.sh).
+    # tmux's argv parser takes a trailing ';' as a command separator.
     [[ "$notes" == *';' ]] && notes="${notes%;}\;"
     tx send-keys -t "$rec_pane" -l -- "$notes" && tx send-keys -t "$rec_pane" Enter
     echo "sent to $rec_pane — the agent returns to working when it picks it up"
@@ -2844,7 +2847,7 @@ cmd_task() {
   echo "$tid $pane"
 }
 
-# pick — open the fzf popup (when called from inside the fleet), else attach.
+# pick — open the picker popup (when called from inside the fleet), else attach.
 cmd_pick() {
   ensure_server
   if in_fleet_tmux; then
@@ -2894,7 +2897,7 @@ Verbs:
                                    @window-id, or the current tab. --focus follows it there.
   agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).
   agent-fleet list                 List workspaces and their agents.
-  agent-fleet pick                 Open the fzf picker popup (or attach from a bare shell).
+  agent-fleet pick                 Open the picker popup (or attach from a bare shell).
   agent-fleet kimi-hooks [install|remove|status]
                                    Manage the fleet status-hooks block in ~/.kimi/config.toml
                                    (kimi has no per-launch overlay; hooks are install-wide).

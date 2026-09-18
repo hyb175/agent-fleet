@@ -35,13 +35,14 @@ The CLI is `agent-fleet` (alias `af`).
 | Tool | Required | Notes |
 | --- | --- | --- |
 | `tmux` ≥ 3.2 | yes | `display-popup`, `split-window -f`, per-pane options |
-| `bash` ≥ 4 | yes | rail and daemon use associative arrays; macOS ships 3.2 — `brew install bash` and put it ahead of `/bin/bash` on `PATH`. The status hooks and the `claude` shim run under the agent's own bash and stay 3.2-compatible |
-| `fzf` | yes | powers the picker |
+| `bash` ≥ 4 | yes | daemon and CLI use associative arrays; macOS ships 3.2 — `brew install bash` and put it ahead of `/bin/bash` on `PATH`. The status hooks and the `claude` shim run under the agent's own bash and stay 3.2-compatible |
 | `claude` | optional | default agent command; hooks attach on launch |
 | `git` | optional | branch / ahead-count labels |
 | `zoxide` | optional | frecent directories in the connect view |
-| `go` ≥ 1.24 | optional | builds `bin/afui`, the native UI, from a checkout (`make ui`); tagged installs download it from the release instead |
+| `go` ≥ 1.24 | optional | builds `bin/afui`, the native UI, from a checkout (`make ui`) or on a platform without a release binary; tagged installs download it from the release |
 | `osascript` / `notify-send` | optional | desktop notifications (macOS / Linux) |
+
+The rail, picker and inbox are `bin/afui`, one Go binary: release installs download it (darwin/linux × arm64/amd64, checksum-verified), checkouts build it. Without it the fleet has no UI, so `install.sh` and `agent-fleet upgrade` refuse up front rather than install one.
 
 A truecolor + Unicode terminal is recommended (theme colors and the braille spinner degrade otherwise). Developed on macOS; Linux works (notifications and `stat`/`ps` fall back to portable forms) but is less battle-tested.
 
@@ -68,7 +69,7 @@ git clone https://github.com/hyb175/agent-fleet
 agent-fleet/install.sh
 ```
 
-`install.sh` symlinks `agent-fleet` (and `af`) into `~/.local/bin` and provisions the status cache under `~/.cache/agent-fleet`. It also puts the native UI binary at `bin/afui`: downloaded and checksum-verified from the GitHub release when `AGENT_FLEET_REF` is a `vX.Y.Z` tag, built from `ui/` when a Go toolchain is on `PATH`, otherwise skipped with a note (the bash renderers stay in charge; `AGENT_FLEET_UI` picks). `agent-fleet upgrade` fetches the binary for the new tag the same way, and `--rollback` restores the previous one with the rest of the tree. It auto-detects its mode: piped through `curl` it downloads the tarball; run from a checkout it symlinks in place. `PREFIX=/usr/local` changes the prefix; `AGENT_FLEET_REF=v0.1.0` pins a tag/branch. If `~/.local/bin` isn't on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"`.
+`install.sh` symlinks `agent-fleet` (and `af`) into `~/.local/bin` and provisions the status cache under `~/.cache/agent-fleet`. It also puts the native UI binary at `bin/afui`: downloaded and checksum-verified from the GitHub release when `AGENT_FLEET_REF` is a `vX.Y.Z` tag, built from `ui/` otherwise (Go on `PATH`); when neither is possible it refuses before downloading anything. `agent-fleet upgrade` fetches the binary for the new tag the same way and refuses likewise, and `--rollback` restores the previous one with the rest of the tree. It auto-detects its mode: piped through `curl` it downloads the tarball; run from a checkout it symlinks in place. `PREFIX=/usr/local` changes the prefix; `AGENT_FLEET_REF=v0.1.0` pins a tag/branch. If `~/.local/bin` isn't on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"`.
 
 ---
 
@@ -88,11 +89,11 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 ## Two surfaces
 
-**Picker** (`Prefix o`) — popup to jump to an agent, switch workspaces, or spawn one in a directory. `Prefix w` opens the workspace switcher. Under `AGENT_FLEET_UI=go` the picker (and `Prefix M`) run in `afui` with an in-process fuzzy filter, live refresh while open, and mouse; the fzf scripts remain the default.
+**Picker** (`Prefix o`) — popup to jump to an agent, switch workspaces, or spawn one in a directory. `Prefix w` opens the workspace switcher. The picker (and `Prefix M`) run in `afui`: in-process fuzzy filter, live refresh while open, mouse.
 
-**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), `^a` approves every waiting agent after confirming, or `^v` a done task straight into review. Under `AGENT_FLEET_UI=go` the inbox runs in `afui`: grouped `NEEDS YOU` / `DONE` rows, a live preview panel, answers guarded by a fingerprint of the exact capture the panel shows.
+**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), `^a` approves every waiting agent after confirming, or `^v` a done task straight into review. Grouped `NEEDS YOU` / `DONE` rows, a live preview panel, answers guarded by a fingerprint of the exact capture the panel shows.
 
-**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. Two renderers exist during the native-UI transition: the bash rail (default) and `afui rail` (`AGENT_FLEET_UI=go`): same layout, plus a scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. `agent-fleet reload` respawns rails with whichever is selected.
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding.
 
 ```
 ┌──────────────────┬─────────────────────────┐
@@ -240,7 +241,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 | `Prefix w` | Quick workspace switch (picker → spaces view) |
 | `Prefix f` | Picker → connect view: recent folders + unvisited siblings (git repos first). `Enter` spawns a shell workspace, `^a` with a claude agent, `^r` names it. |
 | `Prefix b` | Toggle the sidenav rail |
-| `Prefix B` | Focus the rail (Go renderer): `j`/`k` move, `⏎` jumps, `w` waiting only, `/` text filter, `z` folds a workspace, `Esc` back to the work pane. Wheel scrolls the agent list. |
+| `Prefix B` | Focus the rail: `j`/`k` move, `⏎` jumps, `w` waiting only, `/` text filter, `z` folds a workspace, `Esc` back to the work pane. Wheel scrolls the agent list. |
 | `Prefix c` | New plain shell window (tmux default) |
 | `Prefix C` | Add a Claude agent — menu picks a new tab or a new workspace; starts in the current dir, jumps to it |
 | `Prefix R` | Force-repaint the focused pane (fixes a stale Claude frame) |
@@ -248,7 +249,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 | `Prefix Tab` | Jump back to the previously focused agent; toggles between two |
 | `Prefix Space` | Triage jump — next agent needing input (`wait`, then `done`), cycling; most urgent first |
 | `Prefix L` | Switch to the previous workspace |
-| `Prefix M` | Move the current tab to another workspace (fzf popup picks the destination) |
+| `Prefix M` | Move the current tab to another workspace (a popup picks the destination) |
 | `Prefix &` | Close the current tab (even with multiple panes) |
 | `Prefix W` / `Prefix T` | Rename the current workspace / tab |
 | `Prefix r` | Reload the fleet config |
@@ -344,7 +345,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
 | `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon ticks |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents on restore (`0` = shells) |
-| `AGENT_FLEET_UI` | `bash` | UI renderer for the rail, picker, inbox and move-tab popup: `go` runs `bin/afui` (`make ui`; falls back to the bash script with a note when the binary is missing). Durable form: `~/.config/agent-fleet/ui` containing `go` or `bash`. |
+| `AGENT_FLEET_UI` | — | Ignored: the bash renderers are gone and `bin/afui` is the only UI. Still read (with `~/.config/agent-fleet/ui`) so a leftover `bash` setting gets a note from `agent-fleet reload` instead of silence; removed next release. |
 | `AGENT_FLEET_RESTORE_STAGGER` | `0.5` | Seconds between agent relaunches on restore (`0` = all at once); failures land in `restore.log` in the cache dir |
 | `AGENT_FLEET_RESTORE_ANY_SOCKET` | `0` | Allow restoring a layout saved on a different socket |
 | `AGENT_FLEET_REMOTES` | unset | Federated hosts, space/comma separated — overrides `~/.config/agent-fleet/remotes` |
@@ -405,7 +406,7 @@ Removes a managed install (`~/.local/share/agent-fleet`); a dev checkout is left
 ## Troubleshooting
 
 - **`Prefix o` does nothing** — needs tmux ≥ 3.2 (`display-popup`). Check `tmux -V`.
-- **Rail shows "needs bash 4+"** — `env bash` resolved to macOS's 3.2. Install newer bash ahead of `/bin/bash` on `PATH`.
+- **Rail pane says `bin/afui is missing`** — the native UI binary is not built: `make ui` in a checkout (Go 1.24+), or `agent-fleet upgrade` to a tagged release; then `agent-fleet reload`.
 - **Config changes don't take effect** — tmux reads config at server start. `Prefix r`, or `agent-fleet reload`.
 - **Agent status never updates** — launch via `agent-fleet add` to wire hooks; hand-started `claude` uses the scrape fallback (less precise).
 
@@ -414,10 +415,10 @@ Removes a managed install (`~/.local/share/agent-fleet`); a dev checkout is left
 ## Testing
 
 ```sh
-tests/run-all.sh
+make ui && tests/run-all.sh
 ```
 
-Runs the integration suite (status tiers, layout persistence, multi-reboot resume, kimi/codex hooks, CLI matching, snapshot staleness, theme presets). Every `tests/t-*.sh` is standalone. `make ui-test` vets, format-checks and tests the Go module under `ui/`; `make ui` builds `bin/afui`.
+Runs the integration suite (status tiers, layout persistence, multi-reboot resume, kimi/codex hooks, CLI matching, snapshot staleness, theme presets, and the rail, picker and inbox driven through tmux — so `bin/afui` must be built first). Every `tests/t-*.sh` is standalone. `make ui-test` vets, format-checks and tests the Go module under `ui/`.
 
 ---
 

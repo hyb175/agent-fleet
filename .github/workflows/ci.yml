@@ -34,25 +34,23 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tmux fzf fish zoxide
+          sudo apt-get install -y --no-install-recommends tmux fish zoxide
 
-      # macOS ships bash 3.2; the rail needs 4+ (associative arrays). Prepend
+      # macOS ships bash 3.2; the daemon and CLI need 4+ (associative arrays). Prepend
       # brew's bin so `bash` resolves to the new one in later steps.
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install tmux fzf fish bash zoxide
+          brew install tmux fish bash zoxide
           echo "$(brew --prefix)/bin" >> "$GITHUB_PATH"
 
       - name: Toolchain sanity
         run: |
           bash --version | head -1
           tmux -V
-          fzf --version
           bash -c '(( BASH_VERSINFO[0] >= 4 ))'
 
-      # run-all.sh reruns the rail-facing tests with the Go renderer when
-      # bin/afui exists, so the suite covers both renderers.
+      # bin/afui is the only renderer; run-all.sh refuses to start without it.
       - uses: actions/setup-go@v5
         with:
           go-version-file: ui/go.mod

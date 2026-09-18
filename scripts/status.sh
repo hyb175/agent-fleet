@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # status.sh — read and render live agent status.
 #
-# Sourced by pick.sh (and the sidenav); also usable as a CLI:
+# Sourced by snapshotd.sh; also usable as a CLI:
 #   status.sh state <pane_id>     -> wait|working|done|idle
 #   status.sh glyph <pane_id>     -> colored glyph
 #   status.sh gc                  -> prune status files for dead panes
@@ -164,7 +164,7 @@ state_rank() {
   esac
 }
 
-# Shared glyph vocabulary (used by the sidenav AND the picker, so they match).
+# Glyph vocabulary for the status bar; ui/internal/tui mirrors it for afui.
 SPIN=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)        # braille spinner, 1 cell each
 
 # state_fg <state> -> ANSI fg color (from the theme palette).

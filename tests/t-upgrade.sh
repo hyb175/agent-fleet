@@ -3,6 +3,7 @@
 #   - --check compares the installed version to the newest tag (injected)
 #   - upgrade -y swaps in the new tree and keeps the old one as .prev
 #   - --rollback restores .prev
+#   - a release with no afui for this machine (and no Go) is refused up front
 #   - a dev checkout is detected and NOT modified (prints the git hint)
 # Network is stubbed: AGENT_FLEET_TAGS_URL feeds the tag list, AGENT_FLEET_TARBALL
 # feeds the download — so the test is fully offline and deterministic.
@@ -32,6 +33,17 @@ sed -i.bak -E 's/^AGENT_FLEET_VERSION="[^"]*"/AGENT_FLEET_VERSION="0.2.0"/' "$WO
 rm -f "$WORK/new/agent-fleet-0.2.0/bin/agent-fleet.bak"
 ( cd "$WORK/new" && tar -czf "$WORK/new.tgz" agent-fleet-0.2.0 )
 
+# --- the "v0.2.0" release: a stub afui for this platform, checksummed ---
+# (the upgrade refuses without one; see t-fetch-afui for the fetch itself)
+os="$(uname -s)"; arch="$(uname -m)"
+case "$os" in Darwin) os=darwin ;; Linux) os=linux ;; esac
+case "$arch" in arm64|aarch64) arch=arm64 ;; x86_64|amd64) arch=amd64 ;; esac
+REL="$WORK/releases/v0.2.0"; mkdir -p "$REL"
+printf '#!/usr/bin/env bash\necho "afui 0.2.0"\n' > "$REL/afui-$os-$arch"
+if command -v sha256sum >/dev/null 2>&1; then ( cd "$REL" && sha256sum "afui-$os-$arch" > SHA256SUMS )
+else ( cd "$REL" && shasum -a 256 "afui-$os-$arch" > SHA256SUMS ); fi
+export AGENT_FLEET_RELEASE_BASE="file://$WORK/releases"
+
 # helper: run the managed CLI with the stubs + a throwaway data home
 run() { env XDG_DATA_HOME="$WORK/data" AGENT_FLEET_SOCKET="$SOCK" "$MANAGED" "$@"; }
 
@@ -51,6 +63,15 @@ check "upgrade reports 0.1.0 -> 0.2.0"       "grep -q 'upgraded 0.1.0 → 0.2.0'
 check "current is now 0.2.0"                 "[[ \"\$($MANAGED --version 2>/dev/null)\" == 'agent-fleet 0.2.0' ]]"
 check ".prev backup exists"                  "[[ -d '$data.prev' ]]"
 check ".prev holds the old 0.1.0"            "[[ \"\$($data.prev/bin/agent-fleet --version 2>/dev/null)\" == 'agent-fleet 0.1.0' ]]"
+check "the release's afui landed in the new tree" "[[ \"\$('$data/bin/afui' 2>/dev/null)\" == 'afui 0.2.0' ]]"
+
+# --- a release with no binary for this machine is refused before the swap ---
+printf '[{"name":"v0.3.0"},{"name":"v0.2.0"}]\n' > "$WORK/tags-030.json"
+mkdir -p "$WORK/releases/v0.3.0"; printf 'deadbeef  afui-plan9-mips\n' > "$WORK/releases/v0.3.0/SHA256SUMS"
+out="$(PATH="$(dirname "$BASH"):/usr/bin:/bin:/usr/sbin:/sbin" AGENT_FLEET_TAGS_URL="file://$WORK/tags-030.json" AGENT_FLEET_TARBALL="file://$WORK/new.tgz" run upgrade -y 2>&1)"; rc=$?
+check "upgrade without a renderer refuses (rc=$rc)" "[[ $rc -ne 0 ]] && grep -q 'not upgrading' <<<\"\$out\""
+check "…naming the supported targets" "grep -q 'darwin/arm64 darwin/amd64' <<<\"\$out\""
+check "…and the tree is untouched (still 0.2.0)" "[[ \"\$($MANAGED --version 2>/dev/null)\" == 'agent-fleet 0.2.0' ]]"
 
 # --- already up to date: installed 0.2.0, latest 0.2.0 ---
 printf '[{"name":"v0.2.0"}]\n' > "$WORK/tags-020.json"

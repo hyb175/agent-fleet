@@ -2,8 +2,8 @@
 # t-snapshot.sh — snapshotd's A-record enrichments.
 #   - scrape-tier agents (no hook status file) get a "~" label suffix;
 #     hooked agents stay unmarked
-#   - waiting hooked agents carry a trailing age field (status-file mtime);
-#     the picker renders it humanized ("wait 4m")
+#   - waiting hooked agents carry a trailing age field (status-file mtime)
+#     and the task intent, | scrubbed
 #   - the window's worst agent state lands in @fleet-win-state (tab glyph)
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -68,49 +68,4 @@ kill "$(cat "$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock/pid" 2>/dev/null)"
 # BEFORE fabricating snapshots, or cleanup deletes them from under the checks.
 for _ in $(seq 1 30); do [[ -d "$XDG_CACHE_HOME/agent-fleet/$SOCK/snapshotd.lock" ]] || break; sleep 0.2; done
 
-# Picker renders ages humanized, titles rows by intent, and breaks rank ties
-# by LONGEST wait first — all from a fabricated snapshot.
-{ printf 'T %s 1\n' "$(date +%s)"
-  printf 'A ws|@9|1|api|%%20|claude|wait|1|247|-\n'
-  printf 'A ws|@8|2|slow|%%21|claude|wait|1|900|refactor the parser end to end\n'
-  printf 'A ws|@7|3|done1|%%22|claude|done|1|7300|-\n'
-} > "$SNAPF"
-# shellcheck disable=SC2034 # rows read inside the eval'd check() conditions below
-rows="$(AGENT_FLEET_ROOT="$REPO" XDG_CACHE_HOME="$XDG_CACHE_HOME" bash -c \
-  'source "'"$REPO"'/scripts/status.sh"; source "'"$REPO"'/scripts/pick.sh"; prep_glyphs; list_fleet' 2>/dev/null)"
-check "picker shows humanized wait age" "grep -q 'wait 4m' <<<\"\$rows\""
-check "picker shows done age"           "grep -q 'done 2h' <<<\"\$rows\""
-check "picker titles the row by intent (capped)" "grep -q 'refactor the parser end' <<<\"\$rows\""
-check "longest wait sorts first" "[[ \"\$(grep -n 'wait 15m' <<<\"\$rows\" | cut -d: -f1)\" -lt \"\$(grep -n 'wait 4m' <<<\"\$rows\" | cut -d: -f1)\" ]]"
-
-# Rail overflow: 10 agents, 12 usable lines -> a "+N more" row, not silence.
-# Reclaim the agent panes' rows first — the 80x24 test window can run out of
-# split space for the overflow rail otherwise.
-tx kill-pane -t "$hp" 2>/dev/null; tx kill-pane -t "$sp" 2>/dev/null
-{ printf 'T %s 1\n' "$(date +%s)"
-  for k in $(seq 1 10); do printf 'A ws|@%d|%d|ag%d|%%4%d|claude|idle|1|-\n' "$k" "$k" "$k" "$k"; done
-} > "$SNAPF"
-op="$(tx split-window -P -F '#{pane_id}' -t t: \
-  "env AGENT_FLEET_SIDENAV_MAX_ROWS=12 AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/scripts/sidenav.sh'")"
-ok=0
-for _ in $(seq 1 25); do
-  tx capture-pane -p -t "$op" 2>/dev/null | grep -q 'more (prefix+o)' && { ok=1; break; }
-  sleep 0.2
-done
-check "rail overflow shows +N more" "[[ $ok -eq 1 ]]"
-check "overflow count is 9" "tx capture-pane -p -t '$op' | grep -q '+9 more'"
-tx kill-pane -t "$op" 2>/dev/null
-
-# Even-parity height (exact-fit frame): the header must survive — a trailing
-# newline on the frame's last line used to scroll the pane every paint.
-op="$(tx split-window -P -F '#{pane_id}' -t t: \
-  "env AGENT_FLEET_SIDENAV_MAX_ROWS=13 AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/scripts/sidenav.sh'")"
-ok=0
-for _ in $(seq 1 25); do
-  tx capture-pane -p -t "$op" 2>/dev/null | grep -q 'more (prefix+o)' && { ok=1; break; }
-  sleep 0.2
-done
-check "exact-fit rail still overflows cleanly" "[[ $ok -eq 1 ]]"
-check "exact-fit keeps the spaces header" "tx capture-pane -p -t '$op' | grep -q 'spaces'"
-tx kill-pane -t "$op" 2>/dev/null
 exit "$FAIL"

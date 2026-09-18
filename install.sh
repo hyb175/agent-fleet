@@ -58,6 +58,16 @@ fi
 if [[ "$MODE" == remote ]]; then
   command -v curl >/dev/null 2>&1 || die "curl is required for the remote install"
   command -v tar  >/dev/null 2>&1 || die "tar is required for the remote install"
+  # The rail, picker and inbox are bin/afui. Refuse before downloading anything
+  # when neither a release binary nor a Go toolchain can provide it here.
+  if ! command -v go >/dev/null 2>&1; then
+    [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+      || die "AGENT_FLEET_REF=$REF is not a release and no Go toolchain is on PATH — pin a vX.Y.Z tag or install Go 1.24+"
+    case "$(uname -s)/$(uname -m)" in
+      Darwin/arm64|Darwin/x86_64|Linux/aarch64|Linux/arm64|Linux/x86_64|Linux/amd64) ;;
+      *) die "no native UI binary for $(uname -s)/$(uname -m) — releases cover darwin/linux × arm64/amd64; install Go 1.24+ to build from source" ;;
+    esac
+  fi
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   url="https://codeload.github.com/$REPO/tar.gz/$REF"
   say "downloading $REPO@$REF …"
@@ -77,14 +87,13 @@ if [[ "$MODE" == remote ]]; then
   # the sourced-only theme.sh to +x).
   chmod +x "$ROOT_DIR/bin/agent-fleet" "$ROOT_DIR"/scripts/*.sh "$ROOT_DIR"/shims/* 2>/dev/null || true
   say "installed tree: $DATA_DIR"
-  # The native UI binary: from the release for a tag, built from ui/ when Go
-  # is around, otherwise the bash renderers stay in charge (rc 3 says why).
-  bash "$ROOT_DIR/scripts/fetch-afui.sh" "$ROOT_DIR" "$REF" || [[ $? -eq 3 ]] || die "native UI binary failed to install"
+  # The native UI binary: from the release for a tag, built from ui/ otherwise.
+  bash "$ROOT_DIR/scripts/fetch-afui.sh" "$ROOT_DIR" "$REF" \
+    || die "the native UI binary did not install — the fleet has no rail, picker or inbox without bin/afui"
 else
   say "using local checkout: $ROOT_DIR"
   if [[ ! -x "$ROOT_DIR/bin/afui" ]]; then
-    if command -v go >/dev/null 2>&1; then say "native UI: run 'make ui' to build bin/afui (AGENT_FLEET_UI=go)"
-    else say "native UI: bin/afui not built — install Go 1.24+ and run 'make ui', or use a tagged install"; fi
+    say "MISSING: bin/afui — no rail, picker or inbox until it is built: make ui (Go 1.24+), then agent-fleet reload"
   fi
 fi
 
@@ -121,15 +130,13 @@ say "provisioned: $CACHE_DIR/agent-fleet/panes (per-agent status cache)"
 command -v tmux >/dev/null 2>&1 \
   && say "found: tmux ($(tmux -V))" \
   || say "MISSING (required): tmux — need 3.2+ for display-popup (the picker)"
-command -v fzf >/dev/null 2>&1 \
-  || say "MISSING (required): fzf — powers the picker popup"
-# bash 4+ is required (the sidenav uses associative arrays); macOS ships 3.2.
+# bash 4+ is required (the daemon and CLI use associative arrays); macOS ships 3.2.
 bv="$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || echo 0)"
 [ "${bv:-0}" -ge 4 ] 2>/dev/null \
   || say "MISSING (required): bash 4+ — 'env bash' resolves to $bv.x; brew install bash and put it before /bin/bash on PATH"
 for dep in claude zoxide git go; do
   command -v "$dep" >/dev/null 2>&1 \
-    || say "optional: '$dep' not found — claude=default agent, zoxide=picker connect view, git=branch labels, go=builds the native UI from a checkout"
+    || say "optional: '$dep' not found — claude=default agent, zoxide=picker connect view, git=branch labels, go=builds the native UI from a checkout or for a platform without a release binary"
 done
 
 if ! command -v agent-fleet >/dev/null 2>&1; then

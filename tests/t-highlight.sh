@@ -3,8 +3,8 @@
 #   - each rail highlights ITS OWN workspace, so several attached clients
 #     (e.g. one local, one over ssh) each see their own view highlighted;
 #     a focus push for another session must NOT move a rail's highlight
-#   - focus-track still records focus.now and SIGUSR1s the rails (wake +
-#     spinner visibility), and rails survive the signal
+#   - focus-track records focus.now (the rails poll it for spinner
+#     visibility) and signals nothing; rails stay up across pushes
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -34,7 +34,7 @@ AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
 sleep 1
 
 check "focus.now records the new view" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/$SOCK/focus.now')\" == 'beta|$beta_win' ]]"
-check "rails survive SIGUSR1 (trap installed)" "[[ \"\$(rails_alive)\" == '$n0' ]]"
+check "rails stay up across the push" "[[ \"\$(rails_alive)\" == '$n0' ]]"
 # The push must NOT move alpha's highlight: another client's (or window's)
 # focus is not this rail's view.
 # shellcheck disable=SC2034 # cap_a read inside the eval'd check() conditions below
@@ -42,7 +42,7 @@ cap_a="$(tx capture-pane -t "$alpha_rail" -p 2>/dev/null)"
 check "alpha's rail still highlights alpha after the push" "grep -aq '▎.*alpha' <<<\"\$cap_a\""
 check "alpha's rail does not highlight beta" "! grep -aq '▎.*beta' <<<\"\$cap_a\""
 
-# rapid double-signal safety
+# a rail gaining focus is not a view change
 AGENT_FLEET_SOCKET="$SOCK" XDG_CACHE_HOME="$XDG_CACHE_HOME" \
   bash "$REPO/scripts/focus-track.sh" "$alpha_rail" 1 alpha "@0"   # rail focus: must be ignored
 check "rail focus is ignored (focus.now unchanged)" "[[ \"\$(cat '$XDG_CACHE_HOME/agent-fleet/$SOCK/focus.now')\" == 'beta|$beta_win' ]]"

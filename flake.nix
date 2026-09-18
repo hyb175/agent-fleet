@@ -30,7 +30,7 @@
           # wrapped CLI) and its hook/popup children resolve them regardless of
           # the user's own PATH.
           runtimeDeps = with pkgs; [
-            tmux fzf bashInteractive coreutils gnused gawk gnugrep findutils
+            tmux bashInteractive coreutils gnused gawk gnugrep findutils
             git zoxide ncurses
           ];
         in
@@ -93,7 +93,7 @@
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
           packages = with pkgs; [
-            tmux fzf bashInteractive coreutils gnused gawk gnugrep findutils
+            tmux bashInteractive coreutils gnused gawk gnugrep findutils
             git zoxide ncurses shellcheck go
           ];
         };

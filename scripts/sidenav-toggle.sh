@@ -65,8 +65,8 @@ create_rail() {
   redraw   # split -l already set the width; just paint cleanly
 }
 
-# Collect rail panes portably (no mapfile, so this stays bash-3.2 safe and the
-# bash-4 requirement surfaces from the rail with a clear message, not here).
+# Collect rail panes portably (no mapfile: tmux hooks may run this under
+# /bin/bash 3.2).
 existing=()
 while IFS= read -r p; do [[ -n "$p" ]] && existing+=("$p"); done < <(rails)
 
@@ -90,8 +90,7 @@ fi
 
 if [[ "$mode" == "show" ]]; then
   # Forced: remove any (stale) rails and create exactly one. Used by relayout.
-  # Length guard: bash 3.2 + set -u errors on expanding an empty array, and
-  # this script is meant to run on 3.2 (the bash-4 gate lives in the rail).
+  # Length guard: bash 3.2 + set -u errors on expanding an empty array.
   if (( ${#existing[@]} > 0 )); then
     for p in "${existing[@]}"; do tx kill-pane -t "$p" 2>/dev/null || true; done
   fi
