@@ -11,6 +11,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/hyb175/agent-fleet/ui/internal/snapshot"
+	"github.com/hyb175/agent-fleet/ui/internal/tui"
 )
 
 func load(t *testing.T, name string) *snapshot.Snapshot {
@@ -207,7 +208,7 @@ func TestViewSwitchAndKeys(t *testing.T) {
 }
 
 func TestViewLayout(t *testing.T) {
-	m := model{cfg: Config{Width: 78, Height: 22}, view: Fleet, st: newStyles(themeForTest())}
+	m := model{cfg: Config{Width: 78, Height: 22}, view: Fleet, st: newStyles(themeForTest()), hints: tui.NewPalette(themeForTest())}
 	m.items = FleetItems(load(t, "mixed.snapshot"))
 	m.refilter()
 	out := plainText(m.View())
@@ -285,7 +286,7 @@ func TestMatchHighlightStaysInsideTitle(t *testing.T) {
 }
 
 func TestSearchBoxKeepsCountInNarrowPopup(t *testing.T) {
-	m := model{cfg: Config{Width: 48, Height: 20}, view: Fleet, st: newStyles(themeForTest())}
+	m := model{cfg: Config{Width: 48, Height: 20}, view: Fleet, st: newStyles(themeForTest()), hints: tui.NewPalette(themeForTest())}
 	m.items = FleetItems(load(t, "mixed.snapshot"))
 	m.query = "a very long query that would not fit in the box at all"
 	m.refilter()

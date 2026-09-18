@@ -34,6 +34,7 @@ import (
 	"github.com/hyb175/agent-fleet/ui/internal/cache"
 	"github.com/hyb175/agent-fleet/ui/internal/snapshot"
 	"github.com/hyb175/agent-fleet/ui/internal/theme"
+	"github.com/hyb175/agent-fleet/ui/internal/tui"
 )
 
 // ViewKind is which list the popup shows.
@@ -381,6 +382,7 @@ type model struct {
 	nameFor string // CONNECT:<dir> the name is for
 	snapMod time.Time
 	st      styles
+	hints   tui.Palette
 }
 
 type styles struct {
@@ -1030,22 +1032,21 @@ func (m model) headerStyle(group string) lipgloss.Style {
 }
 
 func (m model) footer(w int) string {
-	hint := func(k, what string) string { return m.st.key.Render(k) + " " + m.st.dim.Render(what) }
-	var parts []string
+	var pairs []string
 	switch m.view {
 	case Fleet:
-		parts = []string{hint("⏎", "jump"), hint("^v", "review"), hint("tab", "next view"), hint("esc", "close")}
+		pairs = []string{"⏎", "jump", "^v", "review", "tab", "next view", "esc", "close"}
 	case Spaces:
-		parts = []string{hint("⏎", "switch"), hint("tab", "next view"), hint("esc", "close")}
+		pairs = []string{"⏎", "switch", "tab", "next view", "esc", "close"}
 	case Connect:
-		parts = []string{hint("⏎", "shell"), hint("^a", "+ agent"), hint("^r", "name it"), hint("tab", "next view"), hint("esc", "close")}
+		pairs = []string{"⏎", "shell", "^a", "+ agent", "^r", "name it", "tab", "next view", "esc", "close"}
 	case Move:
-		parts = []string{hint("⏎", "move"), hint("esc", "cancel")}
+		pairs = []string{"⏎", "move", "esc", "cancel"}
 	}
 	if m.naming {
-		parts = []string{hint("⏎", "create"), hint("esc", "back")}
+		pairs = []string{"⏎", "create", "esc", "back"}
 	}
-	return " " + trunc(strings.Join(parts, m.st.dim.Render("  ·  ")), w-1)
+	return m.hints.Hints(w, pairs...)
 }
 
 func (m model) View() string {
@@ -1125,7 +1126,7 @@ func Run(cfg Config) error {
 	if cfg.View == Move && cfg.MoveWin == "" {
 		return fmt.Errorf("move: could not resolve the current tab")
 	}
-	m := model{cfg: cfg, view: cfg.View, st: newStyles(cfg.Theme)}
+	m := model{cfg: cfg, view: cfg.View, st: newStyles(cfg.Theme), hints: tui.NewPalette(cfg.Theme)}
 	// The pane's own fds, never /dev/tty (CONTRIBUTING).
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithMouseCellMotion())
 	_, err := p.Run()
