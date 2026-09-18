@@ -139,6 +139,26 @@ func TestViewLayout(t *testing.T) {
 	}
 }
 
+func TestPostAnswerRefetchIsForTheAnsweredRowOnly(t *testing.T) {
+	th, _ := theme.Load("../../..", "tokyo-night")
+	m := model{cfg: Config{Width: 78, Height: 26}, p: tui.NewPalette(th)}
+	items := Items(load(t, "mixed.snapshot"), 600)
+	// Cursor moved to the second row after answering the first; its preview is the user's last look.
+	m.items = items
+	m.refilter()
+	m.cursor = 1
+	m.preview = Preview{Pane: items[1].Pane, FP: "1"}
+	if _, cmd := m.Update(itemsMsg{items: items, tot: len(items), refetch: items[0].Pane}); cmd != nil {
+		t.Fatal("refetch for the answered row must not re-bless the row the cursor moved to")
+	}
+	if _, cmd := m.Update(itemsMsg{items: items, tot: len(items), refetch: items[1].Pane}); cmd == nil {
+		t.Fatal("refetch for the selected row fetches")
+	}
+	if _, cmd := m.Update(itemsMsg{items: items, tot: len(items), refetch: "*"}); cmd == nil {
+		t.Fatal("^r refetches whatever is selected")
+	}
+}
+
 func TestTypingKeepsSpaces(t *testing.T) {
 	th, _ := theme.Load("../../..", "tokyo-night")
 	m := model{cfg: Config{Width: 78, Height: 26}, p: tui.NewPalette(th)}
