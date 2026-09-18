@@ -47,15 +47,18 @@ func TestFleetItemsMatchPickerOrder(t *testing.T) {
 		t.Fatalf("agent order %v", got)
 	}
 	last := items[len(items)-1]
-	if last.Key != "SESS:notes" || last.Sub != "notes" {
+	if last.Key != "SESS:notes" || last.Meta != "notes" || last.Group != "workspaces" {
 		t.Fatalf("agentless workspace must trail the agents: %+v", last)
 	}
-	// Row text as pick.sh renders it: title from intent, sub = sess:widx · state age · diffstat · iso.
-	if items[0].Title != "migrate the auth table" || items[0].Sub != "api:1 · wait 15m · +120-8 · sbx" {
-		t.Fatalf("first row: %+v", items[0])
+	// Row parts: title from intent, meta = sess:widx, right = time in state, diff and iso as badges.
+	if it := items[0]; it.Title != "migrate the auth table" || it.Meta != "api:1" || it.Right != "15m" || it.Diff != "+120-8" || it.Iso != "sbx" || it.Group != "needs you" {
+		t.Fatalf("first row: %+v", it)
 	}
-	if items[1].Title != "fix the flaky spec.1" || items[1].Sub != "webapp:2 · wait 4m · +31-2" {
-		t.Fatalf("second row: %+v", items[1])
+	if it := items[1]; it.Title != "fix the flaky spec.1" || it.Meta != "webapp:2" || it.Right != "4m" || it.Diff != "+31-2" || it.Iso != "" {
+		t.Fatalf("second row: %+v", it)
+	}
+	if it := items[2]; it.Group != "working" || it.Right != "" || it.Diff != "" || it.Iso != "wt" {
+		t.Fatalf("working row carries no age or diff, keeps its rung: %+v", it)
 	}
 }
 
@@ -64,8 +67,8 @@ func TestSpacesItems(t *testing.T) {
 	if len(items) != 3 {
 		t.Fatalf("spaces: %d", len(items))
 	}
-	if items[0].Sub != "main · 3 agents" || items[1].Sub != "feature/login ↑2 · 3 agents" || items[2].Sub != "notes · shell" {
-		t.Fatalf("subtitles: %q %q %q", items[0].Sub, items[1].Sub, items[2].Sub)
+	if items[0].Meta != "main" || items[0].Right != "3 agents" || items[1].Meta != "feature/login ↑2" || items[2].Right != "shell" {
+		t.Fatalf("rows: %+v %+v %+v", items[0], items[1], items[2])
 	}
 	if items[2].State != snapshot.StateIdle {
 		t.Fatalf("no-agent rollup renders idle, got %q", items[2].State)
@@ -121,20 +124,20 @@ func TestConnectItemsOrderAndTags(t *testing.T) {
 	cwd := filepath.Join(root, "cwd")
 	os.MkdirAll(cwd, 0o755)
 	items := ConnectItems(cwd, []string{plain, repo}, map[string]string{repo: "main"}, IsRepo)
-	if len(items) != 3 || items[0].Key != "CONNECT:"+cwd || !strings.HasSuffix(items[0].Sub, "(cwd)") {
-		t.Fatalf("cwd first and tagged: %+v", items)
+	if len(items) != 3 || items[0].Key != "CONNECT:"+cwd || items[0].Group != "current" {
+		t.Fatalf("cwd first, under its own header: %+v", items)
 	}
-	if items[1].Key != "CONNECT:"+repo || !items[1].Repo || items[1].Sub != "main  ·  "+repo {
-		t.Fatalf("repos before plain dirs, with branch: %+v", items[1])
+	if items[1].Key != "CONNECT:"+repo || !items[1].Repo || items[1].Right != "main" || items[1].Group != "repos" {
+		t.Fatalf("repos before plain dirs, branch in the right column: %+v", items[1])
 	}
-	if items[2].Key != "CONNECT:"+plain || items[2].Repo {
+	if items[2].Key != "CONNECT:"+plain || items[2].Repo || items[2].Group != "folders" || items[2].Right != "" {
 		t.Fatalf("plain dir last: %+v", items[2])
 	}
 }
 
 func TestMoveItemsExcludeHome(t *testing.T) {
 	items := MoveItems([]Session{{"api", 3}, {"webapp", 1}, {"notes", 2}}, "webapp")
-	if len(items) != 2 || items[0].Key != "MOVE:api" || items[0].Sub != "3 tabs" || items[1].Sub != "2 tabs" {
+	if len(items) != 2 || items[0].Key != "MOVE:api" || items[0].Right != "3 tabs" || items[1].Right != "2 tabs" {
 		t.Fatalf("%+v", items)
 	}
 	if len(MoveItems([]Session{{"only", 1}}, "only")) != 0 {
@@ -196,5 +199,52 @@ func TestViewSwitchAndKeys(t *testing.T) {
 	press("tab")
 	if m.view != Fleet {
 		t.Fatal("connect wraps to fleet")
+	}
+}
+
+func TestViewLayout(t *testing.T) {
+	m := model{cfg: Config{Width: 78, Height: 22}, view: Fleet, st: newStyles(themeForTest())}
+	m.items = FleetItems(load(t, "mixed.snapshot"))
+	m.refilter()
+	out := plainText(m.View())
+	t.Logf("\n%s", out)
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[0], "fleet") || !strings.Contains(lines[0], "connect") {
+		t.Fatalf("tab strip: %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[1], "╭") || !strings.Contains(lines[2], "7 of 7") || !strings.HasPrefix(lines[3], "╰") {
+		t.Fatalf("search box: %q %q %q", lines[1], lines[2], lines[3])
+	}
+	for _, hdr := range []string{"NEEDS YOU", "WORKING", "DONE", "IDLE", "WORKSPACES"} {
+		if !strings.Contains(out, hdr) {
+			t.Fatalf("missing group header %s:\n%s", hdr, out)
+		}
+	}
+	// Selected row wears the bar; the time column hugs the right edge.
+	sel := ""
+	for _, l := range lines {
+		if strings.HasPrefix(l, "▎") {
+			sel = l
+		}
+	}
+	if !strings.Contains(sel, "migrate the auth table") || !strings.HasSuffix(strings.TrimRight(sel, " "), "15m") {
+		t.Fatalf("selected row: %q", sel)
+	}
+	if !strings.Contains(out, "+120 −8") || !strings.Contains(out, " sbx ") {
+		t.Fatalf("diff colored numbers and rung badge:\n%s", out)
+	}
+	if !strings.Contains(lines[len(lines)-1], "⏎ jump") {
+		t.Fatalf("footer hints: %q", lines[len(lines)-1])
+	}
+	// A query flattens the groups.
+	m.query = "a"
+	m.refilter()
+	if strings.Contains(plainText(m.View()), "NEEDS YOU") {
+		t.Fatal("headers must disappear while filtering")
+	}
+	for _, l := range strings.Split(plainText(m.View()), "\n") {
+		if w := runewidthWidth(l); w > 78 {
+			t.Fatalf("line wider than the popup (%d): %q", w, l)
+		}
 	}
 }

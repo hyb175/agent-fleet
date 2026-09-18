@@ -44,10 +44,10 @@ pp="$(tx new-window -d -P -F '#{pane_id}' -t t: -n picker \
   "env AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/bin/afui' pick")"
 wait_for 10 "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
 check "fleet view lists the agent by intent" "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
-check "row shows workspace:index · state age" "tx capture-pane -p -t '$pp' | grep -q 't:[0-9]* · wait'"
+check "row sits under the NEEDS YOU header with its workspace:index" "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU' && tx capture-pane -p -t '$pp' | grep -q 'zebra quest.*t:[0-9]'"
 tx send-keys -t "$pp" zbq   # fuzzy: z…b…q
-wait_for 5 "tx capture-pane -p -t '$pp' | grep -q '1/'"
-check "fuzzy filter narrows to one row" "tx capture-pane -p -t '$pp' | grep -Eq '  1/[0-9]+'"
+wait_for 5 "tx capture-pane -p -t '$pp' | grep -q '1 of '"
+check "fuzzy filter narrows to one row" "tx capture-pane -p -t '$pp' | grep -Eq '1 of [0-9]+'"
 tx send-keys -t "$pp" Enter
 wait_for 10 "[[ \"\$(tx display-message -p -t t '#{pane_id}')\" == '$tgt' ]]"
 check "Enter jumps to the agent pane" "[[ \"\$(tx display-message -p -t t '#{pane_id}')\" == '$tgt' ]]"
@@ -63,11 +63,11 @@ ROOTS="$WORK/projects"; mkdir -p "$ROOTS/fresh-repo/.git" "$ROOTS/plain"
 pc="$(tx new-window -d -P -F '#{pane_id}' -t t: -n connect \
   "env AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' AGENT_FLEET_PROJECT_ROOTS='$ROOTS' '$REPO/bin/afui' pick connect")"
 # Real zoxide history may push the root's children below the fold; filter first.
-wait_for 10 "tx capture-pane -p -t '$pc' | grep -q '(cwd)'"
+wait_for 10 "tx capture-pane -p -t '$pc' | grep -q 'CURRENT'"
 tx send-keys -t "$pc" fresh-repo
-wait_for 10 "tx capture-pane -p -t '$pc' | grep -q '› ◆ fresh-repo'"
+wait_for 10 "tx capture-pane -p -t '$pc' | grep -q '▎ ◆  fresh-repo'"
 check "connect lists a root child zoxide never saw" "tx capture-pane -p -t '$pc' | grep -q 'fresh-repo'"
-check "repo row wears ◆ and ranks first for its own name" "tx capture-pane -p -t '$pc' | grep -q '› ◆ fresh-repo'"
+check "repo row wears ◆ and ranks first for its own name" "tx capture-pane -p -t '$pc' | grep -q '▎ ◆  fresh-repo'"
 tx send-keys -t "$pc" Enter
 wait_for 10 "tx has-session -t =fresh-repo 2>/dev/null"
 check "Enter connects a workspace for the dir" "tx has-session -t =fresh-repo 2>/dev/null"
@@ -79,7 +79,7 @@ wait_for 10 "tx capture-pane -p -t '$pm' | grep -q 'fresh-repo'"
 check "move view lists the other workspace" "tx capture-pane -p -t '$pm' | grep -q 'fresh-repo'"
 check "move view excludes the tab's own workspace" "! tx capture-pane -p -t '$pm' | grep -Eq '^.{0,4}[○·] t '"
 tx send-keys -t "$pm" fresh-repo
-wait_for 5 "tx capture-pane -p -t '$pm' | grep -q '› . fresh-repo'"
+wait_for 5 "tx capture-pane -p -t '$pm' | grep -q '▎ ○  fresh-repo'"
 tx send-keys -t "$pm" Enter
 wait_for 10 "[[ \"\$(tx display-message -p -t '$w2' '#{session_name}')\" == fresh-repo ]]"
 check "Enter moves the tab into the workspace" "[[ \"\$(tx display-message -p -t '$w2' '#{session_name}')\" == fresh-repo ]]"

@@ -1,10 +1,18 @@
 package picker
 
 import (
+	"regexp"
+
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 
 	"github.com/hyb175/agent-fleet/ui/internal/theme"
 )
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func plainText(s string) string   { return ansiRe.ReplaceAllString(s, "") }
+func runewidthWidth(s string) int { return runewidth.StringWidth(s) }
 
 // tea_key builds a KeyMsg from the same names KeyMsg.String() produces, so
 // tests read like the keymap.
