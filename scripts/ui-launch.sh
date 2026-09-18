@@ -20,8 +20,9 @@ if [[ -z "$ui" ]]; then
   if [[ -r "$f" ]]; then read -r ui < "$f" 2>/dev/null || true; fi
 fi
 
-# Surfaces the binary has landed; the rest are still bash until their ticket.
-go_has() { case "$1" in rail|pick|move) return 0 ;; *) return 1 ;; esac; }
+# Surfaces the binary implements (every one, since the inbox landed); the
+# gate stays so a future surface can ship bash-first again.
+go_has() { case "$1" in rail|pick|move|inbox) return 0 ;; *) return 1 ;; esac; }
 
 if [[ "$ui" == "go" ]] && go_has "$surface"; then
   if [[ -x "$ROOT/bin/afui" ]]; then

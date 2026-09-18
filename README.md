@@ -89,7 +89,7 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Picker** (`Prefix o`) — popup to jump to an agent, switch workspaces, or spawn one in a directory. `Prefix w` opens the workspace switcher. Under `AGENT_FLEET_UI=go` the picker (and `Prefix M`) run in `afui` with an in-process fuzzy filter, live refresh while open, and mouse; the fzf scripts remain the default.
 
-**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), or `^v` a done task straight into review.
+**Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), `^a` approves every waiting agent after confirming, or `^v` a done task straight into review. Under `AGENT_FLEET_UI=go` the inbox runs in `afui`: grouped `NEEDS YOU` / `DONE` rows, a live preview panel, answers guarded by a fingerprint of the exact capture the panel shows.
 
 **Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. Two renderers exist during the native-UI transition: the bash rail (default) and `afui rail` (`AGENT_FLEET_UI=go`): same layout, plus a scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. `agent-fleet reload` respawns rails with whichever is selected.
 
@@ -343,7 +343,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SNAP_INTERVAL` | `1` | Snapshot daemon poll interval (seconds) |
 | `AGENT_FLEET_SAVE_INTERVAL` | `15` | Layout auto-save cadence, in daemon ticks |
 | `AGENT_FLEET_RESTORE_AGENTS` | `1` | Relaunch hooked agents on restore (`0` = shells) |
-| `AGENT_FLEET_UI` | `bash` | UI renderer for the rail, picker and move-tab popup: `go` runs `bin/afui` (`make ui`; falls back to the bash script with a note when the binary is missing). Durable form: `~/.config/agent-fleet/ui` containing `go` or `bash`. The inbox stays bash until its ticket lands. |
+| `AGENT_FLEET_UI` | `bash` | UI renderer for the rail, picker, inbox and move-tab popup: `go` runs `bin/afui` (`make ui`; falls back to the bash script with a note when the binary is missing). Durable form: `~/.config/agent-fleet/ui` containing `go` or `bash`. |
 | `AGENT_FLEET_RESTORE_STAGGER` | `0.5` | Seconds between agent relaunches on restore (`0` = all at once); failures land in `restore.log` in the cache dir |
 | `AGENT_FLEET_RESTORE_ANY_SOCKET` | `0` | Allow restoring a layout saved on a different socket |
 | `AGENT_FLEET_REMOTES` | unset | Federated hosts, space/comma separated — overrides `~/.config/agent-fleet/remotes` |

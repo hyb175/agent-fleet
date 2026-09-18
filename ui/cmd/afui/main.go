@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"github.com/hyb175/agent-fleet/ui/internal/cache"
+	"github.com/hyb175/agent-fleet/ui/internal/inbox"
 	"github.com/hyb175/agent-fleet/ui/internal/picker"
 	"github.com/hyb175/agent-fleet/ui/internal/rail"
 	"github.com/hyb175/agent-fleet/ui/internal/theme"
@@ -96,8 +97,15 @@ func main() {
 			os.Exit(1)
 		}
 	case "inbox":
-		fmt.Fprintf(os.Stderr, "afui inbox: not implemented yet — the bash renderer is still in charge\n")
-		os.Exit(2)
+		cfg, err := inbox.Load(os.Getenv, root())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "afui inbox: %v\n", err)
+			os.Exit(1)
+		}
+		if err := inbox.Run(cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "afui inbox: %v\n", err)
+			os.Exit(1)
+		}
 	case "-h", "--help", "help":
 		usage()
 	default:
