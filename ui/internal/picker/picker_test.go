@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/hyb175/agent-fleet/ui/internal/snapshot"
 )
 
@@ -230,8 +233,8 @@ func TestViewLayout(t *testing.T) {
 	if !strings.Contains(sel, "migrate the auth table") || !strings.HasSuffix(strings.TrimRight(sel, " "), "15m") {
 		t.Fatalf("selected row: %q", sel)
 	}
-	if !strings.Contains(out, "+120 −8") || !strings.Contains(out, " sbx ") {
-		t.Fatalf("diff colored numbers and rung badge:\n%s", out)
+	if !strings.Contains(out, "+120 −8") || !strings.Contains(out, "[sbx]") {
+		t.Fatalf("spaced diffstat and rung badge:\n%s", out)
 	}
 	if !strings.Contains(lines[len(lines)-1], "⏎ jump") {
 		t.Fatalf("footer hints: %q", lines[len(lines)-1])
@@ -246,5 +249,23 @@ func TestViewLayout(t *testing.T) {
 		if w := runewidthWidth(l); w > 78 {
 			t.Fatalf("line wider than the popup (%d): %q", w, l)
 		}
+	}
+}
+
+func TestMatchHighlightStaysInsideTitle(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.TrueColor) // go test has no tty; force colors so styling is observable
+	m := model{cfg: Config{Width: 78, Height: 22}, view: Fleet, st: newStyles(themeForTest())}
+	m.items = FleetItems(load(t, "mixed.snapshot"))
+	m.query = "chlog"
+	m.refilter()
+	if len(m.shown) == 0 || m.shown[0].Key != "PANE:%10" {
+		t.Fatalf("filter: %v", keys(m.shown))
+	}
+	raw := m.row(m.shown[0], false, 78)
+	if !strings.Contains(plainText(raw), "write the changelog") || strings.Count(raw, "\x1b[") < 6 {
+		t.Fatalf("expected the matched runes styled separately in %q", raw)
+	}
+	if got := highlight("abc", []int{0, 2, 9}, lipgloss.NewStyle(), lipgloss.NewStyle().Bold(true)); plainText(got) != "abc" {
+		t.Fatalf("out-of-range match indexes must be ignored: %q", got)
 	}
 }
