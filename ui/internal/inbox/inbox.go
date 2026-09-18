@@ -164,11 +164,12 @@ type itemsMsg struct {
 	stale       bool
 	note        string
 	nw, ni, tot int
-	refetch     bool // also re-read the selected row's preview (^r, after an answer)
+	refetch     string // also re-read the selected row's preview: "*" whatever it is (^r), a pane id only if that row is selected (after answering it)
 }
 type previewMsg Preview
 type doneMsg struct {
 	kind string // "answer" | "jump"
+	pane string // the row acted on ("*" for all)
 	err  error
 	out  string
 }
@@ -205,10 +206,10 @@ func tick() tea.Cmd {
 	return tea.Tick(200*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-func (m model) load() tea.Cmd { return m.loadWith(false) }
+func (m model) load() tea.Cmd { return m.loadWith("") }
 
 // loadWith re-reads the snapshot; refetch also refreshes the preview.
-func (m model) loadWith(refetch bool) tea.Cmd {
+func (m model) loadWith(refetch string) tea.Cmd {
 	cfg := m.cfg
 	return func() tea.Msg {
 		f, err := os.Open(cfg.Snapshot)
@@ -339,11 +340,11 @@ func tail(s []string, n int) []string {
 
 // run executes an agent-fleet verb with no tty (its tmux clients must never
 // hold this pane's pty) and reports the outcome.
-func (m model) run(kind string, args ...string) tea.Cmd {
+func (m model) run(kind, pane string, args ...string) tea.Cmd {
 	af := m.cfg.AF
 	return func() tea.Msg {
 		out, err := exec.Command(af, args...).CombinedOutput()
-		return doneMsg{kind: kind, err: err, out: strings.TrimSpace(string(out))}
+		return doneMsg{kind: kind, pane: pane, err: err, out: strings.TrimSpace(string(out))}
 	}
 }
 
@@ -464,14 +465,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clamp()
 		// The preview is the user's last look at the pane, and its
 		// fingerprint guards the answer — so it is fetched when the cursor
-		// lands on a row, on ^r, and after an answer; not on every snapshot
-		// tick, which would silently re-bless a prompt nobody has re-read.
+		// lands on a row, on ^r, and for the row just answered; not on every
+		// snapshot tick, and not for a row the cursor moved to meanwhile,
+		// which would silently re-bless a prompt nobody has re-read.
 		it, ok := m.selected()
 		if !ok {
 			m.preview = Preview{}
 			return m, nil
 		}
-		if m.preview.Pane != it.Pane || msg.refetch {
+		if m.preview.Pane != it.Pane || msg.refetch == "*" || msg.refetch == it.Pane {
 			return m, m.fetchPreview(it)
 		}
 		return m, nil
@@ -500,9 +502,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.note = "sent ✓"
 		// Let the agent consume the keys, then re-read the row and its preview.
-		return m, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg { return refreshMsg{} })
+		pane := msg.pane
+		return m, tea.Tick(400*time.Millisecond, func(time.Time) tea.Msg { return refreshMsg{pane: pane} })
 	case refreshMsg:
-		return m, m.loadWith(true)
+		return m, m.loadWith(msg.pane)
 	case tea.MouseMsg:
 		switch {
 		case msg.Button == tea.MouseButtonWheelUp:
@@ -527,7 +530,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-type refreshMsg struct{}
+type refreshMsg struct{ pane string }
 
 func (m model) move(d int) (tea.Model, tea.Cmd) {
 	if len(m.shown) == 0 {
@@ -540,7 +543,7 @@ func (m model) move(d int) (tea.Model, tea.Cmd) {
 
 func (m model) jump() (tea.Model, tea.Cmd) {
 	if it, ok := m.selected(); ok {
-		return m, m.run("jump", "goto", it.Pane)
+		return m, m.run("jump", it.Pane, "goto", it.Pane)
 	}
 	return m, nil
 }
@@ -569,7 +572,7 @@ func (m model) answer(how, reply string) (tea.Model, tea.Cmd) {
 		args = append(args, reply)
 	}
 	args = append(args, "--fp", m.preview.FP)
-	return m, m.run("answer", args...)
+	return m, m.run("answer", it.Pane, args...)
 }
 
 func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -605,7 +608,7 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case confirming:
 		m.mode = browse
 		if msg.String() == "y" || msg.String() == "Y" {
-			return m, m.run("answer", "answer", "--all", "approve", "--yes")
+			return m, m.run("answer", "*", "answer", "--all", "approve", "--yes")
 		}
 		m.note = "cancelled"
 		return m, nil
@@ -657,7 +660,7 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.ExecProcess(c, func(error) tea.Msg { return refreshMsg{} })
 		}
 	case "ctrl+r":
-		return m, m.loadWith(true)
+		return m, m.loadWith("*")
 	case "backspace":
 		if r := []rune(m.query); len(r) > 0 {
 			m.query = string(r[:len(r)-1])
