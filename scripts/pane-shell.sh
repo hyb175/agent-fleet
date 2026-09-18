@@ -50,10 +50,12 @@ fi
 # window still carries the launcher's own name: that is exactly the
 # new-window case, and never a split inside a named agent window
 # (automatic-rename is off, so nothing else will fix it up).
+# stdin detached: a tmux client holding the pane's pty wedges uninterruptibly
+# if the pane dies mid-call (CONTRIBUTING house rule 12).
 if [[ -n "${TMUX_PANE:-}" ]]; then
   _tx="${TMUX_BIN:-tmux}"; _sock="${AGENT_FLEET_SOCKET:-agent-fleet}"
-  if [[ "$("$_tx" -L "$_sock" display-message -p -t "$TMUX_PANE" '#{window_name}' 2>/dev/null)" == "pane-shell.sh" ]]; then
-    "$_tx" -L "$_sock" rename-window -t "$TMUX_PANE" "$(basename "$_shell")" 2>/dev/null || true
+  if [[ "$("$_tx" -L "$_sock" display-message -p -t "$TMUX_PANE" '#{window_name}' </dev/null 2>/dev/null)" == "pane-shell.sh" ]]; then
+    "$_tx" -L "$_sock" rename-window -t "$TMUX_PANE" "$(basename "$_shell")" </dev/null 2>/dev/null || true
   fi
 fi
 
