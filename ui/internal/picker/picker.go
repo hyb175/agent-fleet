@@ -6,6 +6,11 @@
 // project roots (connect), or from `tmux list-sessions` at startup (move —
 // a move must act on what exists right now, snapshot or not). Every action
 // is an `agent-fleet` verb; the picker never drives tmux itself.
+//
+// Layout: a tab strip naming the views, a bordered search box carrying the
+// query and the match count, rows grouped under small section headers while
+// the query is empty (a filter flattens them), a right-aligned time column,
+// and a footer of key hints.
 package picker
 
 import (
@@ -63,8 +68,12 @@ type Item struct {
 	Key    string
 	State  string // agent state or workspace rollup, drives the glyph
 	Repo   bool   // connect view: the directory is a git repo
-	Title  string
-	Sub    string
+	Group  string // section header the row sits under (empty = none)
+	Title  string // bold column
+	Meta   string // dim detail after the title (workspace:index, branch, path)
+	Diff   string // "+A-D" from the record, colored when rendered ("" = none)
+	Iso    string // isolation rung badge ("" = host)
+	Right  string // right-aligned column: time in state, agent count, branch
 	Search string // what the fuzzy filter matches against
 }
 
@@ -84,6 +93,18 @@ type Config struct {
 
 // --- data ------------------------------------------------------------------
 
+func groupOf(state string) string {
+	switch state {
+	case snapshot.StateWait:
+		return "needs you"
+	case snapshot.StateWorking:
+		return "working"
+	case snapshot.StateDone:
+		return "done"
+	}
+	return "idle"
+}
+
 // FleetItems is every jump target: agents most-urgent first (rank, then
 // longest wait, then arrival), then workspaces without agents.
 func FleetItems(s *snapshot.Snapshot) []Item {
@@ -95,26 +116,27 @@ func FleetItems(s *snapshot.Snapshot) []Item {
 	agents := append([]snapshot.Agent(nil), s.Agents...)
 	snapshot.SortAttention(agents, snapshot.StateWait)
 	for _, a := range agents {
-		title := a.Title(per)
-		sub := a.State
-		attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
-		if attention && a.HasAge {
-			sub += " " + snapshot.FormatAge(a.Age)
+		it := Item{
+			Key: "PANE:" + a.Pane, State: a.State, Group: groupOf(a.State),
+			Title: a.Title(per), Meta: a.Session + ":" + a.WindowIndex, Iso: a.Isolation,
 		}
-		if attention && a.Diffstat != "" {
-			sub += " · " + a.Diffstat
+		if a.State == snapshot.StateWait || a.State == snapshot.StateDone {
+			if a.HasAge {
+				it.Right = snapshot.FormatAge(a.Age)
+			}
+			it.Diff = a.Diffstat
 		}
-		if a.Isolation != "" {
-			sub += " · " + a.Isolation
-		}
-		sub = a.Session + ":" + a.WindowIndex + " · " + sub
-		items = append(items, Item{Key: "PANE:" + a.Pane, State: a.State, Title: title, Sub: sub, Search: title + " " + sub})
+		it.Search = strings.Join([]string{it.Title, it.Meta, a.State, it.Diff, it.Iso, a.Label}, " ")
+		items = append(items, it)
 	}
 	for _, sp := range s.Spaces {
 		if sp.Rollup != "none" {
 			continue // has agents: its rows are above
 		}
-		items = append(items, Item{Key: "SESS:" + sp.Session, State: snapshot.StateIdle, Title: sp.Session, Sub: sp.Branch, Search: sp.Session + " " + sp.Branch})
+		items = append(items, Item{
+			Key: "SESS:" + sp.Session, State: snapshot.StateIdle, Group: "workspaces",
+			Title: sp.Session, Meta: sp.Branch, Search: sp.Session + " " + sp.Branch,
+		})
 	}
 	return items
 }
@@ -130,17 +152,20 @@ func SpacesItems(s *snapshot.Snapshot) []Item {
 		count[a.Session]++
 	}
 	for _, sp := range s.Spaces {
-		sub := sp.Branch + " · shell"
+		right := "shell"
 		if n := count[sp.Session]; n == 1 {
-			sub = sp.Branch + " · 1 agent"
+			right = "1 agent"
 		} else if n > 1 {
-			sub = fmt.Sprintf("%s · %d agents", sp.Branch, n)
+			right = fmt.Sprintf("%d agents", n)
 		}
 		st := sp.Rollup
 		if st == "none" {
 			st = snapshot.StateIdle
 		}
-		items = append(items, Item{Key: "SESS:" + sp.Session, State: st, Title: sp.Session, Sub: sub, Search: sp.Session + " " + sub})
+		items = append(items, Item{
+			Key: "SESS:" + sp.Session, State: st, Title: sp.Session, Meta: sp.Branch, Right: right,
+			Search: sp.Session + " " + sp.Branch,
+		})
 	}
 	return items
 }
@@ -205,33 +230,34 @@ func ConnectDirs(zoxide []string, roots []string, isDir, isRepo func(string) boo
 }
 
 // ConnectItems builds the connect rows: cwd first (tagged), then git repos
-// with their branch, then plain directories.
+// with their branch in the right column, then plain directories.
 func ConnectItems(cwd string, dirs []string, branch map[string]string, isRepo func(string) bool) []Item {
-	row := func(d string, tag bool) Item {
-		name := filepath.Base(d)
-		suffix := ""
-		if tag {
-			suffix = " (cwd)"
+	home, _ := os.UserHomeDir()
+	short := func(p string) string {
+		if home != "" && strings.HasPrefix(p, home) {
+			return "~" + p[len(home):]
 		}
-		if isRepo(d) {
-			sub := d + suffix
-			if b := branch[d]; b != "" {
-				sub = b + "  ·  " + d + suffix
-			}
-			return Item{Key: "CONNECT:" + d, Repo: true, Title: name, Sub: sub, Search: name + " " + sub}
-		}
-		return Item{Key: "CONNECT:" + d, Title: name, Sub: d + suffix, Search: name + " " + d}
+		return p
 	}
-	items := []Item{row(cwd, true)}
+	row := func(d, group string) Item {
+		it := Item{Key: "CONNECT:" + d, Group: group, Title: filepath.Base(d), Meta: short(d)}
+		if isRepo(d) {
+			it.Repo = true
+			it.Right = branch[d]
+		}
+		it.Search = it.Title + " " + d + " " + it.Right
+		return it
+	}
+	items := []Item{row(cwd, "current")}
 	var repos, plain []Item
 	for _, d := range dirs {
 		if d == cwd {
 			continue
 		}
 		if isRepo(d) {
-			repos = append(repos, row(d, false))
+			repos = append(repos, row(d, "repos"))
 		} else {
-			plain = append(plain, row(d, false))
+			plain = append(plain, row(d, "folders"))
 		}
 	}
 	items = append(items, repos...)
@@ -251,11 +277,11 @@ func MoveItems(sessions []Session, here string) []Item {
 		if s.Name == "" || s.Name == here {
 			continue
 		}
-		sub := fmt.Sprintf("%d tabs", s.Windows)
+		right := fmt.Sprintf("%d tabs", s.Windows)
 		if s.Windows == 1 {
-			sub = "1 tab"
+			right = "1 tab"
 		}
-		items = append(items, Item{Key: "MOVE:" + s.Name, State: snapshot.StateIdle, Title: s.Name, Sub: sub, Search: s.Name})
+		items = append(items, Item{Key: "MOVE:" + s.Name, State: snapshot.StateIdle, Title: s.Name, Right: right, Search: s.Name})
 	}
 	return items
 }
@@ -342,19 +368,20 @@ type model struct {
 	shown   []Item
 	query   string
 	cursor  int
-	offset  int
+	offset  int // first shown row on screen
+	frame   int
 	stale   bool
-	note    string // one-line message under the header
+	note    string // one-line message under the search box
 	naming  bool   // ^r: typing a workspace name
 	name    string
 	nameFor string // CONNECT:<dir> the name is for
 	snapMod time.Time
 	st      styles
-	quit    bool
 }
 
 type styles struct {
-	dim, bold, accent, prompt, hlRow, hlBold, hlDim, wait, working, done, muted lipgloss.Style
+	dim, faint, bold, accent, border, tab, tabOn, key, wait, working, done, muted, plus, minus, badge lipgloss.Style
+	hlRow, hlBold, hlDim, hlBar                                                                       lipgloss.Style
 }
 
 func newStyles(t theme.Theme) styles {
@@ -362,37 +389,53 @@ func newStyles(t theme.Theme) styles {
 	hl := c(t.HL)
 	return styles{
 		dim:     lipgloss.NewStyle().Foreground(c(t.Muted)),
+		faint:   lipgloss.NewStyle().Foreground(c(t.Surface)),
 		bold:    lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true),
 		accent:  lipgloss.NewStyle().Foreground(c(t.Accent)),
-		prompt:  lipgloss.NewStyle().Foreground(c(t.Accent)).Bold(true),
-		hlRow:   lipgloss.NewStyle().Background(hl),
-		hlBold:  lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true).Background(hl),
-		hlDim:   lipgloss.NewStyle().Foreground(c(t.Muted)).Background(hl),
+		border:  lipgloss.NewStyle().Foreground(c(t.HL)),
+		tab:     lipgloss.NewStyle().Foreground(c(t.Muted)).Padding(0, 1),
+		tabOn:   lipgloss.NewStyle().Foreground(c(t.BG)).Background(c(t.Accent)).Bold(true).Padding(0, 1),
+		key:     lipgloss.NewStyle().Foreground(c(t.FG)),
 		wait:    lipgloss.NewStyle().Foreground(c(t.Wait)),
 		working: lipgloss.NewStyle().Foreground(c(t.Working)),
 		done:    lipgloss.NewStyle().Foreground(c(t.Done)),
 		muted:   lipgloss.NewStyle().Foreground(c(t.Muted)),
+		plus:    lipgloss.NewStyle().Foreground(c(t.Done)),
+		minus:   lipgloss.NewStyle().Foreground(c(t.Wait)),
+		badge:   lipgloss.NewStyle().Foreground(c(t.Muted)).Background(c(t.Surface)).Padding(0, 1),
+		hlRow:   lipgloss.NewStyle().Background(hl),
+		hlBold:  lipgloss.NewStyle().Foreground(c(t.FG)).Bold(true).Background(hl),
+		hlDim:   lipgloss.NewStyle().Foreground(c(t.Muted)).Background(hl),
+		hlBar:   lipgloss.NewStyle().Foreground(c(t.Accent)).Background(hl),
 	}
 }
 
-func (s styles) glyph(it Item, frame int) string {
+var spinner = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+func (s styles) glyph(it Item, frame int, sel bool) string {
+	bg := func(st lipgloss.Style) lipgloss.Style {
+		if sel {
+			return st.Background(s.hlRow.GetBackground())
+		}
+		return st
+	}
 	if strings.HasPrefix(it.Key, "CONNECT:") {
 		if it.Repo {
-			return s.done.Render("◆")
+			return bg(s.done).Render("◆")
 		}
-		return s.dim.Render("+")
+		return bg(s.muted).Render("▫")
 	}
 	switch it.State {
 	case snapshot.StateWait:
-		return s.wait.Render("◆")
+		return bg(s.wait).Render("◆")
 	case snapshot.StateWorking:
-		return s.working.Render([]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}[frame%10])
+		return bg(s.working).Render(spinner[frame%len(spinner)])
 	case snapshot.StateDone:
-		return s.done.Render("✓")
+		return bg(s.done).Render("✓")
 	case snapshot.StateIdle:
-		return s.muted.Render("○")
+		return bg(s.muted).Render("○")
 	}
-	return s.muted.Render("·")
+	return bg(s.muted).Render("·")
 }
 
 func (m model) Init() tea.Cmd {
@@ -400,7 +443,7 @@ func (m model) Init() tea.Cmd {
 }
 
 func tick() tea.Cmd {
-	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(150*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (m model) readSnapshot() (*snapshot.Snapshot, time.Time) {
@@ -428,7 +471,7 @@ func (m model) load(view ViewKind) tea.Cmd {
 		case Fleet, Spaces:
 			s, _ := m.readSnapshot()
 			if s == nil {
-				return itemsMsg{view: view, note: "(fleet starting…)"}
+				return itemsMsg{view: view, note: "fleet starting…"}
 			}
 			var items []Item
 			if view == Fleet {
@@ -438,7 +481,7 @@ func (m model) load(view ViewKind) tea.Cmd {
 			}
 			note := ""
 			if len(items) == 0 {
-				note = "(no workspaces — Tab to connect a repo)"
+				note = "no workspaces yet — Tab to connect a repo"
 			}
 			return itemsMsg{view: view, items: items, stale: s.Stale(time.Now().Unix()), note: note}
 		case Connect:
@@ -507,23 +550,70 @@ func (m *model) refilter() {
 	m.clamp()
 }
 
-func (m model) listHeight() int {
-	h := m.cfg.Height - 4 // header, prompt, note/blank, footer
-	if m.stale {
-		h--
+// --- layout -------------------------------------------------------------------
+
+// lineKind tells a screen line's role, for the click map and the viewport.
+type lineKind int
+
+const (
+	lineChrome lineKind = iota // tabs, box, note, footer
+	lineHeader                 // group header
+	lineItem                   // a row; idx into shown
+)
+
+type line struct {
+	kind lineKind
+	idx  int
+}
+
+// listLines lays the shown rows out with group headers (only while the
+// query is empty — a filter flattens the list) and returns every list line
+// plus the index of each row's line, so the viewport can keep the cursor
+// on screen and a click can map back to a row.
+func (m model) listLines() (lines []line, rowLine []int) {
+	rowLine = make([]int, len(m.shown))
+	last := ""
+	for i, it := range m.shown {
+		if m.query == "" && it.Group != "" && it.Group != last {
+			lines = append(lines, line{kind: lineHeader, idx: i})
+			last = it.Group
+		}
+		rowLine[i] = len(lines)
+		lines = append(lines, line{kind: lineItem, idx: i})
 	}
+	return lines, rowLine
+}
+
+// chromeTop is the number of lines above the list: tabs, the three-line
+// search box, and the note line.
+func (m model) chromeTop() int { return 1 + 3 + 1 }
+
+// listHeight is how many list lines fit: everything but the chrome and the footer.
+func (m model) listHeight() int {
+	h := m.cfg.Height - m.chromeTop() - 1
 	if h < 1 {
 		h = 1
 	}
 	return h
 }
 
+// clamp scrolls the viewport (in list lines) so the cursor's line shows.
 func (m *model) clamp() {
+	_, rowLine := m.listLines()
+	if len(rowLine) == 0 {
+		m.offset = 0
+		return
+	}
+	cl := rowLine[m.cursor]
 	h := m.listHeight()
-	if m.cursor < m.offset {
-		m.offset = m.cursor
-	} else if m.cursor >= m.offset+h {
-		m.offset = m.cursor - h + 1
+	if cl < m.offset {
+		m.offset = cl
+		// Show the group header just above the first visible row.
+		if m.query == "" && cl > 0 {
+			m.offset = cl - 1
+		}
+	} else if cl >= m.offset+h {
+		m.offset = cl - h + 1
 	}
 	if m.offset < 0 {
 		m.offset = 0
@@ -590,6 +680,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clamp()
 		return m, nil
 	case tickMsg:
+		m.frame++
 		if m.view == Fleet || m.view == Spaces {
 			if fi, err := os.Stat(m.cfg.Snapshot); err == nil && !fi.ModTime().Equal(m.snapMod) {
 				m.snapMod = fi.ModTime()
@@ -610,13 +701,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case msg.Button == tea.MouseButtonWheelDown:
 			m.move(1)
 		case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
-			top := 3 // header, prompt, note lines
-			if m.stale {
-				top++
-			}
-			if i := msg.Y - top + m.offset; i >= 0 && i < len(m.shown) {
-				m.cursor = i
-				return m.act(m.shown[i])
+			lines, _ := m.listLines()
+			if li := msg.Y - m.chromeTop() + m.offset; li >= 0 && li < len(lines) && lines[li].kind == lineItem {
+				m.cursor = lines[li].idx
+				return m.act(m.shown[m.cursor])
 			}
 		}
 		return m, nil
@@ -750,18 +838,151 @@ func firstLine(s string) string {
 	return s
 }
 
-var prompts = map[ViewKind]string{Fleet: "› ", Spaces: "⊞ ", Connect: "⌕ ", Move: "move to "}
+// --- rendering -----------------------------------------------------------------
 
-func (m model) header() string {
+func trunc(s string, n int) string {
+	if n < 1 {
+		return ""
+	}
+	if runewidth.StringWidth(s) <= n {
+		return s
+	}
+	return runewidth.Truncate(s, n, "…")
+}
+
+func padRight(s string, w int) string {
+	if d := w - lipgloss.Width(s); d > 0 {
+		return s + strings.Repeat(" ", d)
+	}
+	return s
+}
+
+// tabs renders the view strip; the move view has no siblings and shows its title instead.
+func (m model) tabs(w int) string {
+	if m.view == Move {
+		return m.st.tabOn.Render("move tab") + " " + m.st.dim.Render("to another workspace")
+	}
+	var b strings.Builder
+	for _, v := range []ViewKind{Fleet, Spaces, Connect} {
+		if v == m.view {
+			b.WriteString(m.st.tabOn.Render(v.String()))
+		} else {
+			b.WriteString(m.st.tab.Render(v.String()))
+		}
+	}
+	return trunc(b.String(), w)
+}
+
+// searchBox is the bordered query line with the match count on the right.
+func (m model) searchBox(w int) string {
+	inner := w - 4 // borders and one space each side
+	var prompt, text string
+	if m.naming {
+		prompt = m.st.accent.Render("name ")
+		text = m.name
+	} else {
+		prompt = m.st.accent.Render("› ")
+		text = m.query
+		if text == "" {
+			text = m.st.faint.Render("type to filter")
+		}
+	}
+	count := m.st.dim.Render(fmt.Sprintf("%d of %d", len(m.shown), len(m.items)))
+	left := prompt + text + m.st.accent.Render("▏")
+	gap := inner - lipgloss.Width(left) - lipgloss.Width(count)
+	if gap < 1 {
+		gap = 1
+	}
+	body := " " + left + strings.Repeat(" ", gap) + count + " "
+	body = padRight(trunc(body, w-2), w-2)
+	top := m.st.border.Render("╭" + strings.Repeat("─", w-2) + "╮")
+	mid := m.st.border.Render("│") + body + m.st.border.Render("│")
+	bot := m.st.border.Render("╰" + strings.Repeat("─", w-2) + "╯")
+	return top + "\n" + mid + "\n" + bot
+}
+
+// diff renders "+A-D" as two colored numbers.
+func (m model) diff(d string, sel bool) string {
+	plus, minus, ok := strings.Cut(d, "-")
+	if !ok || !strings.HasPrefix(plus, "+") {
+		return m.st.dim.Render(d)
+	}
+	p, mi := m.st.plus, m.st.minus
+	if sel {
+		p, mi = p.Background(m.st.hlRow.GetBackground()), mi.Background(m.st.hlRow.GetBackground())
+	}
+	return p.Render(plus) + " " + mi.Render("−"+minus)
+}
+
+func (m model) row(it Item, sel bool, w int) string {
+	bar, glyph := " ", m.glyphFor(it, sel)
+	title, meta, dim := m.st.bold, m.st.dim, m.st.dim
+	if sel {
+		bar = m.st.hlBar.Render("▎")
+		title, meta, dim = m.st.hlBold, m.st.hlDim, m.st.hlDim
+	}
+	right := ""
+	if it.Right != "" {
+		if strings.HasPrefix(it.Key, "CONNECT:") {
+			right = m.st.accent.Render(it.Right)
+			if sel {
+				right = m.st.hlBar.Render(it.Right)
+			}
+		} else {
+			right = dim.Render(it.Right)
+		}
+	}
+	titleW := 28
+	if m.view == Connect {
+		titleW = 24
+	}
+	left := bar + " " + glyph + "  " + title.Render(runewidth.FillRight(trunc(it.Title, titleW), titleW)) + "  "
+	detail := meta.Render(it.Meta)
+	if it.Diff != "" {
+		detail += dim.Render(" · ") + m.diff(it.Diff, sel)
+	}
+	if it.Iso != "" {
+		detail += " " + m.st.badge.Render(it.Iso)
+	}
+	// Right column is pinned to the edge; the detail gets what is left.
+	avail := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if avail < 0 {
+		avail = 0
+	}
+	if lipgloss.Width(detail) > avail {
+		detail = meta.Render(trunc(it.Meta, avail))
+	}
+	line := left + detail
+	gap := w - lipgloss.Width(line) - lipgloss.Width(right) - 1
+	if gap < 1 {
+		gap = 1
+	}
+	line += strings.Repeat(" ", gap) + right + " "
+	if sel {
+		return m.st.hlRow.Render(padRight(line, w))
+	}
+	return line
+}
+
+func (m model) glyphFor(it Item, sel bool) string { return m.st.glyph(it, m.frame, sel) }
+
+func (m model) footer(w int) string {
+	hint := func(k, what string) string { return m.st.key.Render(k) + " " + m.st.dim.Render(what) }
+	var parts []string
 	switch m.view {
 	case Fleet:
-		return "[fleet] spaces connect  ·  Tab  ·  ⏎ jump · ^v review  ·  type to filter"
+		parts = []string{hint("⏎", "jump"), hint("^v", "review"), hint("tab", "next view"), hint("esc", "close")}
 	case Spaces:
-		return "fleet [spaces] connect  ·  Tab  ·  ⏎ switch  ·  type to filter"
+		parts = []string{hint("⏎", "switch"), hint("tab", "next view"), hint("esc", "close")}
 	case Connect:
-		return "fleet spaces [connect]  ·  Tab  ·  ⏎ shell · ^a +agent · ^r name"
+		parts = []string{hint("⏎", "shell"), hint("^a", "+ agent"), hint("^r", "name it"), hint("tab", "next view"), hint("esc", "close")}
+	case Move:
+		parts = []string{hint("⏎", "move"), hint("esc", "cancel")}
 	}
-	return "move tab  ·  ⏎ move · esc cancel"
+	if m.naming {
+		parts = []string{hint("⏎", "create"), hint("esc", "back")}
+	}
+	return " " + trunc(strings.Join(parts, m.st.faint.Render("  ·  ")), w-1)
 }
 
 func (m model) View() string {
@@ -769,58 +990,35 @@ func (m model) View() string {
 	if w <= 0 {
 		w = 80
 	}
-	trunc := func(s string, n int) string {
-		if n < 1 {
-			return ""
-		}
-		if runewidth.StringWidth(s) <= n {
-			return s
-		}
-		return runewidth.Truncate(s, n, "…")
-	}
 	var b strings.Builder
-	b.WriteString(m.st.dim.Render(trunc(m.header(), w)) + "\n")
-	if m.naming {
-		b.WriteString(m.st.prompt.Render("  workspace name: ") + m.name + m.st.accent.Render("▏") + "\n")
-	} else {
-		b.WriteString(m.st.prompt.Render(prompts[m.view]) + m.query + m.st.accent.Render("▏") + "\n")
-	}
-	if m.stale {
-		b.WriteString(m.st.wait.Render("⚠ snapshot stale — daemon down?") + "\n")
-	}
-	if m.note != "" {
-		b.WriteString(m.st.dim.Render(trunc(m.note, w)) + "\n")
-	} else {
+	b.WriteString(" " + m.tabs(w-1) + "\n")
+	b.WriteString(m.searchBox(w) + "\n")
+	switch {
+	case m.stale:
+		b.WriteString(" " + m.st.wait.Render("⚠ snapshot stale — daemon down?") + "\n")
+	case m.note != "":
+		b.WriteString(" " + m.st.dim.Render(trunc(m.note, w-2)) + "\n")
+	default:
 		b.WriteString("\n")
 	}
-	titleW := 16
-	if m.view == Connect {
-		titleW = 22
-	}
+	lines, _ := m.listLines()
 	h := m.listHeight()
 	end := m.offset + h
-	if end > len(m.shown) {
-		end = len(m.shown)
+	if end > len(lines) {
+		end = len(lines)
 	}
-	for i := m.offset; i < end; i++ {
-		it := m.shown[i]
-		glyph := m.st.glyph(it, 0)
-		title := runewidth.FillRight(trunc(it.Title, titleW), titleW)
-		sub := trunc(it.Sub, w-titleW-6)
-		if i == m.cursor {
-			line := m.st.hlRow.Render("› ") + glyph + m.st.hlRow.Render(" ") + m.st.hlBold.Render(title) + m.st.hlRow.Render(" ") + m.st.hlDim.Render(sub)
-			if d := w - lipgloss.Width(line); d > 0 {
-				line += m.st.hlRow.Render(strings.Repeat(" ", d))
-			}
-			b.WriteString(line + "\n")
-		} else {
-			b.WriteString("  " + glyph + " " + m.st.bold.Render(title) + " " + m.st.dim.Render(sub) + "\n")
+	for _, ln := range lines[m.offset:end] {
+		switch ln.kind {
+		case lineHeader:
+			b.WriteString("   " + m.st.faint.Render(strings.ToUpper(m.shown[ln.idx].Group)) + "\n")
+		case lineItem:
+			b.WriteString(m.row(m.shown[ln.idx], ln.idx == m.cursor, w) + "\n")
 		}
 	}
 	for i := end - m.offset; i < h; i++ {
 		b.WriteString("\n")
 	}
-	b.WriteString(m.st.dim.Render(fmt.Sprintf("  %d/%d", len(m.shown), len(m.items))))
+	b.WriteString(m.footer(w))
 	return b.String()
 }
 
