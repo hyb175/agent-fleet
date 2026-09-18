@@ -74,22 +74,23 @@ if [[ "$MODE" == remote ]]; then
   curl -fsSL "$url" | tar -xzf - -C "$tmp" || die "download/extract failed from $url"
   src="$(find "$tmp" -maxdepth 1 -type d -name 'agent-fleet-*' | head -1)"
   [[ -n "$src" && -f "$src/bin/agent-fleet" ]] || die "tarball did not contain bin/agent-fleet"
-  # Atomic swap so a re-run (update) never leaves a half-written tree in place.
+  # Stage the tree, complete it (exec bits, the binary), then swap: a re-run
+  # (update) never leaves a half-written tree, and a failed binary fetch
+  # leaves the previous install untouched.
   mkdir -p "$(dirname "$DATA_DIR")"
   rm -rf "$DATA_DIR.new"
   mv "$src" "$DATA_DIR.new"
+  # Tarballs usually preserve git's exec bits, but don't count on it. Only in
+  # remote mode: chmod-ing a local checkout would churn the working tree (e.g.
+  # flip the sourced-only theme.sh to +x).
+  chmod +x "$DATA_DIR.new/bin/agent-fleet" "$DATA_DIR.new"/scripts/*.sh "$DATA_DIR.new"/shims/* 2>/dev/null || true
+  # The native UI binary: from the release for a tag, built from ui/ otherwise.
+  bash "$DATA_DIR.new/scripts/fetch-afui.sh" "$DATA_DIR.new" "$REF" \
+    || { rm -rf "$DATA_DIR.new"; die "the native UI binary did not install — nothing changed; the fleet has no rail, picker or inbox without bin/afui"; }
   rm -rf "$DATA_DIR"
   mv "$DATA_DIR.new" "$DATA_DIR"
   ROOT_DIR="$DATA_DIR"
-  # Make the extracted tree runnable (tarballs usually preserve git's exec bits,
-  # but don't count on it). Only in remote mode: a local checkout already carries
-  # the tracked bits, and chmod-ing it would churn the working tree (e.g. flip
-  # the sourced-only theme.sh to +x).
-  chmod +x "$ROOT_DIR/bin/agent-fleet" "$ROOT_DIR"/scripts/*.sh "$ROOT_DIR"/shims/* 2>/dev/null || true
   say "installed tree: $DATA_DIR"
-  # The native UI binary: from the release for a tag, built from ui/ otherwise.
-  bash "$ROOT_DIR/scripts/fetch-afui.sh" "$ROOT_DIR" "$REF" \
-    || die "the native UI binary did not install — the fleet has no rail, picker or inbox without bin/afui"
 else
   say "using local checkout: $ROOT_DIR"
   if [[ ! -x "$ROOT_DIR/bin/afui" ]]; then
