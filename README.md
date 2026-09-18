@@ -149,7 +149,7 @@ Because agents keep running on the host, closing your laptop doesn't stop them �
 
 **Two differences from a local fleet:**
 
-- **Desktop notifications fire on the host, not your laptop** — `osascript` / `notify-send` run wherever the hook runs. The rail, the picker, and the terminal progress bar still reach you over SSH. `AGENT_FLEET_NOTIFY=0` turns the dead notifications off.
+- **Notifications reach you over SSH only via the terminal route** — with a Ghostty/WezTerm/iTerm2 client attached, the default `auto` sends OSC notifications through tmux to your laptop's terminal. The desktop route (`osascript` / `notify-send`) runs wherever the hook runs, i.e. on the host. `AGENT_FLEET_NOTIFY=0` turns notifications off.
 - **Terminal size follows the most recently active client** (tmux `window-size latest`). With two clients of different sizes attached, the windows resize to whoever acted last.
 
 Several people can attach at once — the fleet tracks state per client, so each viewer gets their own rail highlight and progress bar. `tmux -L agent-fleet attach -r` attaches read-only for an observer.
@@ -280,7 +280,7 @@ A single daemon (`snapshotd.sh`, one per fleet) polls tmux once a second, resolv
 
 ## Notifications
 
-A hooked agent changing to **wait** or **done** fires a desktop notification whose body leads with the **task intent**. Where the platform allows, clicking it jumps to the agent: install `terminal-notifier` on macOS (the plain `osascript` banner isn't clickable), and on Linux `notify-send` gets a *Jump to agent* action when the notification daemon supports actions. Scrape-tier agents don't notify. `AGENT_FLEET_NOTIFY=0` silences.
+A hooked agent changing to **wait** or **done** fires a notification whose body leads with the **task intent**. Two routes, `AGENT_FLEET_NOTIFY_VIA` picks: **terminal** sends an OSC 777 / OSC 9 notification through tmux to every attached client, so the terminal itself shows it (Ghostty, WezTerm, iTerm2, foot, rxvt; works over SSH; no helper needed; clicking focuses the terminal). **desktop** uses `terminal-notifier` on macOS (clicking jumps to the agent; the plain `osascript` banner isn't clickable) or `notify-send` on Linux (a *Jump to agent* action when the daemon supports actions). The default, `auto`, takes the terminal route when a client with a known terminal is attached and the desktop route otherwise. Scrape-tier agents don't notify. `AGENT_FLEET_NOTIFY=0` silences.
 
 An agent stuck in **wait** past `AGENT_FLEET_NOTIFY_ESCALATE` seconds re-notifies **once per wait episode** (default 600 — ten minutes; `0` disables; the daemon re-arms when the agent resumes). Inbox rows past the threshold wear a `!` marker.
 
@@ -333,7 +333,8 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_THEME` | unset | One-shot palette override — see [Theming](#theming) |
 | `AGENT_FLEET_AGENT_CMDS` | `claude codex opencode agent kimi hermes` | Commands recognized as agents when scraping (space-separated) |
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created on first boot |
-| `AGENT_FLEET_NOTIFY` | `1` | Desktop notifications on state change (`0` disables) |
+| `AGENT_FLEET_NOTIFY` | `1` | Notifications on state change (`0` disables) |
+| `AGENT_FLEET_NOTIFY_VIA` | `auto` | `terminal` (OSC 777/9 through tmux to attached clients), `desktop` (`terminal-notifier` / `osascript` / `notify-send`), or `auto`: terminal when a known terminal is attached, else desktop |
 | `AGENT_FLEET_NOTIFY_ESCALATE` | `600` | Seconds in `wait` before a one-per-episode re-notification and the inbox `!` marker (`0` disables; daemon restart to change) |
 | `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (`0` disables; read at daemon start) |
 | `AGENT_FLEET_SHIM` | `1` | Put the claude shim on shell panes' `PATH` (`0` opts out) |

@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
-# notify.sh <socket> <pane> <message> [intent] — desktop notification that
-# ROUTES attention: clicking it jumps to the pane that fired it, where the
-# platform allows (terminal-notifier's -execute on macOS; notify-send's
-# action button on Linux daemons that support one). Falls back to a plain
-# notification (osascript / actionless notify-send) everywhere else.
+# notify.sh <socket> <pane> <message> [intent] — a notification that ROUTES
+# attention to the pane that fired it. Two routes (AGENT_FLEET_NOTIFY_VIA):
+#   terminal  the attached terminals show it themselves: an OSC 777 / OSC 9
+#             notification, DCS-wrapped through tmux (allow-passthrough) to
+#             every attached client's active pane. Reaches an ssh client's
+#             laptop, needs no helper binary; clicking focuses the terminal.
+#   desktop   terminal-notifier (clicking jumps to the pane) / osascript on
+#             macOS, notify-send (with a Jump action where supported) on Linux.
+#   auto      (default) terminal when a client whose terminal is known to
+#             render these is attached, else desktop.
 #
 # The body leads with the task intent when the pane has one — "what needs me",
 # not just which pane. Called by agent-status-hook.sh on state changes and by
 # snapshotd for the one-per-episode wait escalation. Always exits 0; a failed
-# notification must never bleed into an agent's lifecycle.
+# notification must never bleed into an agent's lifecycle. Hook tier: bash 3.2.
 
 set -u
 
@@ -46,9 +51,43 @@ if [[ -z "$intent" && -r "$AF_CACHE_DIR/panes/$pane.task" ]]; then
 fi
 
 body="${intent:+$intent — }$label $msg"
-# The body can land inside a double-quoted AppleScript literal: strip the two
-# characters that can break out of it (intents and window names are user-typed).
-body="${body//\\/}"; body="${body//\"/}"
+# The body can land inside a double-quoted AppleScript literal or an escape
+# sequence: strip the characters that break out of either (intents and window
+# names are user-typed).
+body="${body//\\/}"; body="${body//\"/}"; body="${body//[[:cntrl:]]/}"
+
+# --- terminal route ---------------------------------------------------------
+# One tmux call: each attached client's tty, terminal, and the tty of the pane
+# it is looking at. Passthrough only leaves tmux from a visible pane, so the
+# sequence goes to that pane's tty, not the notifying pane's.
+osc_seq() {  # <termtype> <termname> -> the DCS-wrapped notification, or nothing
+  case "$(printf '%s %s' "$1" "$2" | tr '[:upper:]' '[:lower:]')" in
+    *iterm*)                        printf '\033Ptmux;\033\033]9;%s\007\033\\' "agent-fleet: $body" ;;
+    *ghostty*|*wezterm*|*foot*|*rxvt*) printf '\033Ptmux;\033\033]777;notify;agent-fleet;%s\007\033\\' "$body" ;;
+  esac
+}
+tty_fire() {  # <tty> <bytes> — never block the hook: a pane whose master is gone hangs open()
+  ( printf '%s' "$2" > "$1" ) 2>/dev/null & local w=$!
+  ( sleep 2; kill "$w" 2>/dev/null ) >/dev/null 2>&1 &
+}
+via="${AGENT_FLEET_NOTIFY_VIA:-auto}"
+if [[ "$via" != "desktop" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
+  sent=""
+  while IFS='|' read -r ctermtype ctermname ptty; do
+    [[ -n "$ptty" && -w "$ptty" ]] || continue
+    case " $sent " in *" $ptty "*) continue ;; esac
+    seq="$(osc_seq "$ctermtype" "$ctermname")"
+    if [[ -z "$seq" && "$via" == "terminal" ]]; then
+      seq="$(printf '\033Ptmux;\033\033]777;notify;agent-fleet;%s\007\033\\' "$body")"
+    fi
+    [[ -n "$seq" ]] || continue
+    tty_fire "$ptty" "$seq"; sent="$sent $ptty"
+  done < <("${TMUX_BIN:-tmux}" -L "$socket" list-clients -F '#{client_termtype}|#{client_termname}|#{pane_tty}' </dev/null 2>/dev/null || true)
+  [[ -n "$sent" ]] && exit 0
+  [[ "$via" == "terminal" ]] && exit 0   # asked for terminal only; nobody attached to show it
+fi
+
+# --- desktop route ----------------------------------------------------------
 
 # %q, not hand-rolled quotes: socket and the checkout path are user-
 # controlled, and this string runs under sh (-execute) or eval (action path).
