@@ -77,6 +77,20 @@ boot_server() {  # [session] [dir]
 }
 
 _lib_cleanup() {
+  # Pane processes first, then the server: a tmux client a pane started (the
+  # rail's startup query, a hook) that is mid-call when kill-server destroys
+  # its pty wedges uninterruptibly on macOS and survives until reboot.
+  local pids
+  pids="$(tx list-panes -a -F '#{pane_pid}' 2>/dev/null | grep -E '^[1-9][0-9]*$' || true)"
+  if [[ -n "$pids" ]]; then
+    # shellcheck disable=SC2086 # pids is a validated, space-separated list
+    kill -TERM $pids 2>/dev/null || true
+    local i alive; for (( i = 0; i < 10; i++ )); do
+      alive="$(tx list-panes -a -F '#{pane_dead}' 2>/dev/null || true)"
+      [[ "$alive" == *0* ]] || break
+      sleep 0.1
+    done
+  fi
   tx kill-server 2>/dev/null
   rm -rf "$XDG_CACHE_HOME" "$XDG_CONFIG_HOME" "$XDG_STATE_HOME" "$WORK" 2>/dev/null
   rm -f "/private/tmp/tmux-$(id -u)/$SOCK" 2>/dev/null

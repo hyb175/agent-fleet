@@ -69,6 +69,16 @@ what it can, this file covers what it can't.
     runs them under `/bin/bash`. (A hook aborted with `printf: '(': invalid
     format character` and `ts: unbound variable` on every Stop event.)
 
+12. **A tmux client started from inside a pane runs with `</dev/null`.**
+    `pane-shell.sh`, the status hooks and `notify.sh` ask tmux about their own
+    pane; with the pane's pty as stdin, a client still mid-call when the pane
+    dies (`kill-server`, `kill-pane`) wedges uninterruptibly on macOS —
+    unkillable until reboot, and enough of them block every new tmux client
+    on the machine. Same class as the `/dev/tty` rule. Go's `exec.Command`
+    with a nil Stdin already gives the child `/dev/null`; keep it nil.
+    `tests/t-cli.sh` greps for the redirection; `tests/lib.sh` kills pane
+    processes before the server.
+
 ## Go (`ui/`)
 
 The rail, picker, inbox and move popup live in one module under `ui/` and

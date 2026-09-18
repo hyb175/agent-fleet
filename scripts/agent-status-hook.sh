@@ -64,7 +64,7 @@ if [[ ! -f "$cache/${pane}.task" && "${AF_TASK_PRESPAWNED:-}" != "1" && -n "$kin
     if command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
       # One call for both: kimi/codex/hermes payloads may lack "cwd", so the
       # pane's live path is the fallback.
-      _ainfo="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{window_name}|#{pane_current_path}' 2>/dev/null || true)"
+      _ainfo="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{window_name}|#{pane_current_path}' </dev/null 2>/dev/null || true)"
       _awname="${_ainfo%%|*}"
       [[ -z "$_acwd" ]] && _acwd="${_ainfo#*|}"
     fi
@@ -80,7 +80,7 @@ if [[ ! -f "$cache/${pane}.task" && "${AF_TASK_PRESPAWNED:-}" != "1" && -n "$kin
       printf 'isolation host\n'
     } > "${cache%/*}/tasks/$_atid" 2>/dev/null || rm -f "$cache/${pane}.task" 2>/dev/null || true
     if [[ -f "${cache%/*}/tasks/$_atid" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
-      "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-task "$_atid" 2>/dev/null || true
+      "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-task "$_atid" </dev/null 2>/dev/null || true
     fi
   fi
 fi
@@ -193,13 +193,13 @@ if [[ ! -f "$sf" ]]; then
   sid="$(printf '%s' "$input" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 2>/dev/null | head -1)"
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
-    command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" 2>/dev/null || true
+    command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" </dev/null 2>/dev/null || true
   fi
   # Tag the pane's agent kind (hand-started agents have none yet) so the rail
   # labels it without ps-scraping and persist-restore relaunches the right CLI.
   if [[ -n "$kind" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
-    cur_kind="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{@fleet-agent-kind}' 2>/dev/null || true)"
-    [[ -z "$cur_kind" ]] && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-agent-kind "$kind" 2>/dev/null || true
+    cur_kind="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#{@fleet-agent-kind}' </dev/null 2>/dev/null || true)"
+    [[ -z "$cur_kind" ]] && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-agent-kind "$kind" </dev/null 2>/dev/null || true
   fi
 fi
 

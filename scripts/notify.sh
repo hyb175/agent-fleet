@@ -30,7 +30,7 @@ AGENT_FLEET_SOCKET="$socket" source "$HERE/cache.sh" 2>/dev/null || exit 0
 
 label="$pane"
 if command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
-  l="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#S/#W' 2>/dev/null || true)"
+  l="$("${TMUX_BIN:-tmux}" -L "$socket" display-message -p -t "$pane" '#S/#W' </dev/null 2>/dev/null || true)"
   [[ -n "$l" ]] && label="$l"
 fi
 

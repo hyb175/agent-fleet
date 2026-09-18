@@ -70,6 +70,14 @@ tty_opens="$(grep -rnI '/dev/tty' "$REPO/bin" "$REPO/scripts" "$REPO/shims" "$RE
   | grep -vE '^[^:]+:[0-9]+:[[:space:]]*(#|//)' || true)"
 check "nothing opens /dev/tty${tty_opens:+ (found: $tty_opens)}" "[[ -z \"\$tty_opens\" ]]"
 
+# Same class, tmux's own client: a pane-started script's tmux call that holds
+# the pane's pty as stdin wedges when the pane dies mid-call (house rule 12).
+# Every tmux invocation in these scripts must detach stdin.
+# shellcheck disable=SC2016 # the pattern matches literal $_tx in the sources
+pty_clients="$(grep -nE '(TMUX_BIN|\$_tx)[^#]*-L ' "$REPO/scripts/pane-shell.sh" "$REPO/scripts/agent-status-hook.sh" "$REPO/scripts/notify.sh" 2>/dev/null \
+  | grep -v '</dev/null' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+check "pane-side tmux clients detach stdin${pty_clients:+ (found: $pty_clients)}" "[[ -z \"\$pty_clients\" ]]"
+
 # config: path lists the files; edit scaffolds local.conf (EDITOR=true = no-op)
 cfgh="$WORK/cfghome"
 out="$(XDG_CONFIG_HOME="$cfgh" "$AF" config path 2>&1)"

@@ -92,7 +92,7 @@ if release_sum; then
     exit 1
   fi
   install_file "$tmp/afui" || { say "afui: could not write $root/bin/afui" >&2; exit 1; }
-  say "afui: installed $asset ($ref) → $root/bin/afui"
+  say "afui: installed $asset ($ref)"
   exit 0
 fi
 
