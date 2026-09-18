@@ -61,17 +61,6 @@ check "window id preserved across move" "[[ \"\$(tx display-message -p -t \"$mp\
 check "move to missing workspace refuses (stays put)" \
   "[[ $rc -ne 0 ]] && [[ \"\$(tx display-message -p -t \"$mp\" '#S')\" == repo-x ]]"
 
-# move-tab.sh popup (Prefix M): fzf-pick a destination, then move --focus.
-# Stub fzf with `head -n1` so it runs headless, taking the top-sorted candidate.
-stub="$(mktemp -d)"; printf '#!/bin/sh\nhead -n1\n' > "$stub/fzf"; chmod +x "$stub/fzf"
-mp2="$("$AF" add --to repo-x --cmd bash 2>/dev/null)"
-w2="$(tx display-message -p -t "$mp2" '#{window_id}')"
-PATH="$stub:$PATH" "$REPO/scripts/move-tab.sh" "$w2" </dev/null >/dev/null 2>&1
-dest2="$(tx display-message -p -t "$mp2" '#S' 2>/dev/null)"
-check "move-tab.sh moves the tab off its workspace to the picked one (got '$dest2')" \
-  "[[ -n '$dest2' && '$dest2' != repo-x ]]"
-rm -rf "$stub"
-
 # No code may open /dev/tty. On a process orphaned off a dead pane that open()
 # never returns — it sleeps in the kernel holding a device-node lock, and every
 # terminal on the machine hangs behind it. Comments mentioning it are fine.

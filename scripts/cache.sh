@@ -37,7 +37,7 @@ cache_migrate_default() {
   # newer than its root twin and is never clobbered. `remote/` is deliberately
   # NOT migrated: its pidfiles/snapshots are ephemeral (pollers respawn in
   # seconds) and a migrated stale pidfile would poison the poller dedupe.
-  local entries=(panes tasks cache rows fleet.state fleet.snapshot focus.now hooks-settings.json)
+  local entries=(panes tasks cache fleet.state fleet.snapshot focus.now hooks-settings.json)
   local e
   for e in "${entries[@]}"; do
     if [[ -e "$AF_CACHE_ROOT/$e" && ! -e "$AF_CACHE_DIR/$e" ]]; then

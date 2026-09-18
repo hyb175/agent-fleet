@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # t-pick-go.sh — the Go picker and move popup, driven through tmux.
-#   - ui-launch.sh picks afui for pick/move under AGENT_FLEET_UI=go, and the
-#     bash scripts otherwise
+#   - ui-launch.sh execs afui for every surface and reports a missing binary
 #   - fleet view: typing filters, Enter jumps (agent-fleet goto) to the agent
 #   - connect view: a project-root child that zoxide never saw is listed;
 #     Enter connects a workspace there
@@ -11,23 +10,23 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-pick-go:"
 [[ -x "$REPO/bin/afui" ]] || { echo "  SKIP: bin/afui not built (make ui)"; exit 0; }
-export AGENT_FLEET_UI=go
 boot_server t "$WORK"
 CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 
 # Launcher routing: shadow exec so the script prints its choice instead of
 # running it (functions win over the exec builtin in non-POSIX bash).
 # shellcheck disable=SC2329 # called inside the eval'd check() conditions
-route() {  # <ui> <surface…> -> what ui-launch.sh would exec (ROUTE_ROOT overrides the root)
-  AGENT_FLEET_UI="$1" AGENT_FLEET_ROOT="${ROUTE_ROOT:-$REPO}" bash -c \
-    'exec() { echo "exec $*"; exit 0; }; source "$REPO/scripts/ui-launch.sh" "$@"' _ "${@:2}" 2>&1 || true
+route() {  # <surface…> -> what ui-launch.sh would exec (ROUTE_ROOT overrides the root)
+  AGENT_FLEET_ROOT="${ROUTE_ROOT:-$REPO}" bash -c \
+    'exec() { echo "exec $*"; exit 0; }; source "$REPO/scripts/ui-launch.sh" "$@"' _ "$@" 2>&1 </dev/null || true
 }
 export REPO
-check "launcher: bash renderer execs pick.sh"   "route bash pick spaces | grep -q 'pick.sh spaces'"
-check "launcher: go renderer execs afui move"    "route go move | grep -q 'afui move'"
-check "launcher: inbox is afui under go"          "route go inbox | grep -q 'afui inbox'"
-check "launcher: unknown surface is refused"      "! route go rail-x 2>/dev/null | grep -q exec"
-check "launcher: go without the binary falls back" "ROUTE_ROOT='$WORK' route go pick | grep -q 'pick.sh'"
+check "launcher: pick execs afui pick"            "route pick spaces | grep -q 'afui pick spaces'"
+check "launcher: move execs afui move"            "route move | grep -q 'afui move'"
+check "launcher: inbox execs afui inbox"          "route inbox | grep -q 'afui inbox'"
+check "launcher: unknown surface is refused"      "! route rail-x 2>/dev/null | grep -q exec"
+check "launcher: a missing binary is reported, nothing execs" "ROUTE_ROOT='$WORK' route pick | grep -q 'bin/afui is missing' && ! ROUTE_ROOT='$WORK' route pick | grep -q exec"
+check "launcher: AGENT_FLEET_UI=bash gets a note and afui anyway" "AGENT_FLEET_UI=bash route pick | grep -q 'bash renderers were removed' && AGENT_FLEET_UI=bash route pick | grep -q 'afui pick'"
 
 # An agent in a second window to jump to.
 w2="$(tx new-window -d -P -F '#{window_id}' -t t: -n target 'sleep 60')"

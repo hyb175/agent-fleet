@@ -24,10 +24,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -486,7 +484,6 @@ func (v *View) ToggleFold() {
 // --- Bubble Tea program -----------------------------------------------------
 
 type tickMsg time.Time
-type wakeMsg struct{}
 type ranMsg struct{ err error }
 
 type model struct {
@@ -572,9 +569,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.view.Cursor >= 0 {
 			m.view.clamp()
 		}
-		return m, nil
-	case wakeMsg:
-		m.reload(true)
 		return m, nil
 	case ranMsg:
 		return m, nil
@@ -724,12 +718,12 @@ func Load(getenv func(string) string, root string) (Config, error) {
 	return cfg, nil
 }
 
-// Run draws the rail until the pane goes away. SIGUSR1 (the focus hook's
-// wake) forces a re-read instead of killing the process, which is Go's
-// default for that signal.
+// Run draws the rail until the pane goes away. Nothing signals it: new data
+// and focus changes arrive as mtime changes on fleet.snapshot and focus.now,
+// checked every dataEvery.
 func Run(cfg Config) error {
-	// The bash rail emits truecolor unconditionally; inside tmux termenv
-	// would otherwise downgrade the theme to the 256-color cube.
+	// Inside tmux termenv would downgrade the theme to the 256-color cube and
+	// query the terminal for its background; both are fixed here.
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	// Fixed, so lipgloss never queries the terminal's background color.
 	lipgloss.SetHasDarkBackground(true)
@@ -741,14 +735,6 @@ func Run(cfg Config) error {
 	// Mouse cell motion: tmux forwards clicks and the wheel to a pane that
 	// enabled tracking (its default MouseDown1Pane/WheelUpPane bindings).
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithInput(os.Stdin), tea.WithOutput(os.Stdout), tea.WithMouseCellMotion())
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGUSR1)
-	go func() {
-		for range sig {
-			p.Send(wakeMsg{})
-		}
-	}()
 	_, err := p.Run()
-	signal.Stop(sig)
 	return err
 }

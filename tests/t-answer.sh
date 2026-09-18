@@ -40,8 +40,6 @@ snap "A ws|@1|1|a|$ap|claude|wait|1|60|approve me" \
 fp1="$(af answer "$ap" fp)"; fp2="$(af answer "$ap" fp)"
 check "fp is a checksum" "[[ '$fp1' =~ ^[0-9]+$ ]]"
 check "fp stable while the pane is unchanged" "[[ '$fp1' == '$fp2' ]]"
-ikey="$(AGENT_FLEET_ROOT="$REPO" AGENT_FLEET_SOCKET="$SOCK" bash "$REPO/scripts/inbox.sh" --rows | grep 'approve me' | cut -f1)"
-check "inbox row key carries the same fingerprint" "[[ '$ikey' == 'PANE:$ap|wait|$fp1' ]]"
 
 af answer "$ap" approve --fp "$fp1" >/dev/null; rc=$?
 for _ in $(seq 1 20); do [[ -s "$WORK/ans1" ]] && break; sleep 0.2; done
@@ -50,13 +48,6 @@ check "approve with a matching fp is sent (rc=$rc)" "[[ $rc -eq 0 && \"\$(cat '$
 af answer "$tp" text "yes please;" >/dev/null
 for _ in $(seq 1 20); do [[ -s "$WORK/ans2" ]] && break; sleep 0.2; done
 check "text reply arrives whole (incl. trailing ;)" "[[ \"\$(cat '$WORK/ans2' 2>/dev/null)\" == 'answered:yes please;' ]]"
-
-# The inbox never sends without a fingerprint: a wait row whose pane could not
-# be captured at render time carries an empty fp and is refused up front.
-# shellcheck disable=SC2034 # read inside the eval'd check() condition
-nofp="$(AGENT_FLEET_ROOT="$REPO" AGENT_FLEET_SOCKET="$SOCK" bash "$REPO/scripts/inbox.sh" --answer approve "PANE:$sp|wait|" 2>&1)" && rc=0 || rc=$?
-check "inbox refuses a wait row without a fingerprint" "[[ $rc -ne 0 ]] && grep -q 'no fingerprint' <<<\"\$nofp\""
-check "nothing sent for the fingerprint-less row" "[[ ! -s '$WORK/ans3' ]]"
 
 # Stale: content changed under the caller's fingerprint -> refused, nothing sent.
 sfp="$(af answer "$sp" fp)"

@@ -27,12 +27,12 @@ what it can, this file covers what it can't.
    route it through a tmux option and read it back (`@fleet-prompt` + `_prompt`
    verb). `#{q:…}` escapes format expansions, not typed input.
 
-5. **Hot paths stay fork-free.** The rail redraws every tick and the status
-   bar every 3s; a command substitution there is a fork on every rail on every
-   tick (~15ms each on macOS). Use `printf -v`, parameter expansion, `read`
+5. **Hot paths stay fork-free.** The daemon polls every tick and the status
+   bar re-renders every 3s; a command substitution there is a fork per agent
+   per tick (~15ms each on macOS). Use `printf -v`, parameter expansion, `read`
    from files, `%(%s)T` for time. Forks belong in `cache_bg` background
-   refreshers or one-shot setup. Cheap check: would this line run 10×/second
-   across 10 rails?
+   refreshers or one-shot setup. Cheap check: would this line run every tick
+   for every agent?
 
 6. **`read` returns 1 at EOF *after* assigning** a final unterminated line.
    `read x < file || x=""` silently clobbers the value; use `|| true`. Files
@@ -71,9 +71,10 @@ what it can, this file covers what it can't.
 
 ## Go (`ui/`)
 
-The native surfaces live in one module under `ui/` and ship as `bin/afui`
-(`make ui`; `make ui-test` is what CI runs). Standard library only unless a
-ticket says otherwise. Rules that carry over from the bash side:
+The rail, picker, inbox and move popup live in one module under `ui/` and
+ship as `bin/afui` (`make ui`; `make ui-test` is what CI runs). Dependencies
+are Bubble Tea, Lip Gloss, go-runewidth and sahilm/fuzzy; adding one is a
+ticket, not a commit. Rules:
 
 - **View-only.** The binary reads `fleet.snapshot`, `focus.now`, the theme
   presets and the cache dir. Anything that changes tmux or task state goes
@@ -81,10 +82,20 @@ ticket says otherwise. Rules that carry over from the bash side:
   suite. Read-only `tmux capture-pane` for previews is the exception.
 - **No tmux in the hot path.** A rail re-reads the snapshot on mtime change
   and never polls tmux; N rails add no server load.
-- **The binary sends no signals.** Its own wake-ups come from file watches.
-  It tolerates `focus-track.sh`'s SIGUSR1 as a wake (Go's default for that
-  signal is to exit) until the cutover deletes the signal path.
-- **Never open `/dev/tty`.** Use the inherited fds.
+- **The binary sends no signals and expects none.** Wake-ups are mtime
+  polls of `fleet.snapshot` and `focus.now` every 250ms; `focus-track.sh`
+  only writes the file. (Go exits on an unhandled SIGUSR1, and a pid-based
+  wake once broadcast to every process the user owned.)
+- **Never open `/dev/tty`.** Pass `tea.WithInput(os.Stdin)` and
+  `tea.WithOutput(os.Stdout)`; Bubble Tea's default opens the tty when stdin
+  is not one, and that open() never returns on a dead pane.
+- **Space arrives as `tea.KeySpace`, not `KeyRunes`.** Every text input
+  (filter, query, reply) handles both, or typed spaces vanish.
+- **Width is terminal cells**, via go-runewidth — never `len()` or rune
+  counts — so CJK and wide glyphs truncate and pad correctly.
+- **Fixed color profile.** `lipgloss.SetColorProfile(termenv.TrueColor)` and
+  `SetHasDarkBackground(true)`: inside tmux termenv would downgrade to the
+  256-color cube and query the terminal for its background.
 - **Snapshot fields by position from the front**, unknown trailing fields
   ignored, missing ones read as `-` (`docs/snapshot-format.md`).
 - Version comes from `bin/agent-fleet` via `-ldflags -X main.version`; CI
@@ -100,6 +111,8 @@ the line.
 
 ## Tests
 
-`bash tests/run-all.sh` — every `t-*.sh` is standalone, runs on a throwaway
-tmux socket with private XDG cache/config dirs, and must leave no processes
-behind. New behavior gets a check; new bug classes get a rule here.
+`make ui && bash tests/run-all.sh` — every `t-*.sh` is standalone, runs on a
+throwaway tmux socket with private XDG cache/config dirs, and must leave no
+processes behind; the rail, picker and inbox tests drive `bin/afui` through
+tmux, so the runner refuses to start without it. New behavior gets a check;
+new bug classes get a rule here.

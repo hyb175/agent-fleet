@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # t-rail-go.sh — the Go rail's interaction, driven through tmux.
-#   - AGENT_FLEET_UI=go makes the rail pane run afui via rail-launch.sh
+#   - the rail pane runs afui via rail-launch.sh
 #   - Prefix B (sidenav-focus.sh) selects the rail pane
 #   - keys typed into the rail move the cursor and Enter jumps (agent-fleet
 #     goto) to the chosen agent's window; Esc returns to the work pane
@@ -10,7 +10,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-rail-go:"
 [[ -x "$REPO/bin/afui" ]] || { echo "  SKIP: bin/afui not built (make ui)"; exit 0; }
-export AGENT_FLEET_UI=go
 boot_server t "$WORK"
 CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 

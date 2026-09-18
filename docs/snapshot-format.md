@@ -2,7 +2,7 @@
 
 `scripts/snapshotd.sh` (one per tmux server) polls tmux once per interval and writes `$AF_CACHE_DIR/fleet.snapshot` atomically (temp file + `mv`). Every renderer reads this file instead of tmux, so the number of open rails and popups adds no tmux load.
 
-Readers: `scripts/sidenav.sh`, `scripts/pick.sh`, `scripts/inbox.sh`, `scripts/next-attention.sh`, `bin/agent-fleet` (`answer`), `scripts/remote-poll.sh` (on the remote side), and `ui/internal/snapshot` (Go). Fixtures both sides parse live in `tests/fixtures/snapshot/`; `tests/t-fixtures.sh` and `ui/internal/snapshot/snapshot_test.go` are the conformance tests.
+Readers: `ui/internal/snapshot` (Go: the rail, picker, inbox and move popup), `scripts/next-attention.sh`, `bin/agent-fleet` (`answer`), and `scripts/remote-poll.sh` (on the remote side). Fixtures live in `tests/fixtures/snapshot/`; `ui/internal/snapshot/snapshot_test.go` checks the readers parse them, `tests/t-fixtures.sh` checks the live daemon emits what they describe.
 
 ---
 

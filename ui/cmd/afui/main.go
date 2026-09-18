@@ -1,9 +1,7 @@
 // afui is the fleet's native terminal UI: the rail, the picker, the inbox
 // and the move-tab popup, one binary. It is view-only — it reads
 // fleet.snapshot and the theme, and runs `agent-fleet` verbs for anything
-// that changes state. Surfaces land one per ticket; a subcommand that has
-// not landed says so and exits 2, and the keybinds keep using the bash
-// renderers. scripts/rail-launch.sh picks the rail renderer.
+// that changes state. scripts/ui-launch.sh starts every surface.
 package main
 
 import (

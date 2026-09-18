@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # t-inbox-go.sh — the Go inbox, driven through tmux.
-#   - AGENT_FLEET_UI=go routes Prefix i to afui inbox
+#   - Prefix i opens afui inbox
 #   - rows: wait above done, grouped, preview shows the pane's question
 #   - ^y approves through `agent-fleet answer` with the preview's fingerprint;
 #     a pane that changed since is refused and nothing is sent
@@ -10,7 +10,6 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 echo "t-inbox-go:"
 [[ -x "$REPO/bin/afui" ]] || { echo "  SKIP: bin/afui not built (make ui)"; exit 0; }
-export AGENT_FLEET_UI=go
 boot_server t "$WORK"
 CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 mkdir -p "$CACHE/panes" "$CACHE/tasks"

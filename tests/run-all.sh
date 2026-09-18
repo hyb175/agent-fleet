@@ -6,21 +6,13 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+[[ -x "$HERE/../bin/afui" ]] || { echo "bin/afui is missing — run 'make ui' first (the rail, picker and inbox tests need it)"; exit 1; }
+
 failed=()
 for t in "$HERE"/t-*.sh; do
   if ! bash "$t"; then failed+=("$(basename "$t")"); fi
   echo
 done
-
-# The rail has two renderers during the transition (scripts/rail-launch.sh).
-# Run the rail-facing tests again with the Go one when the binary is built.
-if [[ -x "$HERE/../bin/afui" ]]; then
-  for t in t-highlight t-reap t-borders t-snapshot; do
-    echo "[AGENT_FLEET_UI=go]"
-    if ! AGENT_FLEET_UI=go bash "$HERE/$t.sh"; then failed+=("$t.sh (go)"); fi
-    echo
-  done
-fi
 
 if (( ${#failed[@]} )); then
   echo "FAILED: ${failed[*]}"
