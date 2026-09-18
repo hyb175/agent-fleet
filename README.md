@@ -40,6 +40,7 @@ The CLI is `agent-fleet` (alias `af`).
 | `claude` | optional | default agent command; hooks attach on launch |
 | `git` | optional | branch / ahead-count labels |
 | `zoxide` | optional | frecent directories in the connect view |
+| `go` ≥ 1.24 | optional | builds `bin/afui`, the native UI, from a checkout (`make ui`); tagged installs download it from the release instead |
 | `osascript` / `notify-send` | optional | desktop notifications (macOS / Linux) |
 
 A truecolor + Unicode terminal is recommended (theme colors and the braille spinner degrade otherwise). Developed on macOS; Linux works (notifications and `stat`/`ps` fall back to portable forms) but is less battle-tested.
@@ -67,7 +68,7 @@ git clone https://github.com/hyb175/agent-fleet
 agent-fleet/install.sh
 ```
 
-`install.sh` symlinks `agent-fleet` (and `af`) into `~/.local/bin` and provisions the status cache under `~/.cache/agent-fleet`. It auto-detects its mode: piped through `curl` it downloads the tarball; run from a checkout it symlinks in place. `PREFIX=/usr/local` changes the prefix; `AGENT_FLEET_REF=v0.1.0` pins a tag/branch. If `~/.local/bin` isn't on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"`.
+`install.sh` symlinks `agent-fleet` (and `af`) into `~/.local/bin` and provisions the status cache under `~/.cache/agent-fleet`. It also puts the native UI binary at `bin/afui`: downloaded and checksum-verified from the GitHub release when `AGENT_FLEET_REF` is a `vX.Y.Z` tag, built from `ui/` when a Go toolchain is on `PATH`, otherwise skipped with a note (the bash renderers stay in charge; `AGENT_FLEET_UI` picks). `agent-fleet upgrade` fetches the binary for the new tag the same way, and `--rollback` restores the previous one with the rest of the tree. It auto-detects its mode: piped through `curl` it downloads the tarball; run from a checkout it symlinks in place. `PREFIX=/usr/local` changes the prefix; `AGENT_FLEET_REF=v0.1.0` pins a tag/branch. If `~/.local/bin` isn't on `PATH`, add `export PATH="$HOME/.local/bin:$PATH"`.
 
 ---
 

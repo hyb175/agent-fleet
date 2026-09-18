@@ -1,0 +1,52 @@
+# Release — on a vX.Y.Z tag, build the native UI for both OSes × both
+# architectures and attach the binaries plus a checksum file to the GitHub
+# release. install.sh and `agent-fleet upgrade` download from here
+# (scripts/fetch-afui.sh), so the asset names and SHA256SUMS format are a
+# contract. scripts/release.sh cuts the tag; this only runs on it.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: afui binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ui/go.mod
+
+      # The tag must match the version the CLI reports: `agent-fleet upgrade`
+      # compares AGENT_FLEET_VERSION against release tags, and `afui version`
+      # embeds the same string.
+      - name: Check the tag against AGENT_FLEET_VERSION
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          ver="$(sed -n 's/^AGENT_FLEET_VERSION="\(.*\)"/\1/p' bin/agent-fleet)"
+          [[ "$tag" == "$ver" ]] || { echo "tag v$tag but bin/agent-fleet says $ver"; exit 1; }
+
+      - name: Build afui for darwin/linux × amd64/arm64
+        working-directory: ui
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p ../dist
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+            os="${target%/*}"; arch="${target#*/}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+              go build -trimpath -ldflags "-s -w -X main.version=$ver" \
+              -o "../dist/afui-$os-$arch" ./cmd/afui
+          done
+          (cd ../dist && sha256sum afui-* > SHA256SUMS && cat SHA256SUMS)
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes

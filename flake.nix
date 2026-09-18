@@ -8,8 +8,23 @@
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
       forAll = f: nixpkgs.lib.genAttrs systems (system: f (import nixpkgs { inherit system; }));
 
+      version = "0.2.0";
+
+      # The native UI (rail, picker, inbox, move popup). Static Go binary;
+      # the version is embedded from the same value the CLI reports.
+      mkAfui = pkgs: pkgs.buildGoModule {
+        pname = "afui";
+        inherit version;
+        src = "${self}/ui";
+        vendorHash = "sha256-wNnu9nE3t/aFzilz0ZJJDt4FHAkempoz8upgVhLLWZ8=";
+        subPackages = [ "cmd/afui" ];
+        ldflags = [ "-s" "-w" "-X main.version=${version}" ];
+        env.CGO_ENABLED = 0;
+      };
+
       mkAgentFleet = pkgs:
         let
+          afui = mkAfui pkgs;
           # Everything the CLI, the tmux hooks, and the picker shell out to at
           # runtime. Put on the wrapper's PATH so the tmux server (booted by the
           # wrapped CLI) and its hook/popup children resolve them regardless of
@@ -21,7 +36,7 @@
         in
         pkgs.stdenv.mkDerivation {
           pname = "agent-fleet";
-          version = "0.2.0";
+          inherit version;
           src = self;
 
           nativeBuildInputs = [ pkgs.makeWrapper ];
@@ -35,6 +50,8 @@
 
             mkdir -p "$out/bin" "$out/share/agent-fleet"
             cp -r bin conf scripts shims "$out/share/agent-fleet/"
+            # The launchers look for the binary next to the CLI (bin/afui).
+            cp ${afui}/bin/afui "$out/share/agent-fleet/bin/afui"
 
             # Rewrite every '#!/usr/bin/env bash' to the Nix bash so panes/hooks
             # never fall back to macOS's bash 3.2.
@@ -62,6 +79,7 @@
     {
       packages = forAll (pkgs: rec {
         agent-fleet = mkAgentFleet pkgs;
+        afui = mkAfui pkgs;
         default = agent-fleet;
       });
 
@@ -76,7 +94,7 @@
         default = pkgs.mkShell {
           packages = with pkgs; [
             tmux fzf bashInteractive coreutils gnused gawk gnugrep findutils
-            git zoxide ncurses shellcheck
+            git zoxide ncurses shellcheck go
           ];
         };
       });

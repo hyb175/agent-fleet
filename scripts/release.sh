@@ -25,6 +25,8 @@ git rev-parse -q --verify "refs/tags/v$ver" >/dev/null 2>&1 && { echo "error: ta
 # BSD/GNU-portable in-place edit (macOS sed needs the backup suffix).
 sed -i.bak -E "s/^AGENT_FLEET_VERSION=\"[^\"]*\"/AGENT_FLEET_VERSION=\"$ver\"/" bin/agent-fleet && rm -f bin/agent-fleet.bak
 sed -i.bak -E "s/version = \"[0-9]+\.[0-9]+\.[0-9]+\";/version = \"$ver\";/"        flake.nix       && rm -f flake.nix.bak
+# The tag push triggers .github/workflows/release.yml, which builds the afui
+# binaries and attaches them to the GitHub release.
 
 # Sanity: the bump actually landed.
 grep -q "AGENT_FLEET_VERSION=\"$ver\"" bin/agent-fleet || { echo "error: version bump did not apply to bin/agent-fleet" >&2; exit 1; }

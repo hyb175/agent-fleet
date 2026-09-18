@@ -1300,6 +1300,11 @@ cmd_upgrade() {
   fi
   rm -rf "$tmp"
   echo "upgraded $installed → ${ref#v}."
+  # The native UI binary lives inside the tree, so a rollback swaps it back
+  # along with everything else. rc 3 = nothing to install here (no asset for
+  # this platform, no Go): the bash renderers carry on.
+  bash "$data_dir/scripts/fetch-afui.sh" "$data_dir" "$ref" || [[ $? -eq 3 ]] \
+    || echo "warning: native UI binary did not install — bash renderers stay active" >&2
   _reload_live
   echo "rollback if needed:  agent-fleet upgrade --rollback"
 }
@@ -1674,7 +1679,24 @@ cmd_reload() {
     tx source-file "$AGENT_FLEET_THEME_CONF" 2>/dev/null || true
   fi
   "$ROOT_DIR/scripts/border-tune.sh" 2>/dev/null || true
-  echo "fleet reloaded — config re-sourced, daemon and rails respawned (theme: $AF_THEME)"
+  echo "fleet reloaded — config re-sourced, daemon and rails respawned (theme: $AF_THEME, ui: $(ui_renderer_status))"
+}
+
+# ui_renderer_status — which renderer the launchers will pick, and why, so a
+# reload after a branch switch or a missing binary is not a silent fallback.
+ui_renderer_status() {
+  local ui="${AGENT_FLEET_UI:-}" f="${XDG_CONFIG_HOME:-$HOME/.config}/agent-fleet/ui"
+  if [[ -z "$ui" && -r "$f" ]]; then { read -r ui < "$f"; } 2>/dev/null || true; fi
+  ui="${ui:-bash}"
+  if [[ "$ui" == "go" ]]; then
+    if [[ -x "$ROOT_DIR/bin/afui" ]]; then
+      echo "go ($("$ROOT_DIR/bin/afui" version 2>/dev/null || echo afui))"
+    else
+      echo "go requested but bin/afui is missing — bash renderers active (make ui, or a tagged install)"
+    fi
+  else
+    echo "bash"
+  fi
 }
 
 # theme [name] — list presets, or persist + apply one. The choice lives in

@@ -77,8 +77,15 @@ if [[ "$MODE" == remote ]]; then
   # the sourced-only theme.sh to +x).
   chmod +x "$ROOT_DIR/bin/agent-fleet" "$ROOT_DIR"/scripts/*.sh "$ROOT_DIR"/shims/* 2>/dev/null || true
   say "installed tree: $DATA_DIR"
+  # The native UI binary: from the release for a tag, built from ui/ when Go
+  # is around, otherwise the bash renderers stay in charge (rc 3 says why).
+  bash "$ROOT_DIR/scripts/fetch-afui.sh" "$ROOT_DIR" "$REF" || [[ $? -eq 3 ]] || die "native UI binary failed to install"
 else
   say "using local checkout: $ROOT_DIR"
+  if [[ ! -x "$ROOT_DIR/bin/afui" ]]; then
+    if command -v go >/dev/null 2>&1; then say "native UI: run 'make ui' to build bin/afui (AGENT_FLEET_UI=go)"
+    else say "native UI: bin/afui not built — install Go 1.24+ and run 'make ui', or use a tagged install"; fi
+  fi
 fi
 
 # --- link the CLI ----------------------------------------------------------
@@ -120,9 +127,9 @@ command -v fzf >/dev/null 2>&1 \
 bv="$(bash -c 'echo "${BASH_VERSINFO[0]}"' 2>/dev/null || echo 0)"
 [ "${bv:-0}" -ge 4 ] 2>/dev/null \
   || say "MISSING (required): bash 4+ — 'env bash' resolves to $bv.x; brew install bash and put it before /bin/bash on PATH"
-for dep in claude zoxide git; do
+for dep in claude zoxide git go; do
   command -v "$dep" >/dev/null 2>&1 \
-    || say "optional: '$dep' not found — claude=default agent, zoxide=picker connect view, git=branch labels"
+    || say "optional: '$dep' not found — claude=default agent, zoxide=picker connect view, git=branch labels, go=builds the native UI from a checkout"
 done
 
 if ! command -v agent-fleet >/dev/null 2>&1; then
