@@ -282,7 +282,12 @@ for s in "${sess_order[@]}"; do
           riso="$(awk '$1=="isolation"{print $2; exit}' "$CACHE/tasks/$stask" 2>/dev/null || true)"
         fi
         if [[ "$riso" == "container" ]]; then
-          rc="env AGENT_FLEET_SOCKET=$(printf '%q' "$SOCK") $(printf '%q' "$ROOT/bin/agent-fleet") _container-resume $(printf '%q' "$stask")"
+          # The pane below runs `bash -lc`, whose login PATH reorders, so a
+          # caller-pinned container CLI rides in the command itself.
+          rc="env AGENT_FLEET_SOCKET=$(printf '%q' "$SOCK")"
+          [[ -n "${DOCKER_BIN:-}" ]] && rc="$rc DOCKER_BIN=$(printf '%q' "$DOCKER_BIN")"
+          [[ -n "${DEVCONTAINER_BIN:-}" ]] && rc="$rc DEVCONTAINER_BIN=$(printf '%q' "$DEVCONTAINER_BIN")"
+          rc="$rc $(printf '%q' "$ROOT/bin/agent-fleet") _container-resume $(printf '%q' "$stask")"
         fi
         tx set-option -p -t "$chosen" @fleet-agent-kind "$skind" 2>/dev/null || true
         tx set-option -w -t "$chosen" @fleet-agent "$skind" 2>/dev/null || true

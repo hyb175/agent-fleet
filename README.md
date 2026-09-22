@@ -355,6 +355,8 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_SSH_CMD` | `ssh` | Command used to reach federated hosts (test seam) |
 | `AGENT_FLEET_GIT_TTL` | `30` | Cached git-branch freshness (seconds) |
 | `TMUX_BIN` | `tmux` | tmux binary used by the CLI and scripts |
+| `DOCKER_BIN` | `docker` | docker binary for the container rung, forwarded into restored panes (whose login shell re-resolves a bare name). Whitespace or shell metacharacters are refused |
+| `DEVCONTAINER_BIN` | `devcontainer` | devcontainer CLI for a repo with a `devcontainer.json`; same guard |
 
 Runtime state lives under `${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet/<socket>` (per-socket, so two fleets on different `AGENT_FLEET_SOCKET`s never share or corrupt each other's records); `theme.conf` alone stays at the shared parent. The tmux option `@fleet-sidenav-auto` (default `on`) auto-opens the rail on new windows/attach; set `off` to opt out (`Prefix b` still toggles).
 

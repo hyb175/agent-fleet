@@ -36,6 +36,22 @@ DEFAULT_AGENT_CMD="${AGENT_FLEET_CMD:-claude}"
 HOME_SESSION="${AGENT_FLEET_HOME_SESSION:-home}"
 
 TMUX_BIN="${TMUX_BIN:-tmux}"
+
+# Container CLIs, overridable so a packaged install can pin absolute paths and
+# the tests their stubs — restore rebuilds the command under `bash -lc`, whose
+# login PATH would re-resolve a bare name. Embedded unquoted, hence the guard.
+DOCKER_BIN="${DOCKER_BIN:-docker}"
+DEVCONTAINER_BIN="${DEVCONTAINER_BIN:-devcontainer}"
+case "$DOCKER_BIN" in
+  *[[:space:]\"\$\`\\\;\&\|]*)
+    echo "note: DOCKER_BIN has whitespace or shell metacharacters — using 'docker'" >&2
+    DOCKER_BIN=docker ;;
+esac
+case "$DEVCONTAINER_BIN" in
+  *[[:space:]\"\$\`\\\;\&\|]*)
+    echo "note: DEVCONTAINER_BIN has whitespace or shell metacharacters — using 'devcontainer'" >&2
+    DEVCONTAINER_BIN=devcontainer ;;
+esac
 export AGENT_FLEET_ROOT="$ROOT_DIR"
 export AGENT_FLEET_SOCKET="$SOCKET"
 # The conf's `bind r source-file "$AGENT_FLEET_CONF"` expands this at server
@@ -399,9 +415,9 @@ sandbox_available() {
 # The container rung needs the docker CLI AND a live daemon. timeout
 # where available: a wedged daemon would otherwise hang every `af task`.
 container_available() {
-  command -v docker >/dev/null 2>&1 || return 1
-  if command -v timeout >/dev/null 2>&1; then timeout 5 docker info >/dev/null 2>&1
-  else docker info >/dev/null 2>&1
+  command -v "$DOCKER_BIN" >/dev/null 2>&1 || return 1
+  if command -v timeout >/dev/null 2>&1; then timeout 5 "$DOCKER_BIN" info >/dev/null 2>&1
+  else "$DOCKER_BIN" info >/dev/null 2>&1
   fi
 }
 
@@ -411,16 +427,16 @@ container_available() {
 # labels them with the workspace folder). --rm reaps the named one; the
 # devcontainer CLI's containers stay for reuse, stopped. Never fails caller.
 task_container_stop() {
-  command -v docker >/dev/null 2>&1 || return 0
+  command -v "$DOCKER_BIN" >/dev/null 2>&1 || return 0
   local cn cdir ids
   # LAST container line wins: a restore-resume appends a fresh name.
   cn="$(awk '$1=="container"{v=$2} END{print v}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
-  [[ -n "$cn" ]] && docker stop -t 2 "$cn" >/dev/null 2>&1 || true
+  [[ -n "$cn" ]] && "$DOCKER_BIN" stop -t 2 "$cn" >/dev/null 2>&1 || true
   cdir="$(awk '$1=="containerdir"{sub(/^containerdir /,""); print; exit}' "$AF_TASKS_DIR/$1" 2>/dev/null || true)"
   if [[ -n "$cdir" ]]; then
-    ids="$(docker ps -q --filter "label=devcontainer.local_folder=$cdir" 2>/dev/null || true)"
+    ids="$("$DOCKER_BIN" ps -q --filter "label=devcontainer.local_folder=$cdir" 2>/dev/null || true)"
     # shellcheck disable=SC2086 # ids are docker's own newline-separated hashes
-    [[ -n "$ids" ]] && docker stop -t 2 $ids >/dev/null 2>&1 || true
+    [[ -n "$ids" ]] && "$DOCKER_BIN" stop -t 2 $ids >/dev/null 2>&1 || true
   fi
   return 0
 }
@@ -442,19 +458,19 @@ build_container_cmd() {
   _cn="$(printf '%s' "${SOCKET}-${name}" | tr -c 'A-Za-z0-9_.-' '_')"
   CNAME="af-${_cn}-${_cnow}"
   if [[ -f "$repo_dir/.devcontainer/devcontainer.json" || -f "$repo_dir/.devcontainer.json" ]] \
-     && command -v devcontainer >/dev/null 2>&1; then
+     && command -v "$DEVCONTAINER_BIN" >/dev/null 2>&1; then
     # Repo devcontainer: its config owns the environment (no firewall
     # promise from us). Cache+scripts ride in so the status hooks work; the
     # parent .git so the worktree's absolute-path .git file resolves (the
     # handback); ~/.claude + the OAuth token so the agent is logged in.
-    CCMD="devcontainer up --workspace-folder \"$dir\""
+    CCMD="$DEVCONTAINER_BIN up --workspace-folder \"$dir\""
     CCMD+=" --mount \"type=bind,source=$AF_CACHE_DIR,target=$AF_CACHE_DIR\""
     CCMD+=" --mount \"type=bind,source=$ROOT_DIR/scripts,target=$ROOT_DIR/scripts\""
     [[ -n "$wt_path" && -d "$repo_dir/.git" ]] \
       && CCMD+=" --mount \"type=bind,source=$repo_dir/.git,target=$repo_dir/.git\""
     [[ -d "$HOME/.claude" ]] \
       && CCMD+=" --mount \"type=bind,source=$HOME/.claude,target=$HOME/.claude\""
-    CCMD+=" && exec devcontainer exec --workspace-folder \"$dir\""
+    CCMD+=" && exec $DEVCONTAINER_BIN exec --workspace-folder \"$dir\""
     CCMD+=" env TMUX_PANE=\"\$TMUX_PANE\" AGENT_FLEET_SOCKET=\"$SOCKET\""
     CCMD+=" CLAUDE_CODE_OAUTH_TOKEN=\"\$CLAUDE_CODE_OAUTH_TOKEN\""
     [[ -n "${XDG_CACHE_HOME:-}" ]] && CCMD+=" XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
@@ -481,9 +497,9 @@ build_container_cmd() {
     # not a silent degrade). NET_ADMIN: the image's default-deny firewall.
     # --init: claude is the container's PID 1 otherwise, and its subshells'
     # orphans would accumulate as zombies over a long session.
-    CCMD="docker image inspect $img >/dev/null 2>&1"
-    CCMD+=" || docker build -t $img \"$ROOT_DIR/docker\" || exit 1; "
-    CCMD+="exec docker run --rm -it --init --name \"$CNAME\" --cap-add NET_ADMIN"
+    CCMD="$DOCKER_BIN image inspect $img >/dev/null 2>&1"
+    CCMD+=" || $DOCKER_BIN build -t $img \"$ROOT_DIR/docker\" || exit 1; "
+    CCMD+="exec $DOCKER_BIN run --rm -it --init --name \"$CNAME\" --cap-add NET_ADMIN"
     CCMD+=" $envs $vols -w \"$dir\" $img $agent_tail"
   fi
 }
@@ -2756,7 +2772,7 @@ cmd_container_resume() {
     exec bash -i
   fi
   if ! container_available; then
-    echo "note: docker is not available — $tid stays a shell (record still says container)" >&2
+    echo "note: $DOCKER_BIN is not available — $tid stays a shell (record still says container)" >&2
     exec bash -i
   fi
   local hooks_file tail

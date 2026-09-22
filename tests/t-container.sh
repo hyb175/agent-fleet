@@ -10,8 +10,9 @@
 #   - lifecycle: task done stops the named container
 #   - restore leaves container tasks as shells (no silent host relaunch) until
 #     container re-link
-# All docker/devcontainer calls hit an argv-logging stub — hermetic on both CI
-# platforms, no images, no daemon.
+# All docker/devcontainer calls hit an argv-logging stub, pinned via
+# DOCKER_BIN/DEVCONTAINER_BIN (PATH alone loses to a host docker under a login
+# shell) — hermetic on both CI platforms, no images, no daemon.
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -52,6 +53,10 @@ printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> %q\n' "$NLOG" > "$FAKEBIN/t
 cp "$FAKEBIN/terminal-notifier" "$FAKEBIN/notify-send"
 chmod +x "$FAKEBIN"/*
 export PATH="$FAKEBIN:$PATH"
+# Pin the stubs: restore's pane runs `bash -lc`, whose login PATH would hoist a
+# real /usr/local/bin/docker (Docker Desktop) above $FAKEBIN.
+export DOCKER_BIN="$FAKEBIN/docker"
+export DEVCONTAINER_BIN="$FAKEBIN/devcontainer"
 
 af() { AGENT_FLEET_SOCKET="$SOCK" AGENT_FLEET_ROOT="$REPO" "$REPO/bin/agent-fleet" "$@"; }
 rec_of() { awk -v k="$1" '$1==k{sub("^"k" ",""); print; exit}' "$CACHE/tasks/$2"; }
