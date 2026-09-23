@@ -118,7 +118,7 @@ func (v View) Rows() []Row {
 		if v.WaitOnly && a.State != snapshot.StateWait {
 			continue
 		}
-		if needle != "" && !strings.Contains(strings.ToLower(a.Title(per)+" "+subtitle(a)), needle) {
+		if needle != "" && !strings.Contains(strings.ToLower(a.Title(per)+" "+subtitle(a, "")), needle) {
 			continue
 		}
 		rows = append(rows, Row{Target: Target{Kind: AgentTarget, ID: a.Pane}, Sess: a.Session})
@@ -132,8 +132,17 @@ func (v View) Rows() []Row {
 // subtitle = workspace · kind, then for wait/done the time in state and
 // the diffstat (how big is the thing waiting on me), then the isolation
 // rung when above host, then the race attempt (⑂k/N).
-func subtitle(a snapshot.Agent) string {
-	sub := a.Session + " · " + a.Label
+//
+// cur is the rail's own workspace. Naming it on every one of its rows spends
+// ~12 of 27 cells saying where you already are, and the tail it pushes past
+// the edge — age, diffstat, rung — is the part you decide on, so those rows
+// drop the prefix. Row matching passes cur="" so a filter still finds an
+// agent by its workspace name.
+func subtitle(a snapshot.Agent, cur string) string {
+	sub := a.Label
+	if a.Session != cur {
+		sub = a.Session + " · " + a.Label
+	}
 	attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
 	if attention && a.HasAge {
 		sub += " · " + snapshot.FormatAge(a.Age)
@@ -156,6 +165,7 @@ type styles struct {
 	fg, dim, accent, wait, working, done, muted                      lipgloss.Style
 	hlFg, hlDim, hlAccent, hlWait, hlWorking, hlDone, hlMuted, hlPad lipgloss.Style
 	cursor, hdr                                                      lipgloss.Style
+	nameWait, nameDone                                               lipgloss.Style
 }
 
 func newStyles(t theme.Theme) styles {
@@ -179,7 +189,68 @@ func newStyles(t theme.Theme) styles {
 	s.hlPad = lipgloss.NewStyle().Background(hl)
 	s.cursor = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent)).Bold(true)
 	s.hdr = s.dim.Bold(true) // section label: same muted hue as its rule, heavier
+	s.nameWait, s.nameDone = s.wait.Bold(true), s.done.Bold(true)
 	return s
+}
+
+// stateStyle is a state's color, for its glyph and its counts.
+func (s styles) stateStyle(state string) lipgloss.Style {
+	switch state {
+	case snapshot.StateWait:
+		return s.wait
+	case snapshot.StateWorking:
+		return s.working
+	case snapshot.StateDone:
+		return s.done
+	}
+	return s.muted
+}
+
+// name styles a row's NAME by its state. Attention that lives in a single
+// glyph cell is a cue you have to hunt for, and in a 79-row rail the rows
+// that need nothing from you should recede: wait and done say so in their own
+// color, working keeps the plain foreground (its spinner already carries the
+// hue), idle and agentless workspaces go muted.
+func (s styles) name(state string) lipgloss.Style {
+	switch state {
+	case snapshot.StateWait:
+		return s.nameWait
+	case snapshot.StateDone:
+		return s.nameDone
+	case snapshot.StateWorking:
+		return s.fg
+	}
+	return s.dim // idle, or a workspace with no agents
+}
+
+// summary counts the states worth a glyph — needs you, running, finished — in
+// the row vocabulary, zero counts dropped. session "" counts the whole fleet.
+// Returns the plain form (what the width math measures) and the styled form
+// (what gets drawn).
+func (s styles) summary(agents []snapshot.Agent, session string) (string, string) {
+	n := map[string]int{}
+	for _, a := range agents {
+		if session == "" || a.Session == session {
+			n[a.State]++
+		}
+	}
+	var plain, styled string
+	for _, g := range []struct{ state, glyph string }{
+		{snapshot.StateWait, "◆"},
+		{snapshot.StateWorking, "⠿"}, // static: a header can't spin
+		{snapshot.StateDone, "✓"},
+	} {
+		c := n[g.state]
+		if c == 0 {
+			continue
+		}
+		seg := fmt.Sprintf("%s%d", g.glyph, c)
+		if plain != "" {
+			plain, styled = plain+" ", styled+" "
+		}
+		plain, styled = plain+seg, styled+s.stateStyle(g.state).Render(seg)
+	}
+	return plain, styled
 }
 
 func (s styles) glyph(state string, frame int, sel bool) string {
@@ -242,26 +313,43 @@ func RenderMap(v View) (string, []Target) {
 	// word in it. Muted, not the dimmer HL the inbox uses for the same rule:
 	// HL against the rail background is under 1.1:1 in some presets (cobalt2,
 	// tomorrow-night), and a separator has to hold in every theme.
-	header := func(l, r string) {
+	// rs is r pre-styled (same display width); "" means style r as dim.
+	header := func(l, r, rs string) {
 		right := ""
-		// A long filter is truncated, never allowed past the pane edge: a
-		// wrapped header would shove the whole list down a line.
 		if room := w - runewidth.StringWidth(l) - 7; r != "" && room >= 1 {
-			right = " " + trunc(r, room) + " ─"
+			if runewidth.StringWidth(r) > room {
+				if rs != "" {
+					r = "" // a styled slot is atomic: drop it rather than cut it
+				} else {
+					// A long filter is truncated, never allowed past the pane
+					// edge: a wrapped header would shove the list down a line.
+					r = trunc(r, room)
+				}
+			}
+			if r != "" {
+				if rs == "" {
+					rs = st.dim.Render(r)
+				}
+				right = " " + r + " ─" // plain twin, for the width math
+			}
 		}
 		fill := w - 3 - runewidth.StringWidth(l) - runewidth.StringWidth(right)
 		if fill < 1 {
 			fill = 1
 		}
-		line(st.dim.Render("─ ")+st.hdr.Render(l)+
-			st.dim.Render(" "+strings.Repeat("─", fill)+right), none)
+		out := st.dim.Render("─ ") + st.hdr.Render(l) + st.dim.Render(" "+strings.Repeat("─", fill))
+		if right != "" {
+			out += st.dim.Render(" ") + rs + st.dim.Render(" ─")
+		}
+		line(out, none)
 	}
 	rows := v.Rows()
-	row := func(t Target, sel bool, glyph, name, sub string) {
+	row := func(t Target, sel bool, state, name, sub string) {
 		// Name line prefix is " g " (3 cells) or "▎ g " when selected (4);
 		// the subtitle prefix is 3 cells either way. In focus mode the cursor
 		// row swaps its leading cell for ›.
 		cursor := v.Focus && t.Kind != NoTarget && v.Cursor == t.Row
+		glyph := st.glyph(state, v.Frame, sel)
 		nameCap := w - 3
 		if sel {
 			nameCap = w - 4
@@ -281,16 +369,20 @@ func RenderMap(v View) (string, []Target) {
 			if cursor {
 				lead = st.cursor.Render("›")
 			}
-			line(lead+glyph+" "+st.fg.Render(name), t)
+			line(lead+glyph+" "+st.name(state).Render(name), t)
 			line("   "+st.dim.Render(sub), t)
 		}
 	}
 
-	header("spaces", "")
 	snap := v.Snap
 	if snap == nil {
 		snap = &snapshot.Snapshot{Interval: 1}
 	}
+	// The fleet's counts ride in the spaces rule: the status bar has them too,
+	// but that is 400 columns away on a wide screen, and this is where you are
+	// already looking.
+	fleetP, fleetS := st.summary(snap.Agents, "")
+	header("spaces", fleetP, fleetS)
 	if snap.Epoch > 0 && snap.Stale(v.Now) {
 		line(st.wait.Render(" ⚠ stale — daemon down?"), none)
 	}
@@ -308,10 +400,20 @@ func RenderMap(v View) (string, []Target) {
 			sel := sp.Session == v.Cfg.Session
 			name, sub := sp.Session, sp.Branch
 			if v.Folded[sp.Session] {
+				// Folded: the marker's total is the number worth the cells —
+				// and the row's glyph still carries the worst state — so the
+				// per-state counts stand down rather than truncate it away.
 				name = "▸ " + name
 				sub += fmt.Sprintf(" · %d folded", folded[sp.Session])
+			} else if cnt, _ := st.summary(snap.Agents, sp.Session); cnt != "" {
+				// The rollup glyph says which state is worst, not how much of
+				// it there is. Dim like the rest of the subtitle — the counts
+				// answer "how much", the glyph still leads. The branch tail
+				// yields first when the row is tight: which workspace needs
+				// you outranks which branch it happens to sit on.
+				sub = trunc(sub, w-6-runewidth.StringWidth(cnt)) + " · " + cnt
 			}
-			row(rows[ri].Target, sel, st.glyph(sp.Rollup, v.Frame, sel), name, sub)
+			row(rows[ri].Target, sel, sp.Rollup, name, sub)
 			ri++
 		}
 	}
@@ -326,7 +428,7 @@ func RenderMap(v View) (string, []Target) {
 			right += "▏"
 		}
 	}
-	header("agents", right)
+	header("agents", right, "")
 	agentRows := rows[ri:]
 	if len(snap.Agents) == 0 {
 		line(st.dim.Render(" (no agents)"), none)
@@ -363,7 +465,15 @@ func RenderMap(v View) (string, []Target) {
 		for _, r := range agentRows[offset:end] {
 			a := byPane[r.Target.ID]
 			sel := a.WindowID == v.Cfg.Window
-			row(r.Target, sel, st.glyph(a.State, v.Frame, sel), a.Title(per), subtitle(a))
+			name := a.Title(per)
+			if a.Session == v.Cfg.Session && a.WindowIndex != "" {
+				// Tab number, so Prefix 3 is a glance away — but only for this
+				// rail's own workspace, where the number is the one tmux shows.
+				// Cross-workspace rows leave it off: there it means nothing
+				// until you switch.
+				name = a.WindowIndex + ":" + name
+			}
+			row(r.Target, sel, a.State, name, subtitle(a, v.Cfg.Session))
 		}
 		if offset > 0 || end < total {
 			more := ""
@@ -376,7 +486,18 @@ func RenderMap(v View) (string, []Target) {
 			line(st.dim.Render(more+" more"), none)
 		}
 	}
-	line("", none)
+	// The footer is pinned to the bottom row, not left to float wherever the
+	// list ended: a 79-row rail holding a 21-row fleet used to put it in the
+	// middle of the pane, reading as one more list entry.
+	gap := 1
+	if v.Cfg.Height > 0 {
+		if n := v.Cfg.Height - len(lines) - 1; n > gap {
+			gap = n
+		}
+	}
+	for i := 0; i < gap; i++ {
+		line("", none)
+	}
 	foot := " prefix+o open · prefix+b hide"
 	if v.Filtering {
 		foot = " type to filter · ⏎ keep · esc clear"

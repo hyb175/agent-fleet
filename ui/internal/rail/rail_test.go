@@ -47,23 +47,23 @@ func TestParityLayout(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@2", "webapp", 0)))
 	lines := strings.Split(out, "\n")
 	want := []string{
-		"─ spaces ─────────────────────",
+		"─ spaces ────────── ◆2 ⠿1 ✓2 ─", // the fleet's counts ride in the rule
 		" ✓ api",
-		"   main",
-		"▎ ◆ webapp", // selected workspace: bar on both lines
-		"▎  feature/login ↑2",
-		" · notes",
+		"   main · ◆1 ✓2", // and each workspace's in its subtitle
+		"▎ ◆ webapp",      // selected workspace: bar on both lines
+		"▎  feature/login ↑2 · ◆1 ⠿1",
+		" · notes", // no agents: no counts
 		"   notes",
 		"",
 		"─ agents ─────────────── all ─",
-		" ⠋ review the login flow",
-		"   webapp · claude · wt",
-		"▎ ◆ fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
-		"▎  webapp · claude · 4m · +31…",
-		"▎ ○ fix-tests.2",
-		"▎  webapp · codex~",
-		" ◆ migrate the auth table",
-		"   api · claude · 15m · +120-…",
+		" ⠋ 1:review the login flow", // this rail's workspace: tab number,
+		"   claude · wt",             // and no "webapp ·" saying where you are
+		"▎ ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
+		"▎  claude · 4m · +31-2",     // the diffstat the prefix used to truncate
+		"▎ ○ 2:fix-tests.2",
+		"▎  codex~",
+		" ◆ migrate the auth table",      // another workspace: no number,
+		"   api · claude · 15m · +120-…", // and it says which one
 		" ✓ write the changelog",
 		"   api · claude · 2h · +5-0",
 		" ✓ scratch",
@@ -100,7 +100,8 @@ func TestHighlightIsSelfDerived(t *testing.T) {
 	if !strings.Contains(a, "▎ ✓ api") || strings.Contains(a, "▎ ◆ webapp") {
 		t.Fatalf("api rail must highlight api only:\n%s", a)
 	}
-	if !strings.Contains(a, "▎ ◆ migrate the auth table") || strings.Contains(a, "▎ ◆ fix the flaky spec") {
+	// api's own agents carry their tab number here; webapp's do not.
+	if !strings.Contains(a, "▎ ◆ 1:migrate the auth table") || strings.Contains(a, "▎ ◆ fix the flaky spec") {
 		t.Fatalf("api rail must highlight window @5 only:\n%s", a)
 	}
 }
@@ -295,5 +296,77 @@ func TestAnimateNeedsVisibleAndWorking(t *testing.T) {
 	v = view(t, "remote-down.snapshot", "@1", "webapp", 0)
 	if v.Animate() {
 		t.Fatal("no working agent must not animate")
+	}
+}
+
+func TestFooterPinnedToTheBottom(t *testing.T) {
+	// A 40-row pane holding a 21-row fleet: the footer belongs on row 40, not
+	// wherever the list happened to stop.
+	out := plain(Render(view(t, "mixed.snapshot", "@2", "webapp", 40)))
+	lines := strings.Split(out, "\n")
+	if len(lines) != 40 {
+		t.Fatalf("got %d lines, want the pane's 40:\n%s", len(lines), out)
+	}
+	if !strings.Contains(lines[39], "prefix+o open") {
+		t.Fatalf("footer must be the last row, got %q", lines[39])
+	}
+	if strings.TrimSpace(lines[38]) != "" {
+		t.Fatalf("row above the footer must be blank, got %q", lines[38])
+	}
+	// Uncapped (tests, unknown height) keeps the old shape: blank, then footer.
+	u := strings.Split(plain(Render(view(t, "mixed.snapshot", "@2", "webapp", 0))), "\n")
+	if !strings.Contains(u[len(u)-1], "prefix+o open") || strings.TrimSpace(u[len(u)-2]) != "" {
+		t.Fatalf("uncapped rail must end with one blank then the footer:\n%s", strings.Join(u, "\n"))
+	}
+}
+
+func TestNameCarriesItsState(t *testing.T) {
+	th, err := theme.Load("../../..", "tokyo-night")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A rail whose window and workspace hold nothing, so every row renders in
+	// its plain (unhighlighted) form.
+	out := Render(view(t, "mixed.snapshot", "@9", "none", 0))
+	bold := func(hex string) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(hex)).Bold(true)
+	}
+	plainFg := func(hex string) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(hex))
+	}
+	for _, c := range []struct {
+		what, name string
+		style      lipgloss.Style
+	}{
+		{"wait", "migrate the auth table", bold(th.Wait)},
+		{"done", "write the changelog", bold(th.Done)},
+		{"working", "review the login flow", bold(th.FG)},
+		{"idle", "fix-tests.2", plainFg(th.Muted)},
+	} {
+		if !strings.Contains(out, c.style.Render(c.name)) {
+			t.Errorf("%s row's name must be painted by its state: %q", c.what, c.name)
+		}
+	}
+}
+
+func TestNarrowRailDropsTheSummary(t *testing.T) {
+	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
+	v.Cfg.Width = 18
+	first := strings.Split(plain(Render(v)), "\n")[0]
+	if lipgloss.Width(first) != 18 {
+		t.Fatalf("the rule must fill a narrow rail exactly: %q", first)
+	}
+	if strings.ContainsAny(first, "◆⠿✓") {
+		t.Fatalf("a styled slot that cannot fit whole is dropped, not cut: %q", first)
+	}
+}
+
+func TestFilterStillFindsOwnWorkspaceByName(t *testing.T) {
+	// webapp's own rows stop PRINTING "webapp", but typing it must still find
+	// them: Rows() matches against the unabbreviated subtitle.
+	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
+	v.Filter = "webapp"
+	if n := len(v.Rows()) - len(v.Snap.Spaces); n != 3 {
+		t.Fatalf("filtering by the current workspace's name: %d agent rows, want 3", n)
 	}
 }

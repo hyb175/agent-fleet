@@ -93,22 +93,28 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), `^a` approves every waiting agent after confirming, or `^v` a done task straight into review. Grouped `NEEDS YOU` / `DONE` rows, a live preview panel, answers guarded by a fingerprint of the exact capture the panel shows.
 
-**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. The two lists sit under labeled rules (`─ spaces ───`, `─ agents ─── all ─`) so the sections read apart at a glance. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. Its width is fixed (`AGENT_FLEET_SIDENAV_WIDTH`, 30 cols) — dragging its border doesn't resize it, so starting a selection there can't knock the layout askew; borders between work panes still drag normally.
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. The two lists sit under labeled rules (`─ spaces ───`, `─ agents ─── all ─`); the spaces rule carries the fleet's attention counts and every workspace row its own, so what needs you is readable without looking away from the column you're already in. A row's **name** is painted by its state — waiting and done in their own color, idle muted — and agents in this rail's own workspace carry their tab number (`2:api-fix`, so `Prefix 2` goes there) and drop the `workspace ·` prefix from their subtitle, which leaves room for the age, diffstat and isolation rung that used to truncate. The footer sits on the bottom row. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. Its width is fixed (`AGENT_FLEET_SIDENAV_WIDTH`, 30 cols) — dragging its border doesn't resize it, so starting a selection there can't knock the layout askew; borders between work panes still drag normally.
 
 ```
-┌──────────────────┬─────────────────────────┐
-│─ spaces ─────────│                         │
-│ ✓ dotfiles       │   your agent / shell    │
-│   main ↑2        │   (the work pane)       │
-│                  │                         │
-│─ agents ─── all ─│                         │
-│ ⠹ code-review    │                         │
-│   webapp · claude│                         │
-│ ◆ api-fix        │                         │
-│   webapp · codex │                         │
-│ ○ notes          │                         │
-│   home · cursor  │                         │
-└──────────────────┴─────────────────────────┘
+┌──────────────────────────────┬─────────────────────────┐
+│─ spaces ────────── ◆1 ⠿1 ✓1 ─│                         │
+│ ◆ home                       │   your agent / shell    │
+│   main · ◆1                  │   (the work pane)       │
+│▎ ⠹ webapp                    │                         │
+│▎  feat/api ↑2 · ⠿1 ✓1        │                         │
+│ · notes                      │                         │
+│   notes                      │                         │
+│                              │                         │
+│─ agents ─────────────── all ─│                         │
+│ ◆ code-review                │                         │
+│   home · claude · 4m         │                         │
+│▎ ⠹ 2:api-fix                 │                         │
+│▎  claude                     │                         │
+│ ✓ 3:tests                    │                         │
+│   claude · 12m · +8-2        │                         │
+│                              │                         │
+│ prefix+o open · prefix+b hide│                         │
+└──────────────────────────────┴─────────────────────────┘
 ```
 
 **Status glyphs:** `◆` waiting on you · `⠋…⠏` working · `✓` done · `○` idle — each state has its own shape, so they read without color vision. Window tabs in the status bar carry the same glyph for their worst agent (`⠿` = busy); waiting and done agents show time in state (`· 4m`). Agents spawned via `af task` are titled by their **intent** in the rail and picker, and the picker sorts the longest-waiting first within each urgency rank. Attempts of a `task race` carry a `⑂k/N` badge.
