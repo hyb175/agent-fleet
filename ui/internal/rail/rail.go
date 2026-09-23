@@ -155,7 +155,7 @@ func subtitle(a snapshot.Agent) string {
 type styles struct {
 	fg, dim, accent, wait, working, done, muted                      lipgloss.Style
 	hlFg, hlDim, hlAccent, hlWait, hlWorking, hlDone, hlMuted, hlPad lipgloss.Style
-	cursor                                                           lipgloss.Style
+	cursor, hdr                                                      lipgloss.Style
 }
 
 func newStyles(t theme.Theme) styles {
@@ -178,6 +178,7 @@ func newStyles(t theme.Theme) styles {
 	s.hlMuted = s.muted.Background(hl)
 	s.hlPad = lipgloss.NewStyle().Background(hl)
 	s.cursor = lipgloss.NewStyle().Foreground(lipgloss.Color(t.Accent)).Bold(true)
+	s.hdr = s.dim.Bold(true) // section label: same muted hue as its rule, heavier
 	return s
 }
 
@@ -236,12 +237,24 @@ func RenderMap(v View) (string, []Target) {
 		}
 		return s
 	}
+	// Section headers are labeled rules — "─ spaces ─────" — so the two lists
+	// read as two regions instead of one column of rows that happens to have a
+	// word in it. Muted, not the dimmer HL the inbox uses for the same rule:
+	// HL against the rail background is under 1.1:1 in some presets (cobalt2,
+	// tomorrow-night), and a separator has to hold in every theme.
 	header := func(l, r string) {
-		p := w - runewidth.StringWidth(l) - runewidth.StringWidth(r) - 1
-		if p < 1 {
-			p = 1
+		right := ""
+		// A long filter is truncated, never allowed past the pane edge: a
+		// wrapped header would shove the whole list down a line.
+		if room := w - runewidth.StringWidth(l) - 7; r != "" && room >= 1 {
+			right = " " + trunc(r, room) + " ─"
 		}
-		line(st.dim.Render(" "+l+strings.Repeat(" ", p)+r), none)
+		fill := w - 3 - runewidth.StringWidth(l) - runewidth.StringWidth(right)
+		if fill < 1 {
+			fill = 1
+		}
+		line(st.dim.Render("─ ")+st.hdr.Render(l)+
+			st.dim.Render(" "+strings.Repeat("─", fill)+right), none)
 	}
 	rows := v.Rows()
 	row := func(t Target, sel bool, glyph, name, sub string) {
@@ -281,7 +294,6 @@ func RenderMap(v View) (string, []Target) {
 	if snap.Epoch > 0 && snap.Stale(v.Now) {
 		line(st.wait.Render(" ⚠ stale — daemon down?"), none)
 	}
-	line("", none)
 	ri := 0 // index into rows
 	if len(snap.Spaces) == 0 {
 		line(st.dim.Render(" (no workspaces)"), none)
@@ -315,7 +327,6 @@ func RenderMap(v View) (string, []Target) {
 		}
 	}
 	header("agents", right)
-	line("", none)
 	agentRows := rows[ri:]
 	if len(snap.Agents) == 0 {
 		line(st.dim.Render(" (no agents)"), none)
@@ -399,7 +410,8 @@ func (v View) availAgents() int {
 	if v.Cfg.Height <= 0 || v.Snap == nil {
 		return 0
 	}
-	lines := 1 + 1 + 2*len(v.Snap.Spaces) + 1 + 1 + 1 // headers, blanks, spaces rows
+	// spaces rule + its rows + the gap between sections + agents rule.
+	lines := 1 + 2*len(v.Snap.Spaces) + 1 + 1
 	if v.Snap.Epoch > 0 && v.Snap.Stale(v.Now) {
 		lines++
 	}

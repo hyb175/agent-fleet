@@ -47,8 +47,7 @@ func TestParityLayout(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@2", "webapp", 0)))
 	lines := strings.Split(out, "\n")
 	want := []string{
-		" spaces",
-		"",
+		"─ spaces ─────────────────────",
 		" ✓ api",
 		"   main",
 		"▎ ◆ webapp", // selected workspace: bar on both lines
@@ -56,8 +55,7 @@ func TestParityLayout(t *testing.T) {
 		" · notes",
 		"   notes",
 		"",
-		" agents                    all",
-		"",
+		"─ agents ─────────────── all ─",
 		" ⠋ review the login flow",
 		"   webapp · claude · wt",
 		"▎ ◆ fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
@@ -109,21 +107,21 @@ func TestHighlightIsSelfDerived(t *testing.T) {
 
 func TestOverflowCountsTheRest(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@9", "none", 16)))
-	// 16 rows: header, blank, 3 spaces rows (6), blank, header, blank = 11 lines
-	// before agents; (16-11-3)/2 = 1 agent row, then "+5 more".
-	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " ↓5 more") {
+	// 16 rows: spaces rule, 3 spaces rows (6), the section gap, agents rule =
+	// 9 lines before the agents; (16-9-3)/2 = 2 agent rows, then "↓4 more".
+	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " ↓4 more") {
 		t.Fatalf("overflow:\n%s", out)
 	}
-	if strings.Contains(out, "fix the flaky spec") {
-		t.Fatalf("second agent must be hidden behind the more-line:\n%s", out)
+	if strings.Contains(out, "fix-tests.2") {
+		t.Fatalf("third agent must be hidden behind the more-line:\n%s", out)
 	}
 }
 
 func TestScrollAndCursorKeepRowVisible(t *testing.T) {
-	v := view(t, "mixed.snapshot", "@9", "none", 16) // one agent row fits
+	v := view(t, "mixed.snapshot", "@9", "none", 16) // two agent rows fit
 	v.Scroll(2)
 	out := plain(Render(v))
-	if !strings.Contains(out, "fix-tests.2") || !strings.Contains(out, " ↑2 ↓3 more") {
+	if !strings.Contains(out, "fix-tests.2") || !strings.Contains(out, " ↑2 ↓2 more") {
 		t.Fatalf("wheel scroll:\n%s", out)
 	}
 	v.Scroll(100)
@@ -138,7 +136,8 @@ func TestScrollAndCursorKeepRowVisible(t *testing.T) {
 	if got := v.Selected(); got.Kind != AgentTarget || got.ID != "%9" {
 		t.Fatalf("cursor after 7 moves: %+v", got)
 	}
-	if v.Offset != 3 {
+	// Cursor on agent row 3 with a two-row window: the last window holding it.
+	if v.Offset != 2 {
 		t.Fatalf("viewport must follow the cursor, offset=%d", v.Offset)
 	}
 	if !strings.Contains(plain(Render(v)), "›") || !v.Focus {
@@ -153,7 +152,7 @@ func TestFiltersAndFold(t *testing.T) {
 	if len(rows) != 3+2 {
 		t.Fatalf("wait-only: %d rows", len(rows))
 	}
-	if !strings.Contains(plain(Render(v)), " agents                   wait") {
+	if !strings.Contains(plain(Render(v)), "─ agents ────────────── wait ─") {
 		t.Fatalf("header must show the filter:\n%s", plain(Render(v)))
 	}
 	v.WaitOnly = false
@@ -188,14 +187,15 @@ func TestFiltersAndFold(t *testing.T) {
 func TestClickMapPointsAtRows(t *testing.T) {
 	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
 	_, lines := RenderMap(v)
-	if lines[0].Kind != NoTarget || lines[1].Kind != NoTarget {
-		t.Fatal("header and blank carry no target")
+	// 0 is the spaces rule, 7 the section gap, 8 the agents rule.
+	if lines[0].Kind != NoTarget || lines[7].Kind != NoTarget || lines[8].Kind != NoTarget {
+		t.Fatal("section rules and the gap carry no target")
 	}
-	if lines[2].Kind != SessionTarget || lines[2].ID != "api" || lines[3].ID != "api" {
-		t.Fatalf("workspace row lines: %+v %+v", lines[2], lines[3])
+	if lines[1].Kind != SessionTarget || lines[1].ID != "api" || lines[2].ID != "api" {
+		t.Fatalf("workspace row lines: %+v %+v", lines[1], lines[2])
 	}
-	if lines[11].Kind != AgentTarget || lines[11].ID != "%3" || lines[12].ID != "%3" {
-		t.Fatalf("agent row lines: %+v %+v", lines[11], lines[12])
+	if lines[9].Kind != AgentTarget || lines[9].ID != "%3" || lines[10].ID != "%3" {
+		t.Fatalf("agent row lines: %+v %+v", lines[9], lines[10])
 	}
 	if lines[len(lines)-1].Kind != NoTarget {
 		t.Fatal("footer carries no target")

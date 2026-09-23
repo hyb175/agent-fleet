@@ -93,15 +93,15 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), `^a` approves every waiting agent after confirming, or `^v` a done task straight into review. Grouped `NEEDS YOU` / `DONE` rows, a live preview panel, answers guarded by a fingerprint of the exact capture the panel shows.
 
-**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding.
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail listing workspaces and agents with live status, refreshed in place. The two lists sit under labeled rules (`─ spaces ───`, `─ agents ─── all ─`) so the sections read apart at a glance. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. Its width is fixed (`AGENT_FLEET_SIDENAV_WIDTH`, 30 cols) — dragging its border doesn't resize it, so starting a selection there can't knock the layout askew; borders between work panes still drag normally.
 
 ```
 ┌──────────────────┬─────────────────────────┐
-│ spaces           │                         │
+│─ spaces ─────────│                         │
 │ ✓ dotfiles       │   your agent / shell    │
 │   main ↑2        │   (the work pane)       │
 │                  │                         │
-│ agents      all  │                         │
+│─ agents ─── all ─│                         │
 │ ⠹ code-review    │                         │
 │   webapp · claude│                         │
 │ ◆ api-fix        │                         │
