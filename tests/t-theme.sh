@@ -60,6 +60,8 @@ check "theme.conf written" "[[ -f '$XDG_CACHE_HOME/agent-fleet/theme.conf' ]]"
 boot_server t "$WORK"
 check "boot applies themed status-style" "[[ \"\$(tx show -gv status-style)\" == *2e3440* ]]"
 check "boot applies themed popup border" "[[ \"\$(tx show -gv popup-border-style)\" == *88c0d0* ]]"
+# The theme override restyles colors only — it must not reset the line TYPE.
+check "themed boot keeps heavy pane borders" "[[ \"\$(tx show -gv pane-border-lines)\" == heavy ]]"
 
 # ...and a rewrite + source-file re-styles the live server (the reload path).
 ( AGENT_FLEET_THEME=kanagawa; export AGENT_FLEET_THEME
