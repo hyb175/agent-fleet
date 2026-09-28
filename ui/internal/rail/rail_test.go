@@ -56,15 +56,15 @@ func TestParityLayout(t *testing.T) {
 		" │   claude · 2h · +5-0",
 		" └ ✓ 3:scratch", // the last one closes the branch
 		"     opencode · 30s",
-		"",           // a breath between groups
-		"▎ ◆ webapp", // selected workspace: bar on both lines
-		"▎   feature/login ↑2 · ◆1 ⠿1",
+		"",          // a breath between groups
+		"▎◆ webapp", // selected workspace: bar on both lines
+		"▎  feature/login ↑2 · ◆1 ⠿1",
 		" ├ ⠋ 1:review the login flow",
 		" │   claude · wt",
-		"▎ ├ ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
-		"▎ │   claude · 4m · +31-2",
-		"▎ └ ○ 2:fix-tests.2",
-		"▎     codex~",
+		"▎├ ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
+		"▎│   claude · 4m · +31-2",
+		"▎└ ○ 2:fix-tests.2",
+		"▎    codex~",
 		"",
 		" · notes", // no agents: no counts, nothing nested
 		"   notes",
@@ -97,10 +97,10 @@ func TestParityLayout(t *testing.T) {
 
 func TestHighlightIsSelfDerived(t *testing.T) {
 	a := plain(Render(view(t, "mixed.snapshot", "@5", "api", 0)))
-	if !strings.Contains(a, "▎ ✓ api") || strings.Contains(a, "▎ ◆ webapp") {
+	if !strings.Contains(a, "▎✓ api") || strings.Contains(a, "▎◆ webapp") {
 		t.Fatalf("api rail must highlight api only:\n%s", a)
 	}
-	if !strings.Contains(a, "▎ ├ ◆ 1:migrate the auth table") || strings.Contains(a, "▎ ├ ◆ 2:fix the flaky spec") {
+	if !strings.Contains(a, "▎├ ◆ 1:migrate the auth table") || strings.Contains(a, "▎├ ◆ 2:fix the flaky spec") {
 		t.Fatalf("api rail must highlight window @5 only:\n%s", a)
 	}
 }

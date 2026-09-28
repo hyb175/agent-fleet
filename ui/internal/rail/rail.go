@@ -353,23 +353,22 @@ func RenderMap(v View) (string, []Target) {
 	// lines ("├ "/"│ ", or "└ "/"  " for the last under its workspace), two
 	// cells each, dim, in the same column on both lines; a workspace row
 	// passes "" and touches the left edge, which is what makes it read as the
-	// header. Prefixes: " g1 G " / " g2   " (3 cells + guide), one more when
-	// selected for the ▎ bar. In focus mode the cursor row swaps its leading
-	// cell for ›.
+	// header. Column 0 is a gutter on every row: a space, or ▎ on the selected
+	// row (› for the cursor in focus mode) — the bar replaces the space rather
+	// than adding to it, so a selected row's guide, glyph and text stay in the
+	// same columns as its siblings and the tree line runs straight through the
+	// highlight. Prefixes: " g1 G " / " g2   " (3 cells + guide).
 	row := func(t Target, sel bool, g1, g2, state, name, sub string) {
 		cursor := v.Focus && t.Kind != NoTarget && v.Cursor == t.Row
 		glyph := st.glyph(state, v.Frame, sel)
 		cap := w - 3 - runewidth.StringWidth(g1)
-		if sel {
-			cap--
-		}
 		name, sub = trunc(name, cap), trunc(sub, cap)
 		if sel {
 			bar := "▎"
 			if cursor {
 				bar = "›"
 			}
-			barS := st.hlAccent.Render(bar) + st.hlPad.Render(" ")
+			barS := st.hlAccent.Render(bar)
 			line(st.hlPad.Render(pad(barS+st.hlDim.Render(g1)+glyph+st.hlPad.Render(" ")+st.hlFg.Render(name))), t)
 			line(st.hlPad.Render(pad(barS+st.hlDim.Render(g2)+st.hlPad.Render("  ")+st.hlDim.Render(sub))), t)
 		} else {

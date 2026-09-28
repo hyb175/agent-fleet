@@ -103,10 +103,10 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 │ └ ◆ 1:code-review            │                         │
 │     claude · 4m              │                         │
 │                              │                         │
-│▎ ⠹ webapp                    │                         │
-│▎   feat/api ↑2 · ⠿1 ✓1       │                         │
-│▎ ├ ⠹ 2:api-fix               │                         │
-│▎ │   claude                  │                         │
+│▎⠹ webapp                     │                         │
+│▎  feat/api ↑2 · ⠿1 ✓1        │                         │
+│▎├ ⠹ 2:api-fix                │                         │
+│▎│   claude                   │                         │
 │ └ ✓ 3:tests                  │                         │
 │     claude · 12m · +8-2      │                         │
 │                              │                         │
