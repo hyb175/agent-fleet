@@ -50,20 +50,22 @@ func TestParityLayout(t *testing.T) {
 		"─ fleet ─────────── ◆2 ⠿1 ✓2 ─", // the fleet's counts ride in the rule
 		" ✓ api",
 		"   main · ◆1 ✓2",                // each workspace's counts in its subtitle...
-		"   ◆ 1:migrate the auth table",  // ...and its agents nested under it,
-		"     claude · 15m · +120-8 · …", // tab-numbered, no "api ·" repeated
-		"   ✓ 2:write the changelog",
-		"     claude · 2h · +5-0",
-		"   ✓ 3:scratch",
+		" ├ ◆ 1:migrate the auth table",  // ...and its agents on tree guides under it,
+		" │   claude · 15m · +120-8 · …", // tab-numbered, no "api ·" repeated
+		" ├ ✓ 2:write the changelog",
+		" │   claude · 2h · +5-0",
+		" └ ✓ 3:scratch", // the last one closes the branch
 		"     opencode · 30s",
+		"",           // a breath between groups
 		"▎ ◆ webapp", // selected workspace: bar on both lines
-		"▎  feature/login ↑2 · ◆1 ⠿1",
-		"   ⠋ 1:review the login flow",
-		"     claude · wt",
-		"▎   ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
-		"▎    claude · 4m · +31-2",
-		"▎   ○ 2:fix-tests.2",
-		"▎    codex~",
+		"▎   feature/login ↑2 · ◆1 ⠿1",
+		" ├ ⠋ 1:review the login flow",
+		" │   claude · wt",
+		"▎ ├ ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
+		"▎ │   claude · 4m · +31-2",
+		"▎ └ ○ 2:fix-tests.2",
+		"▎     codex~",
+		"",
 		" · notes", // no agents: no counts, nothing nested
 		"   notes",
 		"",
@@ -98,28 +100,28 @@ func TestHighlightIsSelfDerived(t *testing.T) {
 	if !strings.Contains(a, "▎ ✓ api") || strings.Contains(a, "▎ ◆ webapp") {
 		t.Fatalf("api rail must highlight api only:\n%s", a)
 	}
-	if !strings.Contains(a, "▎   ◆ 1:migrate the auth table") || strings.Contains(a, "▎   ◆ 2:fix the flaky spec") {
+	if !strings.Contains(a, "▎ ├ ◆ 1:migrate the auth table") || strings.Contains(a, "▎ ├ ◆ 2:fix the flaky spec") {
 		t.Fatalf("api rail must highlight window @5 only:\n%s", a)
 	}
 }
 
 func TestOverflowCountsTheRest(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@9", "none", 16)))
-	// 16 rows: one rule, then (16-1-3)/2 = 6 rows of the 9 — api, its three
-	// agents, webapp, its first agent — then "↓3 more".
-	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " ↓3 more") {
+	// 16 rows: one rule, 12 lines of budget — api (2), its three agents (6),
+	// the gap + webapp (3) — five rows, then "↓4 more".
+	if !strings.Contains(out, "◆ webapp") || !strings.Contains(out, " ↓4 more") {
 		t.Fatalf("overflow:\n%s", out)
 	}
-	if strings.Contains(out, "fix the flaky spec") {
+	if strings.Contains(out, "review the login flow") {
 		t.Fatalf("seventh row must be hidden behind the more-line:\n%s", out)
 	}
 }
 
 func TestScrollAndCursorKeepRowVisible(t *testing.T) {
-	v := view(t, "mixed.snapshot", "@9", "none", 16) // six of nine rows fit
+	v := view(t, "mixed.snapshot", "@9", "none", 16) // 12 lines of rows fit
 	v.Scroll(2)
 	out := plain(Render(v))
-	if !strings.Contains(out, "fix-tests.2") || !strings.Contains(out, " ↑2 ↓1 more") {
+	if !strings.Contains(out, "fix the flaky spec") || !strings.Contains(out, " ↑2 ↓2 more") {
 		t.Fatalf("wheel scroll:\n%s", out)
 	}
 	v.Scroll(100)
@@ -136,8 +138,8 @@ func TestScrollAndCursorKeepRowVisible(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		v.Move(1)
 	}
-	// Cursor on row 7 with a six-row window: the last window holding it.
-	if v.Offset != 2 {
+	// Cursor on row 7: the first offset whose window (with webapp's gap) holds it.
+	if v.Offset != 3 {
 		t.Fatalf("viewport must follow the cursor, offset=%d", v.Offset)
 	}
 	if !strings.Contains(plain(Render(v)), "›") || !v.Focus {
@@ -187,9 +189,9 @@ func TestFiltersAndFold(t *testing.T) {
 func TestClickMapPointsAtRows(t *testing.T) {
 	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
 	_, lines := RenderMap(v)
-	// 0 is the rule, 19 the gap before the footer.
-	if lines[0].Kind != NoTarget || lines[19].Kind != NoTarget {
-		t.Fatal("the rule and the gap carry no target")
+	// 0 is the rule, 9 and 18 the gaps between groups, 21 the one before the footer.
+	if lines[0].Kind != NoTarget || lines[9].Kind != NoTarget || lines[18].Kind != NoTarget || lines[21].Kind != NoTarget {
+		t.Fatal("the rule and the gaps carry no target")
 	}
 	if lines[1].Kind != SessionTarget || lines[1].ID != "api" || lines[2].ID != "api" {
 		t.Fatalf("workspace row lines: %+v %+v", lines[1], lines[2])

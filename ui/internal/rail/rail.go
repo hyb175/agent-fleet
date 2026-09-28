@@ -349,35 +349,36 @@ func RenderMap(v View) (string, []Target) {
 		}
 		line(out, none)
 	}
-	// depth 0 is a workspace, 1 an agent under it: two more cells of indent
-	// on both lines. Name line prefix is " g " (3 cells) or "▎ g " when
-	// selected (4); the subtitle prefix is 3 cells either way. In focus mode
-	// the cursor row swaps its leading cell for ›.
-	row := func(t Target, sel bool, depth int, state, name, sub string) {
+	// g1/g2 are the tree guides an agent row carries on its name and subtitle
+	// lines ("├ "/"│ ", or "└ "/"  " for the last under its workspace), two
+	// cells each, dim, in the same column on both lines; a workspace row
+	// passes "" and touches the left edge, which is what makes it read as the
+	// header. Prefixes: " g1 G " / " g2   " (3 cells + guide), one more when
+	// selected for the ▎ bar. In focus mode the cursor row swaps its leading
+	// cell for ›.
+	row := func(t Target, sel bool, g1, g2, state, name, sub string) {
 		cursor := v.Focus && t.Kind != NoTarget && v.Cursor == t.Row
 		glyph := st.glyph(state, v.Frame, sel)
-		in := strings.Repeat(" ", 2*depth)
-		nameCap := w - 3 - len(in)
+		cap := w - 3 - runewidth.StringWidth(g1)
 		if sel {
-			nameCap = w - 4 - len(in)
+			cap--
 		}
-		name = trunc(name, nameCap)
-		sub = trunc(sub, w-3-len(in))
+		name, sub = trunc(name, cap), trunc(sub, cap)
 		if sel {
 			bar := "▎"
 			if cursor {
 				bar = "›"
 			}
-			barS := st.hlAccent.Render(bar)
-			line(st.hlPad.Render(pad(barS+st.hlPad.Render(" "+in)+glyph+st.hlPad.Render(" ")+st.hlFg.Render(name))), t)
-			line(st.hlPad.Render(pad(barS+st.hlPad.Render("  "+in)+st.hlDim.Render(sub))), t)
+			barS := st.hlAccent.Render(bar) + st.hlPad.Render(" ")
+			line(st.hlPad.Render(pad(barS+st.hlDim.Render(g1)+glyph+st.hlPad.Render(" ")+st.hlFg.Render(name))), t)
+			line(st.hlPad.Render(pad(barS+st.hlDim.Render(g2)+st.hlPad.Render("  ")+st.hlDim.Render(sub))), t)
 		} else {
 			lead := " "
 			if cursor {
 				lead = st.cursor.Render("›")
 			}
-			line(lead+in+glyph+" "+st.name(state).Render(name), t)
-			line("   "+in+st.dim.Render(sub), t)
+			line(lead+st.dim.Render(g1)+glyph+" "+st.name(state).Render(name), t)
+			line(" "+st.dim.Render(g2)+"  "+st.dim.Render(sub), t)
 		}
 	}
 
@@ -423,29 +424,30 @@ func RenderMap(v View) (string, []Target) {
 	}
 	per := snap.AgentsPerWindow()
 	// Rows past the pane bottom are invisible anyway: show a window of them
-	// and say how many sit above and below. Two lines per row; three kept
-	// for the more-line, the gap and the footer (avail() mirrors this).
+	// and say how many sit above and below (fits/budget mirror this).
 	total := len(rows)
-	avail := total
+	budget := 0
 	if v.Cfg.Height > 0 {
-		avail = (v.Cfg.Height - len(lines) - 3) / 2
-		if avail < 1 {
-			avail = 1
-		}
+		budget = v.Cfg.Height - len(lines) - 3
 	}
 	offset := v.Offset
-	if offset > total-avail {
-		offset = total - avail
+	if offset > total-1 {
+		offset = total - 1
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	end := offset + avail
-	if end > total {
-		end = total
+	// Scrolled past the end: pull back so the last page is full.
+	for offset > 0 && fits(rows, offset-1, budget) == total {
+		offset--
 	}
-	for _, r := range rows[offset:end] {
+	end := fits(rows, offset, budget)
+	for i := offset; i < end; i++ {
+		r := rows[i]
 		if r.Target.Kind == SessionTarget {
+			if i > offset {
+				line("", none) // a breath between workspace groups
+			}
 			sp := bySess[r.Target.ID]
 			name, sub := sp.Session, sp.Branch
 			if v.Folded[sp.Session] {
@@ -462,8 +464,12 @@ func RenderMap(v View) (string, []Target) {
 				// you outranks which branch it happens to sit on.
 				sub = trunc(sub, w-6-runewidth.StringWidth(cnt)) + " · " + cnt
 			}
-			row(r.Target, sp.Session == v.Cfg.Session, 0, sp.Rollup, name, sub)
+			row(r.Target, sp.Session == v.Cfg.Session, "", "", sp.Rollup, name, sub)
 			continue
+		}
+		g1, g2 := "├ ", "│ "
+		if i+1 == total || rows[i+1].Target.Kind == SessionTarget {
+			g1, g2 = "└ ", "  "
 		}
 		a := byPane[r.Target.ID]
 		// Tab number: under its workspace's header the number is the one tmux
@@ -472,7 +478,7 @@ func RenderMap(v View) (string, []Target) {
 		if a.WindowIndex != "" {
 			name = a.WindowIndex + ":" + name
 		}
-		row(r.Target, a.WindowID == v.Cfg.Window, 1, a.State, name, subtitle(a))
+		row(r.Target, a.WindowID == v.Cfg.Window, g1, g2, a.State, name, subtitle(a))
 	}
 	if offset > 0 || end < total {
 		more := ""
@@ -529,10 +535,10 @@ func (v View) Animate() bool {
 
 // --- interaction (pure) ------------------------------------------------------
 
-// avail mirrors RenderMap's viewport arithmetic: rows that fit under the
-// rule (and the stale banner), two lines each, three lines kept for the
-// more-line, the gap and the footer. 0 = uncapped.
-func (v View) avail() int {
+// budget mirrors RenderMap: the lines left for rows under the rule (and the
+// stale banner), three kept for the more-line, the gap and the footer.
+// 0 = uncapped.
+func (v View) budget() int {
 	if v.Cfg.Height <= 0 || v.Snap == nil {
 		return 0
 	}
@@ -540,11 +546,28 @@ func (v View) avail() int {
 	if v.Snap.Epoch > 0 && v.Snap.Stale(v.Now) {
 		lines++
 	}
-	avail := (v.Cfg.Height - lines - 3) / 2
-	if avail < 1 {
-		avail = 1
+	return v.Cfg.Height - lines - 3
+}
+
+// fits returns the end of the window of rows starting at offset that fits in
+// budget lines: two per row, plus the blank line a workspace row carries
+// above it when it is not the first in view. At least one row always fits.
+func fits(rows []Row, offset, budget int) int {
+	if budget <= 0 {
+		return len(rows)
 	}
-	return avail
+	used := 0
+	for i := offset; i < len(rows); i++ {
+		c := 2
+		if i > offset && rows[i].Target.Kind == SessionTarget {
+			c = 3
+		}
+		if used+c > budget && i > offset {
+			return i
+		}
+		used += c
+	}
+	return len(rows)
 }
 
 // clamp keeps the cursor on a row and scrolls the list to show it.
@@ -561,11 +584,11 @@ func (v *View) clamp() {
 	if v.Cursor < 0 {
 		v.Cursor = 0
 	}
-	avail := v.avail()
 	if v.Cursor < v.Offset {
 		v.Offset = v.Cursor
-	} else if avail > 0 && v.Cursor >= v.Offset+avail {
-		v.Offset = v.Cursor - avail + 1
+	}
+	for b := v.budget(); b > 0 && v.Cursor >= fits(rows, v.Offset, b); {
+		v.Offset++
 	}
 }
 

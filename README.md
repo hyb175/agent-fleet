@@ -93,21 +93,23 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 
 **Inbox** (`Prefix i`) — the attention queue: every agent waiting on you or finished, ranked, with the question or the diffstat visible before you attach. Approve/deny/reply inline (`^y`/`^n`/`^t`), `^a` approves every waiting agent after confirming, or `^v` a done task straight into review. Grouped `NEEDS YOU` / `DONE` rows, a live preview panel, answers guarded by a fingerprint of the exact capture the panel shows.
 
-**Sidenav rail** (`Prefix b`, on by default) — left-edge rail: every workspace with its agents nested under it, live status, refreshed in place. The rule on top carries the fleet's attention counts (or the active filter), every workspace row its own, and a row's **name** is painted by its state — waiting and done in their own color, idle muted. Agents carry their tab number (`2:api-fix`, so `Prefix 2` goes there once you're in that workspace) and don't repeat the workspace name the header already gives, which leaves room for the age, diffstat and isolation rung. The footer sits on the bottom row. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. Its width is fixed (`AGENT_FLEET_SIDENAV_WIDTH`, 30 cols) — dragging its border doesn't resize it, so starting a selection there can't knock the layout askew; borders between work panes still drag normally.
+**Sidenav rail** (`Prefix b`, on by default) — left-edge rail: every workspace with its agents on tree guides under it, a blank line between groups, live status, refreshed in place. The rule on top carries the fleet's attention counts (or the active filter), every workspace row its own, and a row's **name** is painted by its state — waiting and done in their own color, idle muted. Agents carry their tab number (`2:api-fix`, so `Prefix 2` goes there once you're in that workspace) and don't repeat the workspace name the header already gives, which leaves room for the age, diffstat and isolation rung. The footer sits on the bottom row. A scrolling agent list, mouse click and wheel, and a keyboard focus mode (`Prefix B`) with a waiting-only toggle, a text filter and per-workspace folding. Its width is fixed (`AGENT_FLEET_SIDENAV_WIDTH`, 30 cols) — dragging its border doesn't resize it, so starting a selection there can't knock the layout askew; borders between work panes still drag normally.
 
 ```
 ┌──────────────────────────────┬─────────────────────────┐
 │─ fleet ─────────── ◆1 ⠿1 ✓1 ─│                         │
 │ ◆ home                       │   your agent / shell    │
 │   main · ◆1                  │   (the work pane)       │
-│   ◆ 1:code-review            │                         │
+│ └ ◆ 1:code-review            │                         │
 │     claude · 4m              │                         │
+│                              │                         │
 │▎ ⠹ webapp                    │                         │
-│▎  feat/api ↑2 · ⠿1 ✓1        │                         │
-│▎   ⠹ 2:api-fix               │                         │
-│▎    claude                   │                         │
-│   ✓ 3:tests                  │                         │
+│▎   feat/api ↑2 · ⠿1 ✓1       │                         │
+│▎ ├ ⠹ 2:api-fix               │                         │
+│▎ │   claude                  │                         │
+│ └ ✓ 3:tests                  │                         │
 │     claude · 12m · +8-2      │                         │
+│                              │                         │
 │ · notes                      │                         │
 │   notes                      │                         │
 │                              │                         │
