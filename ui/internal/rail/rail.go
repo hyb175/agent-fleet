@@ -1,5 +1,5 @@
-// Package rail renders the sidenav: two stacked lists (workspaces, agents)
-// drawn from fleet.snapshot in a 30-column tmux pane. It is the Go twin of
+// Package rail renders the sidenav: every workspace with its agents nested
+// under it, drawn from fleet.snapshot in a 30-column tmux pane. It is the Go twin of
 // scripts/sidenav.sh and keeps its invariants:
 //
 //   - no tmux calls after startup — data comes from fleet.snapshot and
@@ -91,37 +91,50 @@ type View struct {
 	// Interaction state.
 	Focus     bool            // keyboard focus mode (a key arrived)
 	Cursor    int             // index into Rows(), -1 = none
-	Offset    int             // first agent row shown (scroll position)
+	Offset    int             // first row shown (scroll position)
 	WaitOnly  bool            // w: only agents in wait
 	Filter    string          // /: case-insensitive substring on title or subtitle
 	Filtering bool            // typing the filter
 	Folded    map[string]bool // sessions whose agents are hidden
 }
 
-// Rows is the combined, filtered list the cursor moves over: every
-// workspace row, then every agent row that passes the filters and is not
-// folded. Agents keep snapshot order (the daemon's), as the bash rail does.
+// Rows is the list the cursor moves over, in render order: each workspace,
+// then the agents under it that pass the filters (none while it is folded).
+// Agents keep snapshot order (the daemon's) within their workspace. An agent
+// whose workspace has no S record trails the list rather than vanish.
 func (v View) Rows() []Row {
 	var rows []Row
 	if v.Snap == nil {
 		return rows
 	}
-	for _, sp := range v.Snap.Spaces {
-		rows = append(rows, Row{Target: Target{Kind: SessionTarget, ID: sp.Session}, Sess: sp.Session})
-	}
 	per := v.Snap.AgentsPerWindow()
 	needle := strings.ToLower(v.Filter)
+	shown := func(a snapshot.Agent) bool {
+		if v.Folded[a.Session] || (v.WaitOnly && a.State != snapshot.StateWait) {
+			return false
+		}
+		// The workspace name is matched here even though the row no longer
+		// prints it — the header above does — so /webapp still finds its agents.
+		return needle == "" ||
+			strings.Contains(strings.ToLower(a.Session+" "+a.Title(per)+" "+subtitle(a)), needle)
+	}
+	agent := func(a snapshot.Agent) Row {
+		return Row{Target: Target{Kind: AgentTarget, ID: a.Pane}, Sess: a.Session}
+	}
+	placed := map[string]bool{}
+	for _, sp := range v.Snap.Spaces {
+		rows = append(rows, Row{Target: Target{Kind: SessionTarget, ID: sp.Session}, Sess: sp.Session})
+		placed[sp.Session] = true
+		for _, a := range v.Snap.Agents { // ponytail: spaces×agents scan, both are tens
+			if a.Session == sp.Session && shown(a) {
+				rows = append(rows, agent(a))
+			}
+		}
+	}
 	for _, a := range v.Snap.Agents {
-		if v.Folded[a.Session] {
-			continue
+		if !placed[a.Session] && shown(a) {
+			rows = append(rows, agent(a))
 		}
-		if v.WaitOnly && a.State != snapshot.StateWait {
-			continue
-		}
-		if needle != "" && !strings.Contains(strings.ToLower(a.Title(per)+" "+subtitle(a, "")), needle) {
-			continue
-		}
-		rows = append(rows, Row{Target: Target{Kind: AgentTarget, ID: a.Pane}, Sess: a.Session})
 	}
 	for i := range rows {
 		rows[i].Target.Row = i
@@ -129,20 +142,13 @@ func (v View) Rows() []Row {
 	return rows
 }
 
-// subtitle = workspace · kind, then for wait/done the time in state and
-// the diffstat (how big is the thing waiting on me), then the isolation
-// rung when above host, then the race attempt (⑂k/N).
-//
-// cur is the rail's own workspace. Naming it on every one of its rows spends
-// ~12 of 27 cells saying where you already are, and the tail it pushes past
-// the edge — age, diffstat, rung — is the part you decide on, so those rows
-// drop the prefix. Row matching passes cur="" so a filter still finds an
-// agent by its workspace name.
-func subtitle(a snapshot.Agent, cur string) string {
+// subtitle = kind, then for wait/done the time in state and the diffstat
+// (how big is the thing waiting on me), then the isolation rung when above
+// host, then the race attempt (⑂k/N). The workspace is the header the row
+// sits under, so it is not repeated here — that leaves the tail you decide
+// on (age, diffstat, rung) whole instead of truncated.
+func subtitle(a snapshot.Agent) string {
 	sub := a.Label
-	if a.Session != cur {
-		sub = a.Session + " · " + a.Label
-	}
 	attention := a.State == snapshot.StateWait || a.State == snapshot.StateDone
 	if attention && a.HasAge {
 		sub += " · " + snapshot.FormatAge(a.Age)
@@ -343,34 +349,35 @@ func RenderMap(v View) (string, []Target) {
 		}
 		line(out, none)
 	}
-	rows := v.Rows()
-	row := func(t Target, sel bool, state, name, sub string) {
-		// Name line prefix is " g " (3 cells) or "▎ g " when selected (4);
-		// the subtitle prefix is 3 cells either way. In focus mode the cursor
-		// row swaps its leading cell for ›.
+	// depth 0 is a workspace, 1 an agent under it: two more cells of indent
+	// on both lines. Name line prefix is " g " (3 cells) or "▎ g " when
+	// selected (4); the subtitle prefix is 3 cells either way. In focus mode
+	// the cursor row swaps its leading cell for ›.
+	row := func(t Target, sel bool, depth int, state, name, sub string) {
 		cursor := v.Focus && t.Kind != NoTarget && v.Cursor == t.Row
 		glyph := st.glyph(state, v.Frame, sel)
-		nameCap := w - 3
+		in := strings.Repeat(" ", 2*depth)
+		nameCap := w - 3 - len(in)
 		if sel {
-			nameCap = w - 4
+			nameCap = w - 4 - len(in)
 		}
 		name = trunc(name, nameCap)
-		sub = trunc(sub, w-3)
+		sub = trunc(sub, w-3-len(in))
 		if sel {
 			bar := "▎"
 			if cursor {
 				bar = "›"
 			}
 			barS := st.hlAccent.Render(bar)
-			line(st.hlPad.Render(pad(barS+st.hlPad.Render(" ")+glyph+st.hlPad.Render(" ")+st.hlFg.Render(name))), t)
-			line(st.hlPad.Render(pad(barS+st.hlPad.Render("  ")+st.hlDim.Render(sub))), t)
+			line(st.hlPad.Render(pad(barS+st.hlPad.Render(" "+in)+glyph+st.hlPad.Render(" ")+st.hlFg.Render(name))), t)
+			line(st.hlPad.Render(pad(barS+st.hlPad.Render("  "+in)+st.hlDim.Render(sub))), t)
 		} else {
 			lead := " "
 			if cursor {
 				lead = st.cursor.Render("›")
 			}
-			line(lead+glyph+" "+st.name(state).Render(name), t)
-			line("   "+st.dim.Render(sub), t)
+			line(lead+in+glyph+" "+st.name(state).Render(name), t)
+			line("   "+in+st.dim.Render(sub), t)
 		}
 	}
 
@@ -378,26 +385,68 @@ func RenderMap(v View) (string, []Target) {
 	if snap == nil {
 		snap = &snapshot.Snapshot{Interval: 1}
 	}
-	// The fleet's counts ride in the spaces rule: the status bar has them too,
-	// but that is 400 columns away on a wide screen, and this is where you are
-	// already looking.
-	fleetP, fleetS := st.summary(snap.Agents, "")
-	header("spaces", fleetP, fleetS)
+	// One rule over one list. Its right slot is the filter state while one is
+	// active, otherwise the fleet's counts: the status bar has those too, but
+	// 400 columns away on a wide screen, and this is where you already look.
+	right, rightS := st.summary(snap.Agents, "")
+	if v.WaitOnly || v.Filter != "" || v.Filtering {
+		right, rightS = "all", ""
+		if v.WaitOnly {
+			right = "wait"
+		}
+		if v.Filter != "" || v.Filtering {
+			right += " /" + v.Filter
+			if v.Filtering {
+				right += "▏"
+			}
+		}
+	}
+	header("fleet", right, rightS)
 	if snap.Epoch > 0 && snap.Stale(v.Now) {
 		line(st.wait.Render(" ⚠ stale — daemon down?"), none)
 	}
-	ri := 0 // index into rows
+	rows := v.Rows()
 	if len(snap.Spaces) == 0 {
 		line(st.dim.Render(" (no workspaces)"), none)
-	} else {
-		folded := map[string]int{}
-		for _, a := range snap.Agents {
-			if v.Folded[a.Session] {
-				folded[a.Session]++
-			}
+	}
+	bySess := make(map[string]snapshot.Space, len(snap.Spaces))
+	for _, sp := range snap.Spaces {
+		bySess[sp.Session] = sp
+	}
+	byPane := make(map[string]snapshot.Agent, len(snap.Agents))
+	folded := map[string]int{}
+	for _, a := range snap.Agents {
+		byPane[a.Pane] = a
+		if v.Folded[a.Session] {
+			folded[a.Session]++
 		}
-		for _, sp := range snap.Spaces {
-			sel := sp.Session == v.Cfg.Session
+	}
+	per := snap.AgentsPerWindow()
+	// Rows past the pane bottom are invisible anyway: show a window of them
+	// and say how many sit above and below. Two lines per row; three kept
+	// for the more-line, the gap and the footer (avail() mirrors this).
+	total := len(rows)
+	avail := total
+	if v.Cfg.Height > 0 {
+		avail = (v.Cfg.Height - len(lines) - 3) / 2
+		if avail < 1 {
+			avail = 1
+		}
+	}
+	offset := v.Offset
+	if offset > total-avail {
+		offset = total - avail
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	end := offset + avail
+	if end > total {
+		end = total
+	}
+	for _, r := range rows[offset:end] {
+		if r.Target.Kind == SessionTarget {
+			sp := bySess[r.Target.ID]
 			name, sub := sp.Session, sp.Branch
 			if v.Folded[sp.Session] {
 				// Folded: the marker's total is the number worth the cells —
@@ -413,78 +462,32 @@ func RenderMap(v View) (string, []Target) {
 				// you outranks which branch it happens to sit on.
 				sub = trunc(sub, w-6-runewidth.StringWidth(cnt)) + " · " + cnt
 			}
-			row(rows[ri].Target, sel, sp.Rollup, name, sub)
-			ri++
+			row(r.Target, sp.Session == v.Cfg.Session, 0, sp.Rollup, name, sub)
+			continue
 		}
-	}
-	line("", none)
-	right := "all"
-	if v.WaitOnly {
-		right = "wait"
-	}
-	if v.Filter != "" || v.Filtering {
-		right += " /" + v.Filter
-		if v.Filtering {
-			right += "▏"
+		a := byPane[r.Target.ID]
+		// Tab number: under its workspace's header the number is the one tmux
+		// shows there, so Prefix N is a glance away once you are in it.
+		name := a.Title(per)
+		if a.WindowIndex != "" {
+			name = a.WindowIndex + ":" + name
 		}
+		row(r.Target, a.WindowID == v.Cfg.Window, 1, a.State, name, subtitle(a))
 	}
-	header("agents", right, "")
-	agentRows := rows[ri:]
+	if offset > 0 || end < total {
+		more := ""
+		if offset > 0 {
+			more += fmt.Sprintf(" ↑%d", offset)
+		}
+		if end < total {
+			more += fmt.Sprintf(" ↓%d", total-end)
+		}
+		line(st.dim.Render(more+" more"), none)
+	}
 	if len(snap.Agents) == 0 {
 		line(st.dim.Render(" (no agents)"), none)
-	} else if len(agentRows) == 0 {
+	} else if len(snap.Agents) > 0 && total == len(snap.Spaces) {
 		line(st.dim.Render(" (none match)"), none)
-	} else {
-		per := snap.AgentsPerWindow()
-		byPane := make(map[string]snapshot.Agent, len(snap.Agents))
-		for _, a := range snap.Agents {
-			byPane[a.Pane] = a
-		}
-		total := len(agentRows)
-		avail := total
-		if v.Cfg.Height > 0 {
-			// Rows past the pane bottom are invisible anyway: show a window
-			// of them and say how many sit above and below. Two lines per
-			// row; three reserved for the footer and the more-line.
-			avail = (v.Cfg.Height - len(lines) - 3) / 2
-			if avail < 1 {
-				avail = 1
-			}
-		}
-		offset := v.Offset
-		if offset > total-avail {
-			offset = total - avail
-		}
-		if offset < 0 {
-			offset = 0
-		}
-		end := offset + avail
-		if end > total {
-			end = total
-		}
-		for _, r := range agentRows[offset:end] {
-			a := byPane[r.Target.ID]
-			sel := a.WindowID == v.Cfg.Window
-			name := a.Title(per)
-			if a.Session == v.Cfg.Session && a.WindowIndex != "" {
-				// Tab number, so Prefix 3 is a glance away — but only for this
-				// rail's own workspace, where the number is the one tmux shows.
-				// Cross-workspace rows leave it off: there it means nothing
-				// until you switch.
-				name = a.WindowIndex + ":" + name
-			}
-			row(r.Target, sel, a.State, name, subtitle(a, v.Cfg.Session))
-		}
-		if offset > 0 || end < total {
-			more := ""
-			if offset > 0 {
-				more += fmt.Sprintf(" ↑%d", offset)
-			}
-			if end < total {
-				more += fmt.Sprintf(" ↓%d", total-end)
-			}
-			line(st.dim.Render(more+" more"), none)
-		}
 	}
 	// The footer is pinned to the bottom row, not left to float wherever the
 	// list ended: a 79-row rail holding a 21-row fleet used to put it in the
@@ -526,13 +529,14 @@ func (v View) Animate() bool {
 
 // --- interaction (pure) ------------------------------------------------------
 
-// availAgents mirrors RenderMap's viewport arithmetic (0 = uncapped).
-func (v View) availAgents() int {
+// avail mirrors RenderMap's viewport arithmetic: rows that fit under the
+// rule (and the stale banner), two lines each, three lines kept for the
+// more-line, the gap and the footer. 0 = uncapped.
+func (v View) avail() int {
 	if v.Cfg.Height <= 0 || v.Snap == nil {
 		return 0
 	}
-	// spaces rule + its rows + the gap between sections + agents rule.
-	lines := 1 + 2*len(v.Snap.Spaces) + 1 + 1
+	lines := 1
 	if v.Snap.Epoch > 0 && v.Snap.Stale(v.Now) {
 		lines++
 	}
@@ -543,7 +547,7 @@ func (v View) availAgents() int {
 	return avail
 }
 
-// clamp keeps the cursor on a row and scrolls the agent window to show it.
+// clamp keeps the cursor on a row and scrolls the list to show it.
 func (v *View) clamp() {
 	rows := v.Rows()
 	if len(rows) == 0 {
@@ -557,16 +561,11 @@ func (v *View) clamp() {
 	if v.Cursor < 0 {
 		v.Cursor = 0
 	}
-	first := len(v.Snap.Spaces) // first agent row index
-	if v.Cursor < first {
-		return
-	}
-	ai := v.Cursor - first
-	avail := v.availAgents()
-	if ai < v.Offset {
-		v.Offset = ai
-	} else if avail > 0 && ai >= v.Offset+avail {
-		v.Offset = ai - avail + 1
+	avail := v.avail()
+	if v.Cursor < v.Offset {
+		v.Offset = v.Cursor
+	} else if avail > 0 && v.Cursor >= v.Offset+avail {
+		v.Offset = v.Cursor - avail + 1
 	}
 }
 
@@ -581,13 +580,11 @@ func (v *View) Move(d int) {
 	v.clamp()
 }
 
-// Scroll shifts the agent viewport by d rows (the wheel).
+// Scroll shifts the viewport by d rows (the wheel).
 func (v *View) Scroll(d int) {
 	v.Offset += d
-	if v.Snap != nil {
-		if n := len(v.Rows()) - len(v.Snap.Spaces); v.Offset > n-1 {
-			v.Offset = n - 1
-		}
+	if n := len(v.Rows()); v.Offset > n-1 {
+		v.Offset = n - 1
 	}
 	if v.Offset < 0 {
 		v.Offset = 0

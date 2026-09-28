@@ -40,7 +40,7 @@ check "cursor marker shown" "tx capture-pane -p -t '$rail' | grep -q '›'"
 # / filter: header reflects it; Esc clears it.
 tx send-keys -t "$rail" / x y z
 wait_for 5 "tx capture-pane -p -t '$rail' | grep -q '/xyz'"
-check "filter shows in the header" "tx capture-pane -p -t '$rail' | grep -q 'agents.*/xyz'"
+check "filter shows in the header" "tx capture-pane -p -t '$rail' | grep -q 'fleet.*/xyz'"
 check "no agent matches xyz" "tx capture-pane -p -t '$rail' | grep -q '(none match)'"
 tx send-keys -t "$rail" Escape
 wait_for 5 "! tx capture-pane -p -t '$rail' | grep -q '/xyz'"

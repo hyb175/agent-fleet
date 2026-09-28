@@ -47,27 +47,25 @@ func TestParityLayout(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@2", "webapp", 0)))
 	lines := strings.Split(out, "\n")
 	want := []string{
-		"─ spaces ────────── ◆2 ⠿1 ✓2 ─", // the fleet's counts ride in the rule
+		"─ fleet ─────────── ◆2 ⠿1 ✓2 ─", // the fleet's counts ride in the rule
 		" ✓ api",
-		"   main · ◆1 ✓2", // and each workspace's in its subtitle
-		"▎ ◆ webapp",      // selected workspace: bar on both lines
+		"   main · ◆1 ✓2",                // each workspace's counts in its subtitle...
+		"   ◆ 1:migrate the auth table",  // ...and its agents nested under it,
+		"     claude · 15m · +120-8 · …", // tab-numbered, no "api ·" repeated
+		"   ✓ 2:write the changelog",
+		"     claude · 2h · +5-0",
+		"   ✓ 3:scratch",
+		"     opencode · 30s",
+		"▎ ◆ webapp", // selected workspace: bar on both lines
 		"▎  feature/login ↑2 · ◆1 ⠿1",
-		" · notes", // no agents: no counts
+		"   ⠋ 1:review the login flow",
+		"     claude · wt",
+		"▎   ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
+		"▎    claude · 4m · +31-2",
+		"▎   ○ 2:fix-tests.2",
+		"▎    codex~",
+		" · notes", // no agents: no counts, nothing nested
 		"   notes",
-		"",
-		"─ agents ─────────────── all ─",
-		" ⠋ 1:review the login flow", // this rail's workspace: tab number,
-		"   claude · wt",             // and no "webapp ·" saying where you are
-		"▎ ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
-		"▎  claude · 4m · +31-2",     // the diffstat the prefix used to truncate
-		"▎ ○ 2:fix-tests.2",
-		"▎  codex~",
-		" ◆ migrate the auth table",      // another workspace: no number,
-		"   api · claude · 15m · +120-…", // and it says which one
-		" ✓ write the changelog",
-		"   api · claude · 2h · +5-0",
-		" ✓ scratch",
-		"   api · opencode · 30s",
 		"",
 		" prefix+o open · prefix+b hide",
 	}
@@ -100,44 +98,45 @@ func TestHighlightIsSelfDerived(t *testing.T) {
 	if !strings.Contains(a, "▎ ✓ api") || strings.Contains(a, "▎ ◆ webapp") {
 		t.Fatalf("api rail must highlight api only:\n%s", a)
 	}
-	// api's own agents carry their tab number here; webapp's do not.
-	if !strings.Contains(a, "▎ ◆ 1:migrate the auth table") || strings.Contains(a, "▎ ◆ fix the flaky spec") {
+	if !strings.Contains(a, "▎   ◆ 1:migrate the auth table") || strings.Contains(a, "▎   ◆ 2:fix the flaky spec") {
 		t.Fatalf("api rail must highlight window @5 only:\n%s", a)
 	}
 }
 
 func TestOverflowCountsTheRest(t *testing.T) {
 	out := plain(Render(view(t, "mixed.snapshot", "@9", "none", 16)))
-	// 16 rows: spaces rule, 3 spaces rows (6), the section gap, agents rule =
-	// 9 lines before the agents; (16-9-3)/2 = 2 agent rows, then "↓4 more".
-	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " ↓4 more") {
+	// 16 rows: one rule, then (16-1-3)/2 = 6 rows of the 9 — api, its three
+	// agents, webapp, its first agent — then "↓3 more".
+	if !strings.Contains(out, "review the login flow") || !strings.Contains(out, " ↓3 more") {
 		t.Fatalf("overflow:\n%s", out)
 	}
-	if strings.Contains(out, "fix-tests.2") {
-		t.Fatalf("third agent must be hidden behind the more-line:\n%s", out)
+	if strings.Contains(out, "fix the flaky spec") {
+		t.Fatalf("seventh row must be hidden behind the more-line:\n%s", out)
 	}
 }
 
 func TestScrollAndCursorKeepRowVisible(t *testing.T) {
-	v := view(t, "mixed.snapshot", "@9", "none", 16) // two agent rows fit
+	v := view(t, "mixed.snapshot", "@9", "none", 16) // six of nine rows fit
 	v.Scroll(2)
 	out := plain(Render(v))
-	if !strings.Contains(out, "fix-tests.2") || !strings.Contains(out, " ↑2 ↓2 more") {
+	if !strings.Contains(out, "fix-tests.2") || !strings.Contains(out, " ↑2 ↓1 more") {
 		t.Fatalf("wheel scroll:\n%s", out)
 	}
 	v.Scroll(100)
-	if v.Offset != 5 || !strings.Contains(plain(Render(v)), "scratch") {
+	if v.Offset != 8 || !strings.Contains(plain(Render(v)), "notes") {
 		t.Fatalf("scroll clamps to the last row, offset=%d", v.Offset)
 	}
 	v.Offset = 0
 	v.Cursor = -1
-	for i := 0; i < 3+4; i++ { // 3 spaces rows, then into the agents
+	v.Move(1) // -1 -> 0 (api)
+	v.Move(1) // api's first agent
+	if got := v.Selected(); got.Kind != AgentTarget || got.ID != "%9" {
+		t.Fatalf("cursor after 2 moves: %+v", got)
+	}
+	for i := 0; i < 6; i++ {
 		v.Move(1)
 	}
-	if got := v.Selected(); got.Kind != AgentTarget || got.ID != "%9" {
-		t.Fatalf("cursor after 7 moves: %+v", got)
-	}
-	// Cursor on agent row 3 with a two-row window: the last window holding it.
+	// Cursor on row 7 with a six-row window: the last window holding it.
 	if v.Offset != 2 {
 		t.Fatalf("viewport must follow the cursor, offset=%d", v.Offset)
 	}
@@ -153,16 +152,16 @@ func TestFiltersAndFold(t *testing.T) {
 	if len(rows) != 3+2 {
 		t.Fatalf("wait-only: %d rows", len(rows))
 	}
-	if !strings.Contains(plain(Render(v)), "─ agents ────────────── wait ─") {
+	if !strings.Contains(plain(Render(v)), "─ fleet ─────────────── wait ─") {
 		t.Fatalf("header must show the filter:\n%s", plain(Render(v)))
 	}
 	v.WaitOnly = false
 	v.Filter = "AUTH"
-	if rows := v.Rows(); len(rows) != 3+1 || rows[3].Target.ID != "%9" {
+	if rows := v.Rows(); len(rows) != 3+1 || rows[1].Target.ID != "%9" { // under api
 		t.Fatalf("text filter is case-insensitive over the title: %+v", rows)
 	}
 	v.Filter = "codex"
-	if rows := v.Rows(); len(rows) != 3+1 || rows[3].Target.ID != "%7" {
+	if rows := v.Rows(); len(rows) != 3+1 || rows[2].Target.ID != "%7" { // under webapp
 		t.Fatalf("text filter covers the subtitle: %+v", rows)
 	}
 	v.Filter = "nothing-matches"
@@ -170,7 +169,7 @@ func TestFiltersAndFold(t *testing.T) {
 		t.Fatal("empty filter result must say so")
 	}
 	v.Filter = ""
-	v.Cursor = 1 // webapp workspace row
+	v.Cursor = 4 // webapp workspace row (after api and its three agents)
 	v.ToggleFold()
 	out := plain(Render(v))
 	if !strings.Contains(out, "▸ webapp") || !strings.Contains(out, "feature/login ↑2 · 3 fol") {
@@ -188,15 +187,15 @@ func TestFiltersAndFold(t *testing.T) {
 func TestClickMapPointsAtRows(t *testing.T) {
 	v := view(t, "mixed.snapshot", "@2", "webapp", 0)
 	_, lines := RenderMap(v)
-	// 0 is the spaces rule, 7 the section gap, 8 the agents rule.
-	if lines[0].Kind != NoTarget || lines[7].Kind != NoTarget || lines[8].Kind != NoTarget {
-		t.Fatal("section rules and the gap carry no target")
+	// 0 is the rule, 19 the gap before the footer.
+	if lines[0].Kind != NoTarget || lines[19].Kind != NoTarget {
+		t.Fatal("the rule and the gap carry no target")
 	}
 	if lines[1].Kind != SessionTarget || lines[1].ID != "api" || lines[2].ID != "api" {
 		t.Fatalf("workspace row lines: %+v %+v", lines[1], lines[2])
 	}
-	if lines[9].Kind != AgentTarget || lines[9].ID != "%3" || lines[10].ID != "%3" {
-		t.Fatalf("agent row lines: %+v %+v", lines[9], lines[10])
+	if lines[3].Kind != AgentTarget || lines[3].ID != "%9" || lines[4].ID != "%9" {
+		t.Fatalf("agent row lines: %+v %+v", lines[3], lines[4])
 	}
 	if lines[len(lines)-1].Kind != NoTarget {
 		t.Fatal("footer carries no target")
@@ -222,8 +221,8 @@ func TestKeysDriveTheView(t *testing.T) {
 	}
 	press("j")
 	press("j")
-	if m.view.Selected().ID != "webapp" || !m.view.Focus {
-		t.Fatalf("j j lands on the second workspace: %+v", m.view.Selected())
+	if m.view.Selected().ID != "%9" || !m.view.Focus {
+		t.Fatalf("j j lands on the first workspace's first agent: %+v", m.view.Selected())
 	}
 	if cmd := press("enter"); cmd == nil || m.view.Focus {
 		t.Fatal("enter on a row yields a jump command and leaves focus mode")
@@ -338,10 +337,10 @@ func TestNameCarriesItsState(t *testing.T) {
 		what, name string
 		style      lipgloss.Style
 	}{
-		{"wait", "migrate the auth table", bold(th.Wait)},
-		{"done", "write the changelog", bold(th.Done)},
-		{"working", "review the login flow", bold(th.FG)},
-		{"idle", "fix-tests.2", plainFg(th.Muted)},
+		{"wait", "1:migrate the auth table", bold(th.Wait)},
+		{"done", "2:write the changelog", bold(th.Done)},
+		{"working", "1:review the login flow", bold(th.FG)},
+		{"idle", "2:fix-tests.2", plainFg(th.Muted)},
 	} {
 		if !strings.Contains(out, c.style.Render(c.name)) {
 			t.Errorf("%s row's name must be painted by its state: %q", c.what, c.name)
