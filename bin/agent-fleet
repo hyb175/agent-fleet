@@ -622,6 +622,8 @@ Options:
   --dir <dir>               Working directory (default: target workspace path, else current directory).
   --intent <text>           What this agent is for — recorded in its task record
                             (default: the agent's name). \`agent-fleet task\` sets it.
+                            Without it the agent is interactive: when it exits the
+                            pane drops to a shell instead of closing.
   --env <NAME=VALUE>        Set one variable in the window's environment (via tmux,
                             bypassing the shell — safe for arbitrary text).
   --sandbox <root>          claude-only: launch with the OS bash sandbox overlay,
@@ -743,6 +745,17 @@ cmd_add() {
     else
       cmd="$cmd --settings '$hooks_file'"
     fi
+  fi
+
+  # Interactive agents (Prefix C, `add` without --intent) hand the pane back
+  # to a shell when the agent exits instead of taking the tab with them:
+  # closing a claude session is not being done with the pane. Task panes
+  # (--intent: agent-driven) keep exec semantics — their exit IS the end, and
+  # sidenav-reap closes the tab. _release untags the pane first so the rail
+  # stops listing it; -u AF_TASK_PRESPAWNED so a claude typed later in that
+  # shell is auto-adopted like any hand-started one.
+  if [[ -z "$intent" ]]; then
+    cmd="$cmd; '$ROOT_DIR/bin/agent-fleet' _release; exec env -u AF_TASK_PRESPAWNED '$ROOT_DIR/scripts/pane-shell.sh'"
   fi
 
   # --env NAME=VALUE lands in the window's environment via tmux itself, so the
@@ -3279,6 +3292,17 @@ main() {
     # Internal: echo the last command-prompt input, parked in a tmux option by
     # the conf's prompt bindings (typed text never touches sh — see the conf).
     _prompt)    tx show-option -gqv @fleet-prompt 2>/dev/null ;;
+    # The interactive agent in $TMUX_PANE exited and the pane is becoming a
+    # plain shell: untag it (the rail drops the row) and drop its task/session
+    # pointers, so a claude started later in that shell is adopted as a NEW
+    # agent instead of inheriting this one's record — the same reset
+    # persist-restore does when a resume fails.
+    _release)   [[ -n "${TMUX_PANE:-}" ]] || exit 0
+                for o in @fleet-agent-kind @fleet-task @fleet-session; do
+                  tx set-option -p -t "$TMUX_PANE" -u "$o" 2>/dev/null || true
+                done
+                rm -f "$AF_CACHE_DIR/panes/$TMUX_PANE.task" "$AF_CACHE_DIR/panes/$TMUX_PANE.session" 2>/dev/null
+                exit 0 ;;
     # Internal: restore's relaunch shim for container-rung tasks.
     _container-resume) cmd_container_resume "$@" ;;
     -V|--version|version) echo "agent-fleet $AGENT_FLEET_VERSION" ;;

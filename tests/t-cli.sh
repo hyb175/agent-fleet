@@ -39,6 +39,22 @@ check "add --to api lands in api" "[[ \"\$(tx display-message -p -t \"$p\" '#S')
 cwd="$(tx display-message -p -t "$p" '#{pane_current_path}')"
 check "add dir default = target session cwd (got $cwd)" "[[ '$cwd' == */apidir ]]"
 
+# An interactive agent's exit hands the pane to a shell (untagged); a task's
+# exit (--intent) ends the pane, as before.
+p="$("$AF" add --to api --cmd 'sleep 0.3' 2>/dev/null)"
+# _release runs between the agent's exit and the shell's exec: wait for its
+# untag, the last thing before the shell takes over.
+poll_until 10 "[[ -z \"\$(tx display-message -p -t '$p' '#{@fleet-agent-kind}' 2>/dev/null)\" ]]"
+poll_until 5 "[[ \"\$(tx display-message -p -t '$p' '#{pane_current_command}' 2>/dev/null)\" =~ ^(sh|bash|zsh|fish)$ ]]"
+check "interactive agent exit leaves the pane on a shell" \
+  "[[ \"\$(tx display-message -p -t '$p' '#{pane_current_command}' 2>/dev/null)\" =~ ^(sh|bash|zsh|fish)$ ]]"
+check "…and untags it" "[[ -z \"\$(tx display-message -p -t '$p' '#{@fleet-agent-kind}' 2>/dev/null)\" ]]"
+t="$("$AF" add --to api --cmd 'sleep 0.3' --intent 'a task' 2>/dev/null)"
+# list-panes, not display-message: tmux 3.7 answers a dead pane target with
+# an empty line and rc 0.
+poll_until 10 "! tx list-panes -a -F '#{pane_id}' | grep -qx '$t'"
+check "task agent exit ends the pane" "! tx list-panes -a -F '#{pane_id}' | grep -qx '$t'"
+
 # add --new-workspace (the picker's Alt-a 'spawn with agent' path): fresh
 # session named for the repo, agent as its FIRST tab (placeholder removed),
 # right cwd
