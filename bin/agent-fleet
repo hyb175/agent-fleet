@@ -773,7 +773,12 @@ cmd_add() {
   tx set-option -p -t "$pane_id" @fleet-agent-kind "$disp_kind" 2>/dev/null || true
   tx set-option -w -t "$pane_id" @fleet-agent "$disp_kind" 2>/dev/null || true
   # Every agent gets a task record; without an explicit intent the name stands in.
-  task_record_create "$pane_id" "${intent:-$name}" "$dir" "$disp_kind" >/dev/null || true
+  local tid
+  tid="$(task_record_create "$pane_id" "${intent:-$name}" "$dir" "$disp_kind" 2>/dev/null || true)"
+  # Only a task is agent-driven; persist-restore reads this line to give a
+  # relaunched pane the same exit semantics as the launch above. Absent (an
+  # interactive add, a hand-started agent adopted by the hook) = interactive.
+  [[ -n "$intent" && -n "$tid" ]] && printf 'origin task\n' >> "$AF_TASKS_DIR/$tid" 2>/dev/null
   # Drop the placeholder window if we created the workspace for this agent, so the
   # agent is the workspace's first tab.
   [[ -n "$ph_win" ]] && tx kill-window -t "$ph_win" 2>/dev/null || true

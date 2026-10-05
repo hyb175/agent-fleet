@@ -333,7 +333,17 @@ for s in "${sess_order[@]}"; do
           rm -f "$CACHE/panes/$chosen.session" 2>/dev/null || true
           fb="exec bash -i"
         fi
-        respawn "$chosen" "bash -lc '$rc || { $fb; }'" || true
+        # Same exit semantics as the launch (cmd_add): a task pane ends with
+        # its agent; an interactive one — no `origin task` in the record, or
+        # no record at all — hands the pane to a shell, after _release
+        # untags it (the reset fb does by hand). Success or failure alike,
+        # hence `;` not `||`.
+        if [[ -z "$stask" || "$stask" == "-" ]] || ! grep -qx 'origin task' "$CACHE/tasks/$stask" 2>/dev/null; then
+          fb="$(printf '%q' "$ROOT/bin/agent-fleet") _release; exec env -u AF_TASK_PRESPAWNED $(printf '%q' "$ROOT/scripts/pane-shell.sh")"
+          respawn "$chosen" "bash -lc '$rc; $fb'" || true
+        else
+          respawn "$chosen" "bash -lc '$rc || { $fb; }'" || true
+        fi
         [[ "$RESTORE_STAGGER" != "0" ]] && sleep "$RESTORE_STAGGER"
       done
     fi

@@ -82,6 +82,16 @@ tx new-session -d -s fresh -n fresh -c "$WORK/r"    # agent kind, but no id capt
 fa="$(tx list-panes -t fresh -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 != "1" {print $1; exit}')"
 tx set-option -p -t "$fa" @fleet-agent-kind claude
 tx new-session -d -s plain -n plain -c "$WORK/r"    # bare shell: no kind, no id
+# A task-origin record (as `agent-fleet task` writes): its pane must keep
+# exec semantics on relaunch, while the record-less `fresh` agent above is
+# interactive and hands its pane to a shell.
+tx new-session -d -s tasky -n tasky -c "$WORK/r"
+ta="$(tx list-panes -t tasky -F '#{pane_id} #{?@fleet-sidenav,1,0}' | awk '$2 != "1" {print $1; exit}')"
+tx set-option -p -t "$ta" @fleet-agent-kind claude
+tx set-option -p -t "$ta" @fleet-task t1
+mkdir -p "$CACHE/tasks"
+printf 'id t1\nintent run the suite\ndir %s\nkind claude\npane %s\norigin task\n' "$WORK/r" "$ta" > "$CACHE/tasks/t1"
+printf 't1\n' > "$CACHE/panes/$ta.task"
 sleep 0.4
 "$REPO/scripts/persist-save.sh"
 tx kill-server; sleep 0.4
@@ -94,5 +104,10 @@ check "missing-id agent relaunches fresh claude" "grep -q 'claude' <<<\"\$fstart
 check "fresh launch is NOT a resume" "! grep -q 'claude --resume' <<<\"\$fstart\""
 check "fresh agent keeps the hooks overlay" "grep -q -- '--settings' <<<\"\$fstart\""
 check "plain shell pane does NOT become an agent" "! grep -q 'claude' <<<\"\$pstart\""
+# shellcheck disable=SC2034
+# Not split on |: the command itself contains `||`.
+tstart="$(tx list-panes -t tasky -F '#{?@fleet-sidenav,,#{pane_start_command}}' | grep -v '^$')"
+check "interactive agent relaunch hands the pane to a shell on exit" "grep -q 'pane-shell.sh' <<<\"\$fstart\""
+check "task-origin relaunch keeps exec semantics (no shell handoff)" "! grep -q 'pane-shell.sh' <<<\"\$tstart\" && grep -qF '|| {' <<<\"\$tstart\""
 rm -rf "$FAKEBIN"
 exit "$FAIL"
