@@ -36,4 +36,12 @@ printf '%s\n' "$pane" > "$cur" 2>/dev/null
 if [[ -n "$sess" && -n "$win" ]]; then
   printf '%s|%s\n' "$sess" "$win" > "$CACHE/focus.now" 2>/dev/null
 fi
+# Arriving on a finished agent acknowledges it (done -> idle), however you got
+# here — Prefix N, a tab click, select-window — not only via goto. The triage
+# queue drains because you looked, not because you used one particular key.
+# Hooked tier only (a .status file): the scraped tier's ack needs a
+# capture-pane, and this hook stays tmux-free — goto still covers that tier.
+if [[ -f "$CACHE/panes/$pane.status" ]]; then
+  "$(dirname "${BASH_SOURCE[0]}")/status.sh" clear-done "$pane" >/dev/null 2>&1 || true
+fi
 exit 0

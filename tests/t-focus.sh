@@ -23,4 +23,11 @@ bash "$REPO/scripts/focus-track.sh" %9 0 sess @1
 check "focus.now records the view" "[[ \"\$(cat \"\$XDG_CACHE_HOME/agent-fleet/\$SOCK/focus.now\")\" == 'sess|@1' ]]"
 check "no process was signalled and tmux was not asked (log: $(tr '\n' ';' < "$log" 2>/dev/null))" "[[ ! -s '$log' ]]"
 
+# Landing on a finished hooked agent acks it: done -> idle, still tmux-free.
+C="$XDG_CACHE_HOME/agent-fleet/$SOCK/panes"; mkdir -p "$C"
+printf 'done\n' > "$C/%10.status"
+bash "$REPO/scripts/focus-track.sh" %10 0 sess @2
+check "focus-in acks a done agent to idle" "[[ \"\$(cat '$C/%10.status')\" == idle ]]"
+check "…without asking tmux" "[[ ! -s '$log' ]]"
+
 exit "$FAIL"

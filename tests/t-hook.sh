@@ -43,6 +43,19 @@ check "Stop writes done"                        "[[ \"\$(st)\" == done ]]"
 fire wait "Claude is waiting for your input"
 check "idle reminder after done leaves done"    "[[ \"\$(st)\" == done ]]"
 
+# Finishing while you are IN the pane is acknowledged on the spot: focus.cur
+# (focus-track.sh) names this pane, so Stop lands as idle, not done. Unfocused,
+# done stays done for the triage queue.
+printf '%s\n' "$PANE" > "$CACHE/../focus.cur"
+fire working ""
+fire "done" ""
+check "Stop while focused acks straight to idle" "[[ \"\$(st)\" == idle ]]"
+printf '%%elsewhere\n' > "$CACHE/../focus.cur"
+fire working ""
+fire "done" ""
+check "Stop while unfocused stays done"         "[[ \"\$(st)\" == done ]]"
+rm -f "$CACHE/../focus.cur"
+
 # message-independent fallback: an unknown-message 'wait' from a resting state
 # is the idle reminder (Stop already fired); from 'working' it's a real prompt.
 printf '%s\n' "done" > "$SF"

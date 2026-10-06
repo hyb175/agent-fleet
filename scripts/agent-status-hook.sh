@@ -207,6 +207,17 @@ if [[ -n "$state" && "$state" != "$prev" && -f "$tf" ]]; then
   fi
 fi
 
+# Finished while you were already looking at it: nothing to triage, so ack it
+# on the spot — status idle, record done -> idle — exactly as arriving would
+# (pane-focus-in). focus.cur is the focused pane, kept by focus-track.sh; a
+# file read, so the Stop path stays tmux-free. Placed after the record append
+# above so the record keeps the done transition the ack then closes.
+_fc="${cache%/*}/focus.cur"; _cur=""
+[[ -f "$_fc" ]] && { read -r _cur < "$_fc" || true; }
+if [[ "$state" == "done" && "$_cur" == "$pane" ]]; then
+  AGENT_FLEET_SOCKET="$socket" "$(dirname "${BASH_SOURCE[0]}")/status.sh" clear-done "$pane" >/dev/null 2>&1 || true
+fi
+
 # Capture Claude's session id once, from the event JSON, so a restored fleet can
 # `claude --resume <id>`. Gated on a per-pane file so we only parse it on the
 # first event (session id is stable for the pane's lifetime). Stored as a pane
