@@ -1,0 +1,5 @@
+T 1789500000 1
+S api|wait|main
+A api|@5|1|auth|%9|claude|wait|1|120|migrate the auth table|wt|-|-|Should I drop the legacy_users table or keep a backup¦view?
+A api|@6|2|docs|%10|claude|wait|1|60|write the docs|-|-|-
+A api|@7|3|done-task|%11|claude|done|1|300|ship it|-|-|-|stale question never shown on done

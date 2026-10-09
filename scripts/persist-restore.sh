@@ -115,7 +115,7 @@ done < "$STATE"
 # previous boot is stale — and a stale .session gate file would permanently
 # block the hook from capturing the new claude session id (gc only prunes files
 # for DEAD panes; recycled ids look live). Purge before any id is reused.
-rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session "$CACHE/panes/"*.task 2>/dev/null || true
+rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session "$CACHE/panes/"*.task "$CACHE/panes/"*.question 2>/dev/null || true
 
 # --- start the server (loads conf: hooks + rail-auto), then suppress the auto
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt

@@ -12,7 +12,7 @@
 #   T <epoch> <interval>
 #   C <client>|<session>|<window_id>                  one per client ("-" headless)
 #   S <session>|<rollup_state>|<branch>               one per workspace
-#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>|<intent>|<iso>|<diffstat>|<race>
+#   A <session>|<window_id>|<window_index>|<window_name>|<pane_id>|<label>|<state>|<pane_index>|<age>|<intent>|<iso>|<diffstat>|<race>|<question>
 
 set -uo pipefail
 
@@ -215,7 +215,7 @@ build() {
     2>/dev/null)"
 
   declare -A BEST ROLL
-  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent iso ds race tid trec fsess fsid
+  local agents="" wid wn widx pane cmd tty kind sid label st r pidx age m intent iso ds race qq tid trec fsess fsid
   local -A W_RAIL_TTY=() W_ANY_TTY=() W_BEST=() W_STATE=()
   local -A TAB_BEST=() TAB_STATE=()
   while IFS='|' read -r s wid wn widx pane cmd tty kind sid _ pidx fsess _; do
@@ -315,11 +315,20 @@ build() {
     # (rename-window) and intents are user-typed, so swap it for a lookalike
     # in display fields. Session names are sanitized at creation by the CLI.
     wn="${wn//|/¦}"; intent="${intent//|/¦}"; [[ -n "$intent" ]] || intent="-"
+    # Pushed question (ask-human): wait rows title themselves with it. Pane
+    # sidecar file, builtin read — no forks on the tick path; user text, so
+    # the field delimiter is display-scrubbed like intent.
+    qq="-"
+    if [[ "$st" == "wait" && -r "$AF_CACHE/$pane.question" ]]; then
+      { read -r qq < "$AF_CACHE/$pane.question"; } 2>/dev/null || true
+      [[ -n "$qq" ]] || qq="-"
+      qq="${qq//|/¦}"
+    fi
     # Trailing pane_index/age/intent let renderers disambiguate shared windows
     # ("name.2"), show wait/done duration, and title rows by what the agent is
     # FOR; readers of older short rows parse the missing fields as empty
     # (fields grow at the END — CONTRIBUTING).
-    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age|$intent|$iso|$ds|$race"$'\n'
+    agents+="A $s|$wid|$widx|$wn|$pane|$label|$st|$pidx|$age|$intent|$iso|$ds|$race|$qq"$'\n'
     r="$(state_rank "$st")"
     if [[ -z "${BEST[$s]:-}" ]] || (( r < BEST[$s] )); then BEST[$s]="$r"; ROLL[$s]="$st"; fi
     # Most-urgent agent state per active window drives that window's bar.

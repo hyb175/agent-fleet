@@ -255,7 +255,7 @@ ensure_server() {
     # previous boot are stale (a leftover .session gate file would block the
     # hook from capturing new session ids). persist-restore purges too, but
     # this also covers the no-state fresh-boot path.
-    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session "$AF_CACHE_DIR/panes/"*.task 2>/dev/null || true
+    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session "$AF_CACHE_DIR/panes/"*.task "$AF_CACHE_DIR/panes/"*.question 2>/dev/null || true
     # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
     # we have one; otherwise start a fresh home workspace.
     local rc=1
@@ -466,12 +466,14 @@ build_container_cmd() {
     CCMD="$DEVCONTAINER_BIN up --workspace-folder \"$dir\""
     CCMD+=" --mount \"type=bind,source=$AF_CACHE_DIR,target=$AF_CACHE_DIR\""
     CCMD+=" --mount \"type=bind,source=$ROOT_DIR/scripts,target=$ROOT_DIR/scripts\""
+    CCMD+=" --mount \"type=bind,source=$ROOT_DIR/bin,target=$ROOT_DIR/bin\""
     [[ -n "$wt_path" && -d "$repo_dir/.git" ]] \
       && CCMD+=" --mount \"type=bind,source=$repo_dir/.git,target=$repo_dir/.git\""
     [[ -d "$HOME/.claude" ]] \
       && CCMD+=" --mount \"type=bind,source=$HOME/.claude,target=$HOME/.claude\""
     CCMD+=" && exec $DEVCONTAINER_BIN exec --workspace-folder \"$dir\""
     CCMD+=" env TMUX_PANE=\"\$TMUX_PANE\" AGENT_FLEET_SOCKET=\"$SOCKET\""
+    CCMD+=" AGENT_FLEET_ROOT=\"$ROOT_DIR\""
     CCMD+=" CLAUDE_CODE_OAUTH_TOKEN=\"\$CLAUDE_CODE_OAUTH_TOKEN\""
     [[ -n "${XDG_CACHE_HOME:-}" ]] && CCMD+=" XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
     CCMD+=" $agent_tail"
@@ -484,10 +486,13 @@ build_container_cmd() {
     local vols envs img imgver
     vols="-v \"$dir:$dir\""
     [[ -n "$wt_path" && -d "$repo_dir/.git" ]] && vols+=" -v \"$repo_dir/.git:$repo_dir/.git\""
+    # bin rides in ro alongside scripts so the agent can reach the CLI
+    # itself (ask-human) at its mounted path via $AGENT_FLEET_ROOT.
     vols+=" -v \"$AF_CACHE_DIR:$AF_CACHE_DIR\" -v \"$ROOT_DIR/scripts:$ROOT_DIR/scripts:ro\""
+    vols+=" -v \"$ROOT_DIR/bin:$ROOT_DIR/bin:ro\""
     [[ -d "$HOME/.claude" ]] && vols+=" -v \"$HOME/.claude:$HOME/.claude\""
     envs="-e TMUX_PANE -e AF_TASK_PROMPT -e HOME -e CLAUDE_CODE_OAUTH_TOKEN"
-    envs+=" -e AGENT_FLEET_SOCKET=\"$SOCKET\" -e AF_UID=$(id -u) -e AF_GID=$(id -g)"
+    envs+=" -e AGENT_FLEET_SOCKET=\"$SOCKET\" -e AGENT_FLEET_ROOT=\"$ROOT_DIR\" -e AF_UID=$(id -u) -e AF_GID=$(id -g)"
     [[ -n "${XDG_CACHE_HOME:-}" ]] && envs+=" -e XDG_CACHE_HOME=\"$XDG_CACHE_HOME\""
     # Content-keyed tag: editing docker/ (a new allowlist host, say) must
     # take effect on the next task, not stay frozen at the first build.
@@ -2742,6 +2747,69 @@ cmd_answer() {
 }
 
 
+# ask-human — an agent PUSHES its question into the inbox instead of being
+# scraped into a bare wait. Runs inside the agent's own pane; everything is
+# file writes through the (possibly bind-mounted) cache, so it works from
+# host, sandbox and container rungs alike — no tmux needed. The question
+# becomes the wait row's text and the notification body; answering goes
+# through the existing guarded answer path, and the status hook retires the
+# question the moment the agent leaves wait.
+cmd_ask_human() {
+  # Join the args: agents forget the quotes, and a silently posted first
+  # word would be worse than accepting the unquoted form.
+  local q="$*"
+  if [[ $# -eq 1 ]]; then
+    case "$1" in
+      -h|--help)
+        echo 'usage: agent-fleet ask-human "<question>"' >&2
+        echo 'Post a question to the fleet inbox (run from inside an agent pane).' >&2
+        return 0 ;;
+    esac
+  fi
+  if [[ -z "$q" ]]; then
+    echo 'usage: agent-fleet ask-human "<question>"' >&2
+    exit 2
+  fi
+  local pane="${TMUX_PANE:-}"
+  [[ -n "$pane" ]] || { echo "error: not inside a fleet pane (TMUX_PANE unset)" >&2; exit 1; }
+  # A personal-tmux pane also has a TMUX_PANE, and its %N would key an
+  # UNRELATED fleet pane's files. Containers pass TMUX_PANE without TMUX,
+  # so only the host path can and must prove it is on the fleet socket.
+  if [[ -n "${TMUX:-}" ]] && ! in_fleet_tmux; then
+    echo "error: this tmux pane is not on the fleet socket" >&2; exit 1
+  fi
+  # One record line, one row title: flatten, strip control bytes (this text
+  # reaches the operator's TUI raw — an ESC here could paint the inbox), cap.
+  # '|' is display-scrubbed by snapshotd; the file keeps the literal text.
+  q="${q//[$'\n\r\t']/ }"
+  q="${q//[[:cntrl:]]/}"
+  (( ${#q} > 300 )) && q="${q:0:299}…"
+  mkdir -p "$AF_CACHE_DIR/panes" 2>/dev/null \
+    || { echo "error: cache unwritable" >&2; exit 1; }
+  printf '%s\n' "$q" > "$AF_CACHE_DIR/panes/$pane.question" \
+    || { echo "error: cache unwritable" >&2; exit 1; }
+  printf 'wait\n' > "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true
+  # The task record keeps the question in the task's history.
+  local tid rec _n
+  tid="$(cat "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true)"
+  rec="$AF_TASKS_DIR/$tid"
+  if [[ -n "$tid" && -f "$rec" ]]; then
+    af_now; _n="$AF_NOW"
+    # Deduped like the state append below it: a looping re-asker must not
+    # grow the record one line per call.
+    if [[ "$(grep '^question ' "$rec" 2>/dev/null | tail -1)" != "question $q" ]]; then
+      printf 'question %s\n' "$q" >> "$rec" 2>/dev/null || true
+    fi
+    if [[ "$(grep '^state ' "$rec" 2>/dev/null | tail -1)" != "state wait "* ]]; then
+      printf 'state wait %s\n' "$_n" >> "$rec" 2>/dev/null || true
+    fi
+  fi
+  # Host-side invocations notify now; inside a container notify.sh finds no
+  # desktop and no-ops — snapshotd's wait-transition edge covers that case.
+  bash "$ROOT_DIR/scripts/notify.sh" "$SOCKET" "$pane" "asks: $q" >/dev/null 2>&1 || true
+  echo "question posted — it will appear in the fleet inbox"
+}
+
 # _container-resume <tid> (internal): persist-restore points a restored
 # container task's pane here. Rebuilds the container command from the record
 # (fresh container name appended — last one wins), resumes the recorded claude
@@ -3113,6 +3181,10 @@ Verbs:
   agent-fleet answer <id|%pane> approve|deny|text "<reply>" [--fp <sum>]
                                    Guarded keystrokes into a waiting agent (see answer -h). --all approve
                                    clears every local wait after confirming.
+  agent-fleet ask-human "<question>"
+                                   For AGENTS: push a question into the fleet inbox — it titles the
+                                   wait row and the notification, and retires once you answer.
+                                   (In a container: \$AGENT_FLEET_ROOT/bin/agent-fleet ask-human …)
   agent-fleet goto <pane_id>       Focus a specific agent pane (used by the picker).
   agent-fleet back                 Jump to the previously focused pane (bound to Prefix Tab).
   agent-fleet hooks-file           Print (and regenerate) the claude status-hooks overlay path.
@@ -3182,6 +3254,7 @@ main() {
     history)    task_history "$@" ;;
     review)     cmd_review "$@" ;;
     answer)     cmd_answer "$@" ;;
+    ask-human)  cmd_ask_human "$@" ;;
     goto)       cmd_goto "$@" ;;
     back)       cmd_back "$@" ;;
     rename-workspace|rename-ws) cmd_rename_workspace "$@" ;;

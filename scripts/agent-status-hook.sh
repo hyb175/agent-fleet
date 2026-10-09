@@ -119,7 +119,30 @@ fi
 # which case the finished/idle status the turn left behind stands.
 # Trailing newline matters: status.sh reads this with `read`, which returns
 # nonzero at EOF-without-newline even after assigning the value.
+# A live question sidecar (ask-human) pins the pane in wait. The asking
+# agent ends its turn right after posting — Stop would otherwise write done
+# over the wait and bury the question the moment it was asked (codex's
+# PostToolUse→working similarly flaps it mid-turn, but its Stop lands here
+# too). done defers to the ask; the question retires below only when real
+# input arrives.
+if [[ "$state" == "done" && -f "$cache/${pane}.question" ]]; then
+  state="wait"
+fi
+
 [[ -n "$state" ]] && printf '%s\n' "$state" > "$f"
+
+# Retire the question when the USER answered: a prompt-submission event, not
+# just any working write — PreToolUse/PostToolUse fire while the asking turn
+# is still finishing and must not eat the question. The -f test keeps the
+# hot path fork-free: the event parse (a sed) runs only while a question is
+# live. (Scrape-tier agents have no hooks and thus no retire path — ask-human
+# is a hooked-tier feature; boot purge and gc still cap a stray sidecar.)
+if [[ "$state" == "working" && -f "$cache/${pane}.question" ]]; then
+  _qev="$(printf '%s' "$input" | sed -n 's/.*"hook_event_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+  case "$_qev" in
+    UserPromptSubmit|pre_llm_call) rm -f "$cache/${pane}.question" 2>/dev/null || true ;;
+  esac
+fi
 
 # Append the transition to the pane's task record, so the task's history
 # outlives the pane. The pointer file (not a tmux call) resolves the record —

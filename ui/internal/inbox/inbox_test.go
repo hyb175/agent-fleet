@@ -34,6 +34,37 @@ func load(t *testing.T, name string) *snapshot.Snapshot {
 	return s
 }
 
+func TestItemsQuestionTitlesWaitRows(t *testing.T) {
+	items := Items(load(t, "question.snapshot"), 600)
+	if items[0].Title != "Should I drop the legacy_users table or keep a backup¦view?" {
+		t.Fatalf("wait row with a question titles itself with it: %q", items[0].Title)
+	}
+	if !strings.Contains(items[0].Search, "migrate the auth table") {
+		t.Fatalf("the intent stays searchable: %q", items[0].Search)
+	}
+	if items[1].Title != "write the docs" {
+		t.Fatalf("question-less wait row keeps the intent title: %q", items[1].Title)
+	}
+	var doneRow *Item
+	for i := range items {
+		if items[i].Pane == "%11" {
+			doneRow = &items[i]
+		}
+	}
+	if doneRow == nil || doneRow.State != "done" {
+		t.Fatalf("fixture lost its done row: %+v", items)
+	}
+	if doneRow.Title == "stale question never shown on done" {
+		t.Fatalf("done rows never take the question title")
+	}
+	if got := WithQuestion("ship it?", []string{"tail"}); len(got) != 3 || got[0] != "Q: ship it?" || got[1] != "" {
+		t.Fatalf("WithQuestion prepend: %v", got)
+	}
+	if got := WithQuestion("", []string{"tail"}); len(got) != 1 {
+		t.Fatalf("WithQuestion no-question passthrough: %v", got)
+	}
+}
+
 func TestItemsQueueOrderAndMarkers(t *testing.T) {
 	items := Items(load(t, "mixed.snapshot"), 600)
 	var panes []string

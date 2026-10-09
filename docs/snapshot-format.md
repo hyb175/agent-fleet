@@ -15,7 +15,7 @@ One record per line. The first character is the record type, then one space, the
 | `T` | `<epoch> <interval>` (space-separated) | file; always first |
 | `C` | `<client>\|<session>\|<window_id>` | attached client |
 | `S` | `<session>\|<rollup>\|<branch>` | workspace (tmux session) |
-| `A` | `<session>\|<window_id>\|<window_index>\|<window_name>\|<pane_id>\|<label>\|<state>\|<pane_index>\|<age>\|<intent>\|<iso>\|<diffstat>\|<race>` | agent pane |
+| `A` | `<session>\|<window_id>\|<window_index>\|<window_name>\|<pane_id>\|<label>\|<state>\|<pane_index>\|<age>\|<intent>\|<iso>\|<diffstat>\|<race>\|<question>` | agent pane |
 
 ### T
 
@@ -46,12 +46,13 @@ The active view per attached client, so each terminal gets its own rail highligh
 | `iso` | isolation rung short code: `wt`, `sbx`, `ctr` | `-` for host or no task |
 | `diffstat` | `+A-D` recorded at the last attention transition | `-` |
 | `race` | `k/N` when the task is attempt k of an N-way race (`task race`) | `-` |
+| `question` | the agent-pushed question (`ask-human`), wait rows only; user text, `\|` scrubbed to `¦` | `-` |
 
 ---
 
 ## Rules every reader follows
 
-**Fields grow at the end.** New fields are appended after `diffstat`. A reader binds fields by position from the front, ignores fields it does not know, and treats a missing trailing field as `-`. A reader whose last variable is load-bearing breaks when a field is appended, so bash readers name every field before a trailing catch-all `_`:
+**Fields grow at the end.** New fields are appended after the last listed field. A reader binds fields by position from the front, ignores fields it does not know, and treats a missing trailing field as `-`. A reader whose last variable is load-bearing breaks when a field is appended, so bash readers name every field before a trailing catch-all `_`:
 
 ```bash
 IFS='|' read -r s wid widx wn pane label st pidx age intent iso ds _ <<<"${line#A }"

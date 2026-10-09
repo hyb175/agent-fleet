@@ -43,6 +43,19 @@ func TestRaceField(t *testing.T) {
 	}
 }
 
+func TestQuestionField(t *testing.T) {
+	s := load(t, "question.snapshot")
+	if want := "Should I drop the legacy_users table or keep a backup¦view?"; s.Agents[0].Question != want {
+		t.Fatalf("question: %q", s.Agents[0].Question)
+	}
+	if s.Agents[1].Question != "" {
+		t.Fatalf("13-field row reads no question, got %q", s.Agents[1].Question)
+	}
+	if s.Agents[2].Question == "" {
+		t.Fatalf("done row still PARSES its question field (policy is the renderer's)")
+	}
+}
+
 func TestMixedFields(t *testing.T) {
 	s := load(t, "mixed.snapshot")
 	if s.Epoch != 1789500000 || s.Interval != 1 {

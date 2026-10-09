@@ -48,6 +48,7 @@ type Item struct {
 	Right     string // time in state, "!" appended past the escalation threshold
 	Diff, Iso string
 	Race      string // "k/N" for one attempt of a race
+	Question  string // agent-pushed question (ask-human), wait rows only
 	Age       int
 	Remote    bool
 	Search    string
@@ -70,10 +71,17 @@ func Items(s *snapshot.Snapshot, escalate int) []Item {
 		it := Item{
 			Pane: a.Pane, State: a.State, Title: a.Title(per), Session: a.Session,
 			Diff: a.Diffstat, Iso: a.Isolation, Race: a.Race, Remote: snapshot.IsRemote(a.Pane),
-			Group: "done",
+			Question: a.Question,
+			Group:    "done",
 		}
 		if a.State == snapshot.StateWait {
 			it.Group = "needs you"
+			// A pushed question (ask-human) is the row's best text: it says
+			// exactly what the agent needs, where the intent only says what
+			// the agent is for. The intent stays searchable below.
+			if it.Question != "" {
+				it.Title = it.Question
+			}
 		}
 		if a.HasAge {
 			it.Age = a.Age
@@ -82,7 +90,7 @@ func Items(s *snapshot.Snapshot, escalate int) []Item {
 				it.Right += " !"
 			}
 		}
-		it.Search = strings.Join([]string{it.Title, it.Session, a.State, it.Diff, it.Iso, it.Race}, " ")
+		it.Search = strings.Join([]string{it.Title, a.Title(per), it.Session, a.State, it.Diff, it.Iso, it.Race}, " ")
 		items = append(items, it)
 	}
 	return items
@@ -148,6 +156,15 @@ func Tail(capture string, n int) []string {
 		out = out[len(out)-n:]
 	}
 	return out
+}
+
+// WithQuestion leads a wait preview with the agent's pushed question: its
+// own words beat whatever shape the scraped pane tail happens to have.
+func WithQuestion(q string, lines []string) []string {
+	if q == "" {
+		return lines
+	}
+	return append([]string{"Q: " + q, ""}, lines...)
 }
 
 // Preview is the context panel for one row.
@@ -259,6 +276,7 @@ func (m model) fetchPreview(it Item) tea.Cmd {
 		pv := previewMsg{Pane: it.Pane, Lines: Tail(cap, 18)}
 		if it.State == snapshot.StateWait {
 			pv.FP = Fingerprint(cap)
+			pv.Lines = WithQuestion(it.Question, pv.Lines)
 		}
 		return pv
 	}
