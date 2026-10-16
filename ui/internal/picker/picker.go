@@ -252,7 +252,12 @@ func ConnectItems(cwd string, dirs []string, branch map[string]string, isRepo fu
 		it.Search = it.Title + " " + d + " " + it.Right
 		return it
 	}
-	items := []Item{row(cwd, "current")}
+	// A workspace is a grouping, not a repo: the pinned first row makes one
+	// from a typed name, rooted at ~ (`agent-fleet connect <name>`).
+	items := []Item{
+		{Key: "NEW:", Group: "new", Title: "new workspace", Meta: "~ · name of your choice", Search: "new workspace"},
+		row(cwd, "current"),
+	}
 	var repos, plain []Item
 	for _, d := range dirs {
 		if d == cwd {
@@ -653,6 +658,9 @@ func (m model) act(it Item) (tea.Model, tea.Cmd) {
 		return m, m.run("goto", id)
 	case "SESS", "CONNECT":
 		return m, m.run("connect", id)
+	case "NEW":
+		m.naming, m.nameFor, m.name = true, it.Key, ""
+		return m, nil
 	case "MOVE":
 		return m, m.run("move", m.cfg.MoveWin, "--to", id, "--focus")
 	}
@@ -752,6 +760,13 @@ func (m model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.naming = false
 		case tea.KeyEnter:
 			name := strings.TrimSpace(m.name)
+			if m.nameFor == "NEW:" {
+				if name == "" {
+					return m, nil // nothing to create yet
+				}
+				m.naming = false
+				return m, m.run("connect", name)
+			}
 			dir := strings.TrimPrefix(m.nameFor, "CONNECT:")
 			if name == "" {
 				name = filepath.Base(dir)

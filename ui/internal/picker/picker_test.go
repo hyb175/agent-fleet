@@ -129,14 +129,17 @@ func TestConnectItemsOrderAndTags(t *testing.T) {
 	cwd := filepath.Join(root, "cwd")
 	os.MkdirAll(cwd, 0o755)
 	items := ConnectItems(cwd, []string{plain, repo}, map[string]string{repo: "main"}, IsRepo)
-	if len(items) != 3 || items[0].Key != "CONNECT:"+cwd || items[0].Group != "current" {
-		t.Fatalf("cwd first, under its own header: %+v", items)
+	if len(items) != 4 || items[0].Key != "NEW:" || items[0].Group != "new" {
+		t.Fatalf("the new-workspace row is pinned first: %+v", items)
 	}
-	if items[1].Key != "CONNECT:"+repo || !items[1].Repo || items[1].Right != "main" || items[1].Group != "repos" {
-		t.Fatalf("repos before plain dirs, branch in the right column: %+v", items[1])
+	if items[1].Key != "CONNECT:"+cwd || items[1].Group != "current" {
+		t.Fatalf("cwd next, under its own header: %+v", items)
 	}
-	if items[2].Key != "CONNECT:"+plain || items[2].Repo || items[2].Group != "folders" || items[2].Right != "" {
-		t.Fatalf("plain dir last: %+v", items[2])
+	if items[2].Key != "CONNECT:"+repo || !items[2].Repo || items[2].Right != "main" || items[2].Group != "repos" {
+		t.Fatalf("repos before plain dirs, branch in the right column: %+v", items[2])
+	}
+	if items[3].Key != "CONNECT:"+plain || items[3].Repo || items[3].Group != "folders" || items[3].Right != "" {
+		t.Fatalf("plain dir last: %+v", items[3])
 	}
 }
 
