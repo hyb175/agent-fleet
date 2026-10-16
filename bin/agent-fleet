@@ -14,6 +14,17 @@
 # The primary surface is the afui picker popup (Prefix o inside the fleet);
 # this CLI is the verb layer the popup and your shell call.
 
+# macOS ships bash 3.2, which cannot even parse this file (heredoc inside
+# $(...)). When `env bash` resolves to it, re-exec under a modern bash before
+# the parser gets that far.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  for b in /etc/profiles/per-user/"$USER"/bin/bash ~/.nix-profile/bin/bash \
+           /run/current-system/sw/bin/bash /opt/homebrew/bin/bash /usr/local/bin/bash; do
+    [ -x "$b" ] && exec "$b" "$0" "$@"
+  done
+  echo "agent-fleet: needs bash >= 4, found $BASH_VERSION" >&2; exit 1
+fi
+
 set -euo pipefail
 
 # --- Resolve install root (works whether invoked via symlink or direct path) ---

@@ -4,6 +4,7 @@
 #     its PATH resolves; a macOS login shell puts /bin/bash 3.2 first, and
 #     `printf %(%s)T` (bash 4.2) aborted the record append on every Stop
 #   - notify.sh and the claude shim take the same route
+#   - the CLI re-execs itself under bash >= 4 when `env bash` is 3.2
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -43,5 +44,10 @@ check "notify.sh reached the notifier" "grep -q 'finished' \"$NLOG\""
 printf '#!/usr/bin/env bash\necho real-claude "$@"\n' > "$STUB/claude"; chmod +x "$STUB/claude"
 out="$(PATH="$STUB:$PATH" "$B" "$REPO/shims/claude" --version 2>&1)"
 check "shim passes through under $B (got: $out)" "[[ \"\$out\" == 'real-claude --version' ]]"
+
+# The CLI itself: 3.2 can't parse it (heredoc inside $(...)), so the prelude
+# must re-exec under a modern bash before the parser reaches that point.
+out="$("$B" "$REPO/bin/agent-fleet" version 2>&1)"
+check "CLI re-execs under a modern bash from $B (got: $out)" "[[ \"\$out\" == agent-fleet\ * ]]"
 
 exit "$FAIL"
