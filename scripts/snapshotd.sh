@@ -341,23 +341,30 @@ build() {
     fi
   done <<<"$snap"
 
-  # Tab-bar glyphs: worst agent state per window -> @fleet-win-state, which
+  # Tab-bar glyphs: worst agent state per window -> @fleet-win-state (the
+  # glyph) + @fleet-win-color (the theme's color for it), which
   # window-status-format renders before #I:#W. Static shapes (tabs can't
   # animate cheaply; ⠿ = busy). Set only on CHANGE — the common tick sets
   # nothing — and cleared when a window's agents are gone.
-  local g
+  local g c
   for w in "${!TAB_STATE[@]}"; do
     case "${TAB_STATE[$w]}" in
-      wait) g="◆" ;; working) g="⠿" ;; done) g="✓" ;; idle) g="○" ;; *) g="" ;;
+      wait)    g="◆" c="$AF_THEME_WAIT" ;;
+      working) g="⠿" c="$AF_THEME_WORKING" ;;
+      done)    g="✓" c="$AF_THEME_DONE" ;;
+      idle)    g="○" c="$AF_THEME_MUTED" ;;
+      *)       g="" c="" ;;
     esac
     if [[ "${WOPT_LAST[$w]:-}" != "$g" ]]; then
       tx set-option -w -t "$w" @fleet-win-state "$g" 2>/dev/null || true
+      tx set-option -w -t "$w" @fleet-win-color "$c" 2>/dev/null || true
       WOPT_LAST[$w]="$g"
     fi
   done
   for w in "${!WOPT_LAST[@]}"; do
     if [[ -z "${TAB_STATE[$w]:-}" && -n "${WOPT_LAST[$w]}" ]]; then
       tx set-option -w -t "$w" -u @fleet-win-state 2>/dev/null || true
+      tx set-option -w -t "$w" -u @fleet-win-color 2>/dev/null || true
       WOPT_LAST[$w]=""
     fi
   done

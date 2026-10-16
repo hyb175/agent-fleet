@@ -43,6 +43,9 @@ wait_opt() {  # <glyph> — up to ~6s
   return 1
 }
 check "tab glyph: working -> ⠿"        "wait_opt ⠿"
+source "$REPO/scripts/theme.sh"; theme_resolve
+check "tab color: the theme's working color rides along" \
+  "[[ \"\$(tx show-option -wqv -t t: @fleet-win-color)\" == '$AF_THEME_WORKING' ]]"
 
 # Wait state: the record grows a numeric trailing age (from the file's mtime,
 # backdated here so the age is unambiguously non-zero) and the task intent.
