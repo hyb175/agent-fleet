@@ -45,6 +45,9 @@ rail_border="$(col_of rail)"
 check "rail border is column 31 (a 30-col rail + its border)" "[[ '$rail_border' == 31 ]]"
 drag "$rail_border" "$(( rail_border + 6 ))"
 check "dragging the rail border does not resize it" "[[ \"\$(railw)\" == 30 ]]"
+# tmux 3.8's stock border press focuses the border's owner — here the rail.
+check "pressing the rail border leaves focus in the work pane" \
+  "[[ \"\$(tx list-panes -t t -F '#{?pane_active,#{?@fleet-sidenav,rail,work},}' | tr -d '\n')\" == work ]]"
 
 # --- ...and every other border still does (so the check above isn't vacuous) --
 tx split-window -h -d -t t -c "$WORK" -- sleep 300
