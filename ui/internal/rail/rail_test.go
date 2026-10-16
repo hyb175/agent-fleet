@@ -50,18 +50,18 @@ func TestParityLayout(t *testing.T) {
 		"─ fleet ─────────── ◆2 ⠿1 ✓2 ─", // the fleet's counts ride in the rule
 		" ✓ api",
 		"   main · ◆1 ✓2",                // each workspace's counts in its subtitle...
-		" ├ ◆ 1:migrate the auth table",  // ...and its agents on tree guides under it,
+		" ├ ◆ 1:api-fix",                 // ...and its agents on tree guides under it,
 		" │   claude · 15m · +120-8 · …", // tab-numbered, no "api ·" repeated
-		" ├ ✓ 2:write the changelog",
+		" ├ ✓ 2:docs",
 		" │   claude · 2h · +5-0",
 		" └ ✓ 3:scratch", // the last one closes the branch
 		"     opencode · 30s",
 		"",          // a breath between groups
 		"▎◆ webapp", // selected workspace: bar on both lines
 		"▎  feature/login ↑2 · ◆1 ⠿1",
-		" ├ ⠋ 1:review the login flow",
+		" ├ ⠋ 1:code-review",
 		" │   claude · wt",
-		"▎├ ◆ 2:fix the flaky spec.1", // shared window: .pidx suffix, selected (window @2)
+		"▎├ ◆ 2:fix-tests.1", // shared window: .pidx suffix, selected (window @2)
 		"▎│   claude · 4m · +31-2",
 		"▎└ ○ 2:fix-tests.2",
 		"▎    codex~",
@@ -100,7 +100,7 @@ func TestHighlightIsSelfDerived(t *testing.T) {
 	if !strings.Contains(a, "▎✓ api") || strings.Contains(a, "▎◆ webapp") {
 		t.Fatalf("api rail must highlight api only:\n%s", a)
 	}
-	if !strings.Contains(a, "▎├ ◆ 1:migrate the auth table") || strings.Contains(a, "▎├ ◆ 2:fix the flaky spec") {
+	if !strings.Contains(a, "▎├ ◆ 1:api-fix") || strings.Contains(a, "▎├ ◆ 2:fix-tests") {
 		t.Fatalf("api rail must highlight window @5 only:\n%s", a)
 	}
 }
@@ -112,7 +112,7 @@ func TestOverflowCountsTheRest(t *testing.T) {
 	if !strings.Contains(out, "◆ webapp") || !strings.Contains(out, " ↓4 more") {
 		t.Fatalf("overflow:\n%s", out)
 	}
-	if strings.Contains(out, "review the login flow") {
+	if strings.Contains(out, "1:code-review") {
 		t.Fatalf("seventh row must be hidden behind the more-line:\n%s", out)
 	}
 }
@@ -121,7 +121,7 @@ func TestScrollAndCursorKeepRowVisible(t *testing.T) {
 	v := view(t, "mixed.snapshot", "@9", "none", 16) // 12 lines of rows fit
 	v.Scroll(2)
 	out := plain(Render(v))
-	if !strings.Contains(out, "fix the flaky spec") || !strings.Contains(out, " ↑2 ↓2 more") {
+	if !strings.Contains(out, "fix-tests.1") || !strings.Contains(out, " ↑2 ↓2 more") {
 		t.Fatalf("wheel scroll:\n%s", out)
 	}
 	v.Scroll(100)
@@ -177,7 +177,7 @@ func TestFiltersAndFold(t *testing.T) {
 	if !strings.Contains(out, "▸ webapp") || !strings.Contains(out, "feature/login ↑2 · 3 fol") {
 		t.Fatalf("fold marker:\n%s", out)
 	}
-	if strings.Contains(out, "fix the flaky spec") || !strings.Contains(out, "migrate the auth table") {
+	if strings.Contains(out, "fix-tests") || !strings.Contains(out, "api-fix") {
 		t.Fatalf("folded workspace hides its agents only:\n%s", out)
 	}
 	v.ToggleFold()
@@ -274,7 +274,7 @@ func TestEmptyStates(t *testing.T) {
 
 func TestCJKTruncatesByCellWidth(t *testing.T) {
 	v := view(t, "pipe-name.snapshot", "@1", "webapp", 0)
-	v.Snap.Agents[0].Intent = "認証テーブルを移行してから統合テストを実行する"
+	v.Snap.Agents[0].WindowName = "認証テーブルを移行してから統合テストを実行する"
 	for _, l := range strings.Split(Render(v), "\n") {
 		if w := lipgloss.Width(l); w > 30 {
 			t.Fatalf("line wider than the rail (%d): %q", w, plain(l))
@@ -339,9 +339,9 @@ func TestNameCarriesItsState(t *testing.T) {
 		what, name string
 		style      lipgloss.Style
 	}{
-		{"wait", "1:migrate the auth table", bold(th.Wait)},
-		{"done", "2:write the changelog", bold(th.Done)},
-		{"working", "1:review the login flow", bold(th.FG)},
+		{"wait", "1:api-fix", bold(th.Wait)},
+		{"done", "2:docs", bold(th.Done)},
+		{"working", "1:code-review", bold(th.FG)},
 		{"idle", "2:fix-tests.2", plainFg(th.Muted)},
 	} {
 		if !strings.Contains(out, c.style.Render(c.name)) {

@@ -116,7 +116,7 @@ func (v View) Rows() []Row {
 		// The workspace name is matched here even though the row no longer
 		// prints it — the header above does — so /webapp still finds its agents.
 		return needle == "" ||
-			strings.Contains(strings.ToLower(a.Session+" "+a.Title(per)+" "+subtitle(a)), needle)
+			strings.Contains(strings.ToLower(a.Session+" "+a.Title(per)+" "+a.Name(per)+" "+subtitle(a)), needle)
 	}
 	agent := func(a snapshot.Agent) Row {
 		return Row{Target: Target{Kind: AgentTarget, ID: a.Pane}, Sess: a.Session}
@@ -473,7 +473,9 @@ func RenderMap(v View) (string, []Target) {
 		a := byPane[r.Target.ID]
 		// Tab number: under its workspace's header the number is the one tmux
 		// shows there, so Prefix N is a glance away once you are in it.
-		name := a.Title(per)
+		// The name, not the intent: the rail is 30 columns, a task's intent is
+		// a sentence. /filter still matches the intent (see shown).
+		name := a.Name(per)
 		if a.WindowIndex != "" {
 			name = a.WindowIndex + ":" + name
 		}

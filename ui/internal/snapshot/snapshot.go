@@ -210,17 +210,27 @@ func (s *Snapshot) AgentsPerWindow() map[string]int {
 	return n
 }
 
-// Title is the row title renderers agree on: the task intent when the agent
-// has one, else the window name; a ".<pane index>" suffix in shared windows.
-func (a Agent) Title(perWindow map[string]int) string {
+// Name is the agent's short name: the window name, with a ".<pane index>"
+// suffix in shared windows. The rail (30 columns) titles rows with it.
+func (a Agent) Name(perWindow map[string]int) string {
 	t := a.WindowName
-	if a.Intent != "" {
-		t = a.Intent
-	}
 	if perWindow[a.WindowID] > 1 && a.PaneIndex != "" && a.PaneIndex != Sentinel {
 		t += "." + a.PaneIndex
 	}
 	return t
+}
+
+// Title is the descriptive row title the wide surfaces (picker, inbox) use:
+// the task intent when the agent has one, else Name.
+func (a Agent) Title(perWindow map[string]int) string {
+	if a.Intent != "" {
+		t := a.Intent
+		if perWindow[a.WindowID] > 1 && a.PaneIndex != "" && a.PaneIndex != Sentinel {
+			t += "." + a.PaneIndex
+		}
+		return t
+	}
+	return a.Name(perWindow)
 }
 
 // SortAttention orders agents most-urgent first: Rank ascending, then the
