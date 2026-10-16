@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -301,5 +302,16 @@ func TestSearchBoxKeepsCountInNarrowPopup(t *testing.T) {
 		if w := runewidthWidth(l); w != 48 && i > 0 {
 			t.Fatalf("box line %d is %d cells wide, want 48: %q", i, w, l)
 		}
+	}
+}
+
+// Items can land before the first WindowSizeMsg (height 0): the viewport must
+// not stay scrolled past the group header once the real size arrives.
+func TestHeaderShowsWhenSizeArrivesAfterItems(t *testing.T) {
+	m := model{view: Fleet, st: newStyles(themeForTest())}
+	nm, _ := m.Update(itemsMsg{view: Fleet, items: FleetItems(load(t, "mixed.snapshot"))})
+	nm, _ = nm.(model).Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	if m = nm.(model); m.offset != 0 {
+		t.Fatalf("offset %d after the resize: the first group header is scrolled off", m.offset)
 	}
 }

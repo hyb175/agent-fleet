@@ -608,7 +608,7 @@ func (m model) listHeight() int {
 
 // clamp scrolls the viewport (in list lines) so the cursor's line shows.
 func (m *model) clamp() {
-	_, rowLine := m.listLines()
+	lines, rowLine := m.listLines()
 	if len(rowLine) == 0 {
 		m.offset = 0
 		return
@@ -623,6 +623,12 @@ func (m *model) clamp() {
 		}
 	} else if cl >= m.offset+h {
 		m.offset = cl - h + 1
+	}
+	// Never scroll past the last full screen: items can arrive before the
+	// first WindowSizeMsg, and the offset that height-0 pass computed would
+	// otherwise keep the top header hidden once the real size lands.
+	if last := len(lines) - h; m.offset > last {
+		m.offset = last
 	}
 	if m.offset < 0 {
 		m.offset = 0
