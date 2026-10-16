@@ -37,6 +37,13 @@ check "install without config errors" "! af kimi-hooks install 2>/dev/null"
 CACHE="$XDG_CACHE_HOME/agent-fleet/$SOCK"
 UUID="12121212-3434-5656-7878-909090909090"
 mkdir -p "$WORK/k"
+# A fake `kimi` keeps the restored pane alive (see t-resume.sh): with none on
+# PATH the relaunch exits at once and the interactive exit path's _release
+# untags the pane before the re-tag check reads it.
+FAKEBIN="$(mktemp -d)"
+printf '#!/usr/bin/env bash\nsleep 300\n' > "$FAKEBIN/kimi"
+chmod +x "$FAKEBIN/kimi"
+export PATH="$FAKEBIN:$PATH"
 
 boot_server __boot__ "$WORK"
 tx new-session -d -s kwork -n kwork -c "$WORK/k"
