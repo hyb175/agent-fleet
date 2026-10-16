@@ -34,8 +34,10 @@ check "kill 'ap' refuses" "[[ $rc -ne 0 ]] && tx has-session -t '=api' 2>/dev/nu
 # add: right session AND right default dir (the =name: display-message fix)
 tx kill-session -t api 2>/dev/null
 tx new-session -d -s api -c "$WORK/apidir"; sleep 0.3
+w0="$(tx display-message -p -t 'api:' '#{window_id}')"
 p="$("$AF" add --to api --cmd bash 2>/dev/null)"
 check "add --to api lands in api" "[[ \"\$(tx display-message -p -t \"$p\" '#S')\" == api ]]"
+check "add without --focus leaves the active window alone" "[[ \"\$(tx display-message -p -t 'api:' '#{window_id}')\" == '$w0' ]]"
 cwd="$(tx display-message -p -t "$p" '#{pane_current_path}')"
 check "add dir default = target session cwd (got $cwd)" "[[ '$cwd' == */apidir ]]"
 

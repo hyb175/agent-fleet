@@ -775,7 +775,9 @@ cmd_add() {
   local pane_id
   # AF_TASK_PRESPAWNED: this spawn writes its own record below — the status
   # hook's auto-adopt must not race it with a duplicate.
-  pane_id="$(tx new-window -P -F '#{pane_id}' -e AF_TASK_PRESPAWNED=1 ${env_kv:+-e "$env_kv"} -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
+  # -d: only --focus moves the user. A scripted add (a hook, a dashboard) must
+  # not yank them out of the pane they are typing in.
+  pane_id="$(tx new-window -d -P -F '#{pane_id}' -e AF_TASK_PRESPAWNED=1 ${env_kv:+-e "$env_kv"} -t "=$target:" -n "$(sanitize_name "$name")" -c "$dir" "$cmd")"
   # Mark the agent so the sidenav lists it (per-pane, focus-independent) and so
   # workspace renames can follow it (per-window). Value = agent kind ("claude");
   # --kind overrides when the command wraps the agent (docker run … claude —
