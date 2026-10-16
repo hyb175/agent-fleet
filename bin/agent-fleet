@@ -2151,6 +2151,9 @@ Prints "<task-id> <pane-id>".
 Options (create form):
   --repo <dir>   Directory to work in (default: current fleet pane's dir, else \$PWD).
   --name <name>  Agent/tab name (default: a slug of the prompt's first words).
+  --workspace <name>
+                 Workspace to land in, created if missing (default: the calling
+                 fleet workspace when run from inside one, else the repo's basename).
   --isolation <rung>
                  host | worktree | sandbox | container — the isolation ladder,
                  each rung including the previous ones' guarantees. worktree =
@@ -2930,11 +2933,12 @@ task_race() {
   fi
   [[ -n "$prompt" ]] || { echo "error: a race needs a prompt" >&2; exit 2; }
   shift 2
-  local dir="" name="" focus="" iso_flag=""
+  local dir="" name="" focus="" iso_flag="" ws_flag=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo|--dir) dir="$2"; shift 2 ;;
       --name)       name="$2"; shift 2 ;;
+      --workspace)  ws_flag="$2"; shift 2 ;;
       --focus)      focus=1; shift ;;
       --isolation)  iso_flag="${2:?usage: --isolation worktree|sandbox|container}"; shift 2 ;;
       *) echo "error: unexpected arg: $1" >&2; usage_task >&2; exit 2 ;;
@@ -2954,7 +2958,7 @@ task_race() {
   for (( k = 1; k <= n; k++ )); do
     local -a extra=()
     if (( k == 1 )) && [[ -n "$focus" ]]; then extra=(--focus); fi
-    out="$(cmd_task -- "$prompt" --repo "$dir" --name "$name-$k" --isolation "$rung" ${extra[@]+"${extra[@]}"})"
+    out="$(cmd_task -- "$prompt" --repo "$dir" --name "$name-$k" --isolation "$rung" ${ws_flag:+--workspace "$ws_flag"} ${extra[@]+"${extra[@]}"})"
     tid="${out%% *}"; pane="${out##* }"; f="$AF_TASKS_DIR/$tid"
     if [[ "$tid" != "-" && -f "$f" ]]; then
       printf 'race %s %s/%s\n' "$rid" "$k" "$n" >> "$f" 2>/dev/null || true
@@ -3025,12 +3029,13 @@ cmd_task() {
     usage_task >&2; exit 2
   fi
 
-  local prompt="$1" dir="" name="" focus="" iso_flag=""
+  local prompt="$1" dir="" name="" focus="" iso_flag="" ws_flag=""
   shift
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo|--dir) dir="$2"; shift 2 ;;
       --name)       name="$2"; shift 2 ;;
+      --workspace)  ws_flag="$2"; shift 2 ;;
       --focus)      focus=1; shift ;;
       --isolation)  iso_flag="${2:?usage: --isolation host|worktree|sandbox|container}"; shift 2 ;;
       --isolated)   iso_flag="worktree"; shift ;;   # legacy spelling of the rung
@@ -3067,9 +3072,8 @@ cmd_task() {
   fi
 
   # worktree rung: branch + worktree per task; the agent starts IN the
-  # worktree. The workspace keeps the ORIGINAL repo's name (all of a repo's
-  # tasks group under one workspace, isolated or not). Non-git dirs degrade
-  # to the shared checkout, with a note.
+  # worktree. The workspace is never named after the worktree (see the ws
+  # resolution below). Non-git dirs degrade to the shared checkout, with a note.
   local repo_dir="$dir" wt="" wt_path="" wt_branch=""
   if [[ "$rung" == "worktree" || "$rung" == "sandbox" || "$rung" == "container" ]]; then
     wt="$(task_worktree_create "$dir" "$name")"
@@ -3092,7 +3096,14 @@ cmd_task() {
 
   ensure_server
   local ws pane
-  ws="$(sanitize_name "$(basename "$repo_dir")")"
+  # Workspace: --workspace wins; from inside the fleet the task joins the
+  # CALLING workspace (a workspace is a grouping, not a repo — connect names
+  # one freely and tasks from several repos may share it); from outside, the
+  # repo's basename, so a repo's tasks group together by default.
+  if [[ -n "$ws_flag" ]]; then ws="$(sanitize_name "$ws_flag")"
+  elif in_fleet_tmux; then ws="$(tx display-message -p '#S')"
+  else ws="$(sanitize_name "$(basename "$repo_dir")")"
+  fi
   # The prompt reaches the agent as "$AF_TASK_PROMPT", set on the window via
   # tmux -e (cmd_add --env) — it never passes through a shell parser, so no
   # quoting can mangle it. tmux runs window commands under default-shell, and
@@ -3198,10 +3209,10 @@ Verbs:
                                    Add an agent window (default cmd: claude; hooks attach when the
                                    command is claude). --new-workspace puts it in its own workspace
                                    instead of a tab. --focus jumps to it (Prefix C). Prints its pane id.
-  agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--focus]
-                                   Spawn an interactive agent from an intent: workspace resolved
-                                   from the repo dir, prompt submitted at launch, intent recorded
-                                   in a task record. Prints "<task-id> <pane-id>".
+  agent-fleet task "<prompt>" [--repo <dir>] [--name <name>] [--workspace <ws>] [--focus]
+                                   Spawn an interactive agent from an intent: lands in the calling
+                                   workspace (or --workspace, else one named for the repo), prompt
+                                   submitted at launch, intent recorded. Prints "<task-id> <pane-id>".
   agent-fleet task ls              List task records with their current state.
   agent-fleet task show <id|%pane> Print a task record (intent, dir, state history).
   agent-fleet task intent <id|%pane> "<text>"

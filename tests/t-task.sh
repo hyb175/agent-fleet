@@ -38,6 +38,7 @@ check "task create rc=0, prints '<tid> <pane>'" "[[ $rc -eq 0 && '$tid' == t* &&
 rec="$CACHE/tasks/$tid"
 check "record exists" "[[ -f '$rec' ]]"
 check "record carries the intent" "grep -qx 'intent Fix the flaky parser test' '$rec'"
+check "default workspace is the repo basename" "[[ \"\$(tx display-message -t '$pane' -p '#S')\" == repo ]]"
 check "record carries the dir" "grep -qx 'dir $WORK/repo' '$rec'"
 check "record carries the pane" "grep -qx 'pane $pane' '$rec'"
 check "workspace named for the repo" "tx has-session -t '=repo' 2>/dev/null"
@@ -49,6 +50,10 @@ wait_for 10 "grep -q 'flaky' '$WORK/claude.argv'"
 check "prompt received by the agent verbatim" \
   "grep -qx 'Fix the flaky parser test' '$WORK/claude.argv'"
 [[ -f "$WORK/claude.argv" ]] || { echo "--- start command ---"; printf '%s\n' "$starts"; }
+
+# --workspace: a workspace is a grouping, not a repo — any name, created on demand.
+out2="$("$AF" task "Second task" --repo "$WORK/repo" --workspace "my group")"; pane2="${out2##* }"
+check "--workspace lands the task in that (sanitized, auto-created) workspace" "[[ \"\$(tx display-message -t '$pane2' -p '#S')\" == my_group ]]"
 # shellcheck disable=SC2034 # shown read inside the eval'd check() condition below
 shown="$(AGENT_FLEET_SOCKET="$SOCK" "$AF" task show "$pane")"
 check "task show resolves by pane id" "grep -qx 'id $tid' <<<\"\$shown\""
