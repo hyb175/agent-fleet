@@ -220,7 +220,7 @@ func (a Agent) Name(perWindow map[string]int) string {
 	return t
 }
 
-// Title is the descriptive row title the wide surfaces (picker, inbox) use:
+// Title is the descriptive row title the inbox uses:
 // the task intent when the agent has one, else Name.
 func (a Agent) Title(perWindow map[string]int) string {
 	if a.Intent != "" {

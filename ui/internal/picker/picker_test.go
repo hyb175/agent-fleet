@@ -56,11 +56,11 @@ func TestFleetItemsMatchPickerOrder(t *testing.T) {
 	if last.Key != "SESS:notes" || last.Meta != "notes" || last.Group != "workspaces" {
 		t.Fatalf("agentless workspace must trail the agents: %+v", last)
 	}
-	// Row parts: title from intent, meta = sess:widx, right = time in state, diff and iso as badges.
-	if it := items[0]; it.Title != "migrate the auth table" || it.Meta != "api:1" || it.Right != "15m" || it.Diff != "+120-8" || it.Iso != "sbx" || it.Group != "needs you" {
+	// Row parts: title = window name, meta = sess:widx · intent, right = time in state, diff and iso as badges.
+	if it := items[0]; it.Title != "api-fix" || it.Meta != "api:1 · migrate the auth table" || it.Right != "15m" || it.Diff != "+120-8" || it.Iso != "sbx" || it.Group != "needs you" {
 		t.Fatalf("first row: %+v", it)
 	}
-	if it := items[1]; it.Title != "fix the flaky spec.1" || it.Meta != "webapp:2" || it.Right != "4m" || it.Diff != "+31-2" || it.Iso != "" {
+	if it := items[1]; it.Title != "fix-tests.1" || it.Meta != "webapp:2 · fix the flaky spec" || it.Right != "4m" || it.Diff != "+31-2" || it.Iso != "" {
 		t.Fatalf("second row: %+v", it)
 	}
 	if it := items[2]; it.Group != "working" || it.Right != "" || it.Diff != "" || it.Iso != "wt" {
@@ -159,9 +159,12 @@ func TestFilterIsFuzzyAndKeepsOrderWhenEmpty(t *testing.T) {
 	if got := Filter(items, ""); len(got) != len(items) || got[0].Key != items[0].Key {
 		t.Fatal("empty query keeps order")
 	}
-	got := Filter(items, "chlog") // subsequence of "changelog"
+	got := Filter(items, "dcs") // subsequence of "docs", the window name
 	if len(got) == 0 || got[0].Key != "PANE:%10" {
 		t.Fatalf("fuzzy match on the title: %v", keys(got))
+	}
+	if got := Filter(items, "changelog"); len(got) != 1 || got[0].Key != "PANE:%10" {
+		t.Fatalf("the intent stays searchable: %v", keys(got))
 	}
 	if got := Filter(items, "webapp"); len(got) != 3 {
 		t.Fatalf("match on the subtitle (session): %v", keys(got))
@@ -236,7 +239,7 @@ func TestViewLayout(t *testing.T) {
 			sel = l
 		}
 	}
-	if !strings.Contains(sel, "migrate the auth table") || !strings.HasSuffix(strings.TrimRight(sel, " "), "15m") {
+	if !strings.Contains(sel, "api-fix") || !strings.Contains(sel, "migrate the a…") || !strings.HasSuffix(strings.TrimRight(sel, " "), "15m") {
 		t.Fatalf("selected row: %q", sel)
 	}
 	if !strings.Contains(out, "+120 −8") || !strings.Contains(out, "[sbx]") {
@@ -262,7 +265,7 @@ func TestMatchHighlightStaysInsideTitle(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor) // go test has no tty; force colors so styling is observable
 	m := model{cfg: Config{Width: 78, Height: 22}, view: Fleet, st: newStyles(themeForTest())}
 	m.items = FleetItems(load(t, "mixed.snapshot"))
-	m.query = "chlog"
+	m.query = "docs" // the window name: the title is the name, the intent is detail
 	m.refilter()
 	if len(m.shown) == 0 || m.shown[0].Key != "PANE:%10" {
 		t.Fatalf("filter: %v", keys(m.shown))

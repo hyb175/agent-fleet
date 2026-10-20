@@ -41,14 +41,16 @@ wait_for 10 "grep -q '|$tgt|' '$CACHE/fleet.snapshot' 2>/dev/null"
 # gives the same tty semantics for keys).
 pp="$(tx new-window -d -P -F '#{pane_id}' -t t: -n picker \
   "env AGENT_FLEET_ROOT='$REPO' AGENT_FLEET_SOCKET='$SOCK' XDG_CACHE_HOME='$XDG_CACHE_HOME' '$REPO/bin/afui' pick")"
-wait_for 10 "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
-check "fleet view lists the agent by intent" "tx capture-pane -p -t '$pp' | grep -q 'zebra quest'"
-wait_for 5 "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU' && tx capture-pane -p -t '$pp' | grep -q 'zebra quest.*t:[0-9]'"
+# The row is titled by the window name; the intent trails as detail, cut to
+# "zeb…" in this 49-column pane.
+wait_for 10 "tx capture-pane -p -t '$pp' | grep -q 'target.*zeb'"
+check "fleet view lists the agent by name, intent trailing" "tx capture-pane -p -t '$pp' | grep -q 'target.*zeb'"
+wait_for 5 "tx capture-pane -p -t '$pp' | grep -q 'NEEDS YOU' && tx capture-pane -p -t '$pp' | grep -q 'target.*t:[0-9].*zeb'"
 # Poll: the TUI paints a beat after the popup opens, and the full-suite box
 # is slower than this test alone (this exact check flaked under suite load).
-poll_until 10 "tx capture-pane -p -t '$pp' > '$WORK/pickcap' 2>/dev/null; grep -q 'NEEDS YOU' '$WORK/pickcap' && grep -q 'zebra quest.*t:[0-9]' '$WORK/pickcap'"
+poll_until 10 "tx capture-pane -p -t '$pp' > '$WORK/pickcap' 2>/dev/null; grep -q 'NEEDS YOU' '$WORK/pickcap' && grep -q 'target.*t:[0-9].*zeb' '$WORK/pickcap'"
 check "row sits under the NEEDS YOU header with its workspace:index" \
-  "grep -q 'NEEDS YOU' '$WORK/pickcap' && grep -q 'zebra quest.*t:[0-9]' '$WORK/pickcap'"
+  "grep -q 'NEEDS YOU' '$WORK/pickcap' && grep -q 'target.*t:[0-9].*zeb' '$WORK/pickcap'"
 tx send-keys -t "$pp" zbq   # fuzzy: z…b…q
 wait_for 5 "tx capture-pane -p -t '$pp' | grep -q '1 of '"
 check "fuzzy filter narrows to one row" "tx capture-pane -p -t '$pp' | grep -Eq '1 of [0-9]+'"

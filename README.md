@@ -117,7 +117,7 @@ It only updates when a newer `vX.Y.Z` tag exists (`-y` skips the prompt; `AGENT_
 └──────────────────────────────┴─────────────────────────┘
 ```
 
-**Status glyphs:** `◆` waiting on you · `⠋…⠏` working · `✓` done · `○` idle — each state has its own shape, so they read without color vision. Window tabs in the status bar carry the same glyph for their worst agent (`⠿` = busy); waiting and done agents show time in state (`· 4m`). Agents spawned via `af task` are titled by their **intent** in the rail and picker, and the picker sorts the longest-waiting first within each urgency rank. Attempts of a `task race` carry a `⑂k/N` badge.
+**Status glyphs:** `◆` waiting on you · `⠋…⠏` working · `✓` done · `○` idle — each state has its own shape, so they read without color vision. Window tabs in the status bar carry the same glyph for their worst agent (`⠿` = busy); waiting and done agents show time in state (`· 4m`). Agents spawned via `af task` are titled by their tab name in the rail and picker (the picker trails the **intent** as detail) and by their intent in the inbox, and the picker sorts the longest-waiting first within each urgency rank. Attempts of a `task race` carry a `⑂k/N` badge.
 
 ---
 
@@ -206,7 +206,7 @@ Federation is read-mostly: remote agents' states show up here, but `add`, `kill`
 | `agent-fleet task race <N> "<prompt>" [--repo <dir>] [--name <name>] [--isolation <rung>] [--focus]` | Best-of-N: spawn N attempts at one intent, each an isolated worktree task (own branch, pane, record) sharing a race id; the rail, picker and inbox badge them `⑂k/N`. Prints the race id and each `<task-id> <pane-id>`. Needs a git repo; the `host` rung is raised to `worktree`. |
 | `agent-fleet task ls` | List task records with state, `[branch]` (`*` dirty, `^` unmerged), dead panes as `(gone)`, and any orphaned worktrees. |
 | `agent-fleet task show <id\|%pane>` | Print a task record (intent, dir, session id, worktree/branch, state history). |
-| `agent-fleet task intent <id\|%pane> "<text>"` | Set a task's intent by hand; the picker and inbox title the row with it (the rail shows the tab name, which stays short). Renaming a tab (`Prefix T`) updates an adopted agent's placeholder intent automatically. |
+| `agent-fleet task intent <id\|%pane> "<text>"` | Set a task's intent by hand; the inbox titles the row with it and the picker shows it after the tab name (the rail shows only the tab name, which stays short). Renaming a tab (`Prefix T`) updates an adopted agent's placeholder intent automatically. |
 | `agent-fleet task adopt [%pane] ["intent"]` | Bring an existing pane into the record loop (intent defaults to the window name). Hooked agents auto-adopt on their first event; adopt covers idle agents and panes from before the record system. |
 | `agent-fleet task done\|drop <id\|%pane>` | Mark a task terminal (merged / abandoned) — the gate `clean` requires. |
 | `agent-fleet task clean [<id\|%pane>] [--dry-run] [--force] [--keep-branch]` | Reclaim terminal tasks' worktrees and branches. Refuses dirty trees and unmerged branches without `--force` — unreviewed work is never eaten silently. |

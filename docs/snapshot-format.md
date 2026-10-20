@@ -82,7 +82,7 @@ The mirror file's own header is `RT <fetched_at_local_epoch> <ok|down>`; it is n
 
 **Age display**: under 60 s → `45s`; under 3600 s → `4m`; else `2h` (integer division).
 
-**Row title**: the intent when present, else the window name; suffixed `.<pane_index>` in windows holding more than one agent.
+**Row title**: the window name in the rail and picker (the picker trails the intent after `sess:widx`); the intent when present, else the window name, in the inbox. Either is suffixed `.<pane_index>` in windows holding more than one agent.
 
 **Glyphs**: `◆` wait, braille spinner working, `✓` done, `○` idle. Shapes differ per state so they read without color.
 

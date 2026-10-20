@@ -120,9 +120,14 @@ func FleetItems(s *snapshot.Snapshot) []Item {
 	agents := append([]snapshot.Agent(nil), s.Agents...)
 	snapshot.SortAttention(agents, snapshot.StateWait)
 	for _, a := range agents {
+		// Titled by name like the rail, so the row you jump to reads the same
+		// on both; the intent is often the raw prompt, so it trails as detail.
 		it := Item{
 			Key: "PANE:" + a.Pane, State: a.State, Group: groupOf(a.State),
-			Title: a.Title(per), Meta: a.Session + ":" + a.WindowIndex, Iso: a.Isolation, Race: a.Race,
+			Title: a.Name(per), Meta: a.Session + ":" + a.WindowIndex, Iso: a.Isolation, Race: a.Race,
+		}
+		if a.Intent != "" {
+			it.Meta += " · " + a.Intent
 		}
 		if a.State == snapshot.StateWait || a.State == snapshot.StateDone {
 			if a.HasAge {
@@ -1008,23 +1013,29 @@ func (m model) row(it Item, sel bool, w int) string {
 	shown := trunc(it.Title, titleW)
 	titleCell := highlight(shown, it.Match, title, hit) + title.Render(strings.Repeat(" ", titleW-runewidth.StringWidth(shown)))
 	left := bar + " " + glyph + "  " + titleCell + "  "
-	detail := meta.Render(it.Meta)
+	badges := ""
 	if it.Diff != "" {
-		detail += dim.Render(" · " + diff(it.Diff))
+		badges += dim.Render(" · " + diff(it.Diff))
 	}
 	if it.Iso != "" {
-		detail += dim.Render(" [" + it.Iso + "]")
+		badges += dim.Render(" [" + it.Iso + "]")
 	}
 	if it.Race != "" {
-		detail += dim.Render(" ⑂" + it.Race)
+		badges += dim.Render(" ⑂" + it.Race)
 	}
-	// Right column is pinned to the edge; the detail gets what is left.
+	// Right column is pinned to the edge; the detail gets what is left, and
+	// the meta (which can trail a long intent) gives way before the badges.
 	avail := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if avail < 0 {
 		avail = 0
 	}
+	detail := meta.Render(it.Meta) + badges
 	if lipgloss.Width(detail) > avail {
-		detail = meta.Render(trunc(it.Meta, avail))
+		if bw := lipgloss.Width(badges); bw < avail {
+			detail = meta.Render(trunc(it.Meta, avail-bw)) + badges
+		} else {
+			detail = meta.Render(trunc(it.Meta, avail))
+		}
 	}
 	line := left + detail
 	gap := w - lipgloss.Width(line) - lipgloss.Width(right) - 1
