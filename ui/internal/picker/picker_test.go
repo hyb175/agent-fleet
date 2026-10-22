@@ -154,6 +154,16 @@ func TestMoveItemsExcludeHome(t *testing.T) {
 	}
 }
 
+func TestFilterRanksAPrefixMatchAboveScatteredOnesDespiteALongTail(t *testing.T) {
+	items := []Item{
+		{Key: "tools", Search: "tools dev-tools:3 · tools idle    claude"},
+		{Key: "voice", Search: "voice-mobile voice-tech:1 · Implement the work outline at: " + strings.Repeat("a long prompt ", 30)},
+	}
+	if got := Filter(items, "voice"); len(got) != 2 || got[0].Key != "voice" {
+		t.Fatalf("the name match must lead: %v", keys(got))
+	}
+}
+
 func TestFilterIsFuzzyAndKeepsOrderWhenEmpty(t *testing.T) {
 	items := FleetItems(load(t, "mixed.snapshot"))
 	if got := Filter(items, ""); len(got) != len(items) || got[0].Key != items[0].Key {

@@ -310,6 +310,19 @@ func Filter(items []Item, query string) []Item {
 		src[i] = it.Search
 	}
 	matches := fuzzy.Find(query, src)
+	// fuzzy docks a point per unmatched byte of the whole string, so a row
+	// trailing a long intent (the raw prompt) sank below scattered matches in
+	// short rows even with the query right at its start. Only the bytes up to
+	// the last match count; ties keep attention order.
+	score := func(m fuzzy.Match) int {
+		return m.Score + len(m.Str) - (m.MatchedIndexes[len(m.MatchedIndexes)-1] + 1)
+	}
+	sort.SliceStable(matches, func(i, j int) bool {
+		if si, sj := score(matches[i]), score(matches[j]); si != sj {
+			return si > sj
+		}
+		return matches[i].Index < matches[j].Index
+	})
 	out := make([]Item, 0, len(matches))
 	for _, m := range matches {
 		it := items[m.Index]
