@@ -2313,9 +2313,9 @@ cmd_review() {
 usage_task() {
   cat <<EOF
 Usage: agent-fleet task "<prompt>" [options]
-       agent-fleet task -- "<prompt>" [options]   (force create — prompt may be a subcommand or -*)
+       agent-fleet task -- "<prompt>" [options]   (force create — prompt may be one word, a subcommand or -*)
        agent-fleet task race <N> "<prompt>" [options]   (N isolated attempts, one race id)
-       agent-fleet task ls
+       agent-fleet task ls   (alias: list)
        agent-fleet task show <task-id|%pane>
        agent-fleet task adopt [%pane] ["intent"]
        agent-fleet task done|drop <task-id|%pane>
@@ -3577,7 +3577,7 @@ cmd_task() {
     case "$sub" in
       -h|--help) usage_task; return 0 ;;
       "")        usage_task >&2; exit 2 ;;
-      ls)        shift; task_ls "$@"; return 0 ;;
+      ls|list)   shift; task_ls "$@"; return 0 ;;
       show)      shift; task_show "$@"; return 0 ;;
       adopt)     shift; task_adopt "$@"; return 0 ;;
       intent)    shift; task_intent "$@"; return 0 ;;
@@ -3587,6 +3587,11 @@ cmd_task() {
       drop)      shift; task_mark "${1:?usage: agent-fleet task drop <task-id|%pane>}" abandoned; return 0 ;;
       clean)     shift; task_clean "$@"; return 0 ;;
       -*)        echo "error: the prompt comes first: agent-fleet task \"<prompt>\" [options] (or force it with --)" >&2; exit 2 ;;
+      # A bare word is a mistyped subcommand far more often than a prompt —
+      # `task list` used to spawn an agent with intent "list". Anything with a
+      # space, slash, digit… is a real prompt.
+      *[!a-z-]*) ;;
+      *)         echo "error: unknown subcommand '$sub' (a one-word prompt? agent-fleet task -- \"$sub\")" >&2; exit 2 ;;
     esac
   elif [[ -z "$sub" ]]; then
     usage_task >&2; exit 2
