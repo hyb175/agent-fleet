@@ -48,7 +48,7 @@ TTY="$WORK/pane.tty"; mkfifo "$TTY"
 cat > "$STUB/tmux" <<EOF
 #!/usr/bin/env bash
 case "\$*" in
-  *list-clients*) printf '%s|%s|%s\n' "\${TERMTYPE-ghostty 1.3.1}" "\${TERMNAME-xterm-ghostty}" "$TTY" ;;
+  *list-clients*) printf '%s|%s|%s|%s\n' "\${TERMTYPE-ghostty 1.3.1}" "\${TERMNAME-xterm-ghostty}" "$TTY" "\${ACTIVEPANE-%0}" ;;
   *display-message*) printf 'ws/win\n' ;;
 esac
 EOF
@@ -82,6 +82,21 @@ check "VIA=terminal forces OSC 777 to an unknown terminal" "[[ \"\$(cat '$WORK/g
 : > "$NLOG"
 AGENT_FLEET_NOTIFY_VIA=desktop notify "$SOCK" %7 "finished"
 check "VIA=desktop skips the terminal even with ghostty attached" "grep -q 'finished' '$NLOG'"
+
+# Focus suppression: a client looking at the notifying pane gets no toast on
+# either route — the pane IS the notification.
+: > "$NLOG"; : > "$WORK/got"
+ACTIVEPANE=%7 notify "$SOCK" %7 "needs your input"
+ACTIVEPANE=%7 AGENT_FLEET_NOTIFY_VIA=desktop notify "$SOCK" %7 "needs your input"
+sleep 0.5
+check "focused pane: no terminal toast, no desktop toast" "[[ ! -s '$WORK/got' && ! -s '$NLOG' ]]"
+
+# AGENT_FLEET_NOTIFY_ON picks the states: wait-only silences 'finished'.
+: > "$NLOG"
+AGENT_FLEET_NOTIFY_ON=wait AGENT_FLEET_NOTIFY_VIA=desktop notify "$SOCK" %7 "finished"
+check "NOTIFY_ON=wait silences finished" "[[ ! -s '$NLOG' ]]"
+AGENT_FLEET_NOTIFY_ON=wait AGENT_FLEET_NOTIFY_VIA=desktop notify "$SOCK" %7 "needs your input"
+check "NOTIFY_ON=wait still fires wait" "grep -q 'needs your input' '$NLOG'"
 
 # Control characters in the body never reach the escape sequence.
 printf 'id t2\nintent bad\033]0;pwned\007intent\npane %%8\n' > "$CACHE/tasks/t2"

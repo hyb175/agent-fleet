@@ -24,6 +24,12 @@ intent="${4:-}"
 
 [[ -z "$pane" || -z "$msg" ]] && exit 0
 [[ "${AGENT_FLEET_NOTIFY:-1}" == "1" ]] || exit 0
+# Which states notify: a fleet of many agents finishing is a toast storm, and
+# "finished" is a glance at the rail, not an interrupt. Keyed on the message
+# the two callers already send — "finished" is done, everything else is wait.
+on="${AGENT_FLEET_NOTIFY_ON:-wait,done}"
+kind='wait'; [[ "$msg" == finished ]] && kind='done'
+case ",$on," in *",$kind,"*) ;; *) exit 0 ;; esac
 
 HERE="${BASH_SOURCE[0]%/*}"
 AF="$HERE/../bin/agent-fleet"
@@ -72,9 +78,16 @@ tty_fire() {  # <tty> <bytes> — never block the hook: a pane whose master is g
   ( sleep 2; kill "$w" 2>/dev/null ) >/dev/null 2>&1 &
 }
 via="${AGENT_FLEET_NOTIFY_VIA:-auto}"
-if [[ "$via" != "desktop" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
+# A client LOOKING at the notifying pane needs no toast — the pane is the
+# notification. Skipped on the terminal route; and if any client is on it,
+# the desktop route stays quiet too (wezterm on Windows toasts even when the
+# window is focused, so this is the whole noise story there).
+focused=""
+if command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; then
   sent=""
-  while IFS='|' read -r ctermtype ctermname ptty; do
+  while IFS='|' read -r ctermtype ctermname ptty cpane; do
+    if [[ "$cpane" == "$pane" ]]; then focused=1; continue; fi
+    [[ "$via" != "desktop" ]] || continue
     [[ -n "$ptty" && -w "$ptty" ]] || continue
     case " $sent " in *" $ptty "*) continue ;; esac
     seq="$(osc_seq "$ctermtype" "$ctermname")"
@@ -83,8 +96,8 @@ if [[ "$via" != "desktop" ]] && command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1; 
     fi
     [[ -n "$seq" ]] || continue
     tty_fire "$ptty" "$seq"; sent="$sent $ptty"
-  done < <("${TMUX_BIN:-tmux}" -L "$socket" list-clients -F '#{client_termtype}|#{client_termname}|#{pane_tty}' </dev/null 2>/dev/null || true)
-  [[ -n "$sent" ]] && exit 0
+  done < <("${TMUX_BIN:-tmux}" -L "$socket" list-clients -F '#{client_termtype}|#{client_termname}|#{pane_tty}|#{pane_id}' </dev/null 2>/dev/null || true)
+  [[ -n "$sent" || -n "$focused" ]] && exit 0
   [[ "$via" == "terminal" ]] && exit 0   # asked for terminal only; nobody attached to show it
 fi
 

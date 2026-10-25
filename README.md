@@ -289,7 +289,7 @@ A single daemon (`snapshotd.sh`, one per fleet) polls tmux once a second, resolv
 
 ## Notifications
 
-A hooked agent changing to **wait** or **done** fires a notification whose body leads with the **task intent**. Two routes, `AGENT_FLEET_NOTIFY_VIA` picks: **terminal** sends an OSC 777 / OSC 9 notification through tmux to every attached client, so the terminal itself shows it (Ghostty, WezTerm, iTerm2, foot, rxvt; works over SSH; no helper needed; clicking focuses the terminal). **desktop** uses `terminal-notifier` on macOS (clicking jumps to the agent; the plain `osascript` banner isn't clickable) or `notify-send` on Linux (a *Jump to agent* action when the daemon supports actions). The default, `auto`, takes the terminal route when a client with a known terminal is attached and the desktop route otherwise. Scrape-tier agents don't notify. `AGENT_FLEET_NOTIFY=0` silences.
+A hooked agent changing to **wait** or **done** fires a notification whose body leads with the **task intent**. Two routes, `AGENT_FLEET_NOTIFY_VIA` picks: **terminal** sends an OSC 777 / OSC 9 notification through tmux to every attached client, so the terminal itself shows it (Ghostty, WezTerm, iTerm2, foot, rxvt; works over SSH; no helper needed; clicking focuses the terminal). **desktop** uses `terminal-notifier` on macOS (clicking jumps to the agent; the plain `osascript` banner isn't clickable) or `notify-send` on Linux (a *Jump to agent* action when the daemon supports actions). The default, `auto`, takes the terminal route when a client with a known terminal is attached and the desktop route otherwise. A client already looking at the agent's pane gets no toast — the pane is the notification (this matters on WezTerm, which toasts even for the focused window). `AGENT_FLEET_NOTIFY_ON=wait` drops the **done** toasts and keeps only the ones that need you (default `wait,done`). Scrape-tier agents don't notify. `AGENT_FLEET_NOTIFY=0` silences.
 
 An agent stuck in **wait** past `AGENT_FLEET_NOTIFY_ESCALATE` seconds re-notifies **once per wait episode** (default 600 — ten minutes; `0` disables; the daemon re-arms when the agent resumes). Inbox rows past the threshold wear a `!` marker.
 
@@ -344,6 +344,7 @@ The id is recorded at launch (`SessionStart`), so an agent you opened but never 
 | `AGENT_FLEET_HOME_SESSION` | `home` | Placeholder session created on first boot |
 | `AGENT_FLEET_NOTIFY` | `1` | Notifications on state change (`0` disables) |
 | `AGENT_FLEET_NOTIFY_VIA` | `auto` | `terminal` (OSC 777/9 through tmux to attached clients), `desktop` (`terminal-notifier` / `osascript` / `notify-send`), or `auto`: terminal when a known terminal is attached, else desktop |
+| `AGENT_FLEET_NOTIFY_ON` | `wait,done` | Which states notify; `wait` alone silences every "finished" toast |
 | `AGENT_FLEET_NOTIFY_ESCALATE` | `600` | Seconds in `wait` before a one-per-episode re-notification and the inbox `!` marker (`0` disables; daemon restart to change) |
 | `AGENT_FLEET_PROGRESS` | `1` | Terminal progress bar (`0` disables; read at daemon start) |
 | `AGENT_FLEET_SHIM` | `1` | Put the claude shim on shell panes' `PATH` (`0` opts out) |
