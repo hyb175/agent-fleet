@@ -258,6 +258,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 | `Prefix B` | Focus the rail: `j`/`k` move, `⏎` jumps, `w` waiting only, `/` text filter, `z` folds a workspace, `Esc` back to the work pane. Wheel scrolls the agent list. |
 | `Prefix c` | New plain shell window (tmux default) |
 | `Prefix C` | Add a Claude agent — menu picks a new tab or a new workspace; starts in the current dir, jumps to it |
+| `Prefix g` | Open the desk board (`desk open`; no-op when `desk` is not installed) |
 | `Prefix R` | Force-repaint the focused pane (fixes a stale Claude frame) |
 | `Prefix ?` | Fleet keymap as a menu — every row also launches its action (tmux's raw dump stays at `:list-keys`) |
 | `Prefix Tab` | Jump back to the previously focused agent; toggles between two |
