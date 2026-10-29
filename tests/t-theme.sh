@@ -74,5 +74,7 @@ tx source-file "$REPO/conf/agent-fleet.conf"
 tx source-file "$REPO/conf/agent-fleet.conf"
 check "reloads don't pile up terminal-overrides" \
   "[[ \"\$(tx show -sv terminal-overrides | grep -cx '\*256col\*:Tc')\" == 1 ]]"
+check "Claude Code is let out of its 256-color tmux clamp" \
+  "[[ \"\$(tx show-environment -g CLAUDE_CODE_TMUX_TRUECOLOR)\" == CLAUDE_CODE_TMUX_TRUECOLOR=1 ]]"
 
 exit "$FAIL"
