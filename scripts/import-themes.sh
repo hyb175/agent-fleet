@@ -2,7 +2,7 @@
 # import-themes.sh — one-shot bulk import of the terminalcolors.com gallery
 # palettes from iTerm2-Color-Schemes, via gen-theme.sh. Re-run to refresh.
 #
-# The eight hand-tuned themes (tokyo-night, dracula, nord, gruvbox,
+# The hand-tuned themes (tokyo-night, dracula, nord, gruvbox, flexoki-dark,
 # catppuccin-mocha, everforest, kanagawa, rose-pine) are deliberately NOT listed
 # — they stay as-is. Names that don't exist upstream are skipped and reported.
 set -uo pipefail
