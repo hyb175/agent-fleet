@@ -70,5 +70,9 @@ check "themed boot keeps heavy pane borders" "[[ \"\$(tx show -gv pane-border-li
 # unchanged by the subshell re-source above (the subshell isolates AGENT_FLEET_THEME, not this)
 tx source-file "$AGENT_FLEET_THEME_CONF"
 check "live source-file re-styles (kanagawa bg)" "[[ \"\$(tx show -gv status-style)\" == *1f1f28* ]]"
+tx source-file "$REPO/conf/agent-fleet.conf"
+tx source-file "$REPO/conf/agent-fleet.conf"
+check "reloads don't pile up terminal-overrides" \
+  "[[ \"\$(tx show -sv terminal-overrides | grep -cx '\*256col\*:Tc')\" == 1 ]]"
 
 exit "$FAIL"
