@@ -44,6 +44,39 @@ AGENT_FLEET_REPO="${AGENT_FLEET_REPO:-hyb175/agent-fleet}"
 CONF="${AGENT_FLEET_CONF:-$ROOT_DIR/conf/agent-fleet.conf}"
 SOCKET="${AGENT_FLEET_SOCKET:-agent-fleet}"
 DEFAULT_AGENT_CMD="${AGENT_FLEET_CMD:-claude}"
+
+# Owned workers use an explicit optional backend; do not inspect or restore
+# ordinary tmux tasks before handing off the versioned JSON request.
+cmd_owned() {
+  if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+    cat <<'HELP'
+Usage: agent-fleet owned --driver /absolute/executable launch|inspect|answer|stop
+
+Send a versioned JSON request on stdin to an explicitly selected owned-worker
+backend. The backend receives --fleet-socket, --fleet-cache and the action as
+separate arguments. It must enforce ownership, isolation and durable operation
+identity; the CLI grants no authority over ordinary fleet tasks.
+HELP
+    return 0
+  fi
+  if [[ $# -ne 3 || "${1:-}" != --driver || "${2:-}" != /* || ! -f "${2:-}" || ! -x "${2:-}" ]]; then
+    echo 'owned requires --driver /absolute/executable and an action (see owned --help)' >&2
+    return 2
+  fi
+  local driver="$2" action="$3"
+  case "$action" in
+    launch|inspect|answer|stop) ;;
+    *) echo "unknown owned action: $action" >&2; return 2 ;;
+  esac
+  source "$ROOT_DIR/scripts/cache.sh"
+  exec "$driver" --fleet-socket "$SOCKET" --fleet-cache "$AF_CACHE_DIR" "$action"
+}
+
+if [[ "${1:-}" == owned ]]; then
+  shift
+  cmd_owned "$@"
+  exit $?
+fi
 HOME_SESSION="${AGENT_FLEET_HOME_SESSION:-home}"
 
 TMUX_BIN="${TMUX_BIN:-tmux}"
@@ -3218,6 +3251,8 @@ Verbs:
   agent-fleet task intent <id|%pane> "<text>"
                                    Set a task's intent (the rail/picker row title).
   agent-fleet task done|drop|clean Lifecycle: mark terminal, reclaim worktrees (see task -h).
+  agent-fleet owned --driver <path> launch|inspect|answer|stop
+                                   Optional owned-worker JSON backend (see owned --help).
   agent-fleet history              Finished tasks per day: duration, wait time, outcome (task history).
   agent-fleet review <id|%pane>    Diff a done task vs its base; PR / merge / send-back (see review -h).
   agent-fleet answer <id|%pane> approve|deny|text "<reply>" [--fp <sum>]
