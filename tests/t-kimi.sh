@@ -63,7 +63,7 @@ tx kill-session -t __boot__ 2>/dev/null; sleep 0.3
 check "save records kind kimi" "grep -q \"kimi\" '$CACHE/fleet.state'"
 check "save records the session id" "grep -q '$UUID' '$CACHE/fleet.state'"
 
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 poll_until 20 "tx list-panes -t kwork -F '#{pane_start_command}' 2>/dev/null | grep -c 'kimi --session'"
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions below

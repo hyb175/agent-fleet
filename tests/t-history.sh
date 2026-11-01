@@ -109,7 +109,7 @@ EOF
 out="$(TZ=UTC af task history)"
 check "live non-terminal task excluded" "! grep -q 't106-7' <<<\"\$out\""
 check "live agent resumed after pr excluded" "! grep -q 't107-8' <<<\"\$out\""
-tx kill-server 2>/dev/null; sleep 0.3
+kill_server
 out="$(TZ=UTC af task history)"
 check "after restart the record survives as abandoned~" "grep -Eq 't106-7 +abandoned~' <<<\"\$out\""
 check "dead resumed-after-pr task settles as pr" "grep -Eq 't107-8 +pr ' <<<\"\$out\""

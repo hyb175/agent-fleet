@@ -35,7 +35,7 @@ tx kill-session -t __boot__ 2>/dev/null; sleep 0.3
 check "save#1 records the session id" "grep -q '$UUID' '$CACHE/fleet.state'"
 
 # reboot 1 (with stale decoys from the 'previous boot')
-tx kill-server; sleep 0.4
+kill_server
 printf 'junk\n'      > "$CACHE/panes/%0.status"
 printf 'stale-sid\n' > "$CACHE/panes/%1.session"
 "$REPO/scripts/persist-restore.sh"
@@ -52,7 +52,7 @@ check "gate file re-armed" "grep -qx '$UUID' '$CACHE/panes/$rp.session'"
 check "save#2 still records the session id" "grep -q '$UUID' '$CACHE/fleet.state'"
 
 # reboot 2
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 sleep 0.6
 starts="$(tx list-panes -t work -F '#{pane_start_command}')"
@@ -71,7 +71,7 @@ check "SessionStart tagged the pane for persistence" \
   "[[ \"\$(tx display-message -p -t $npw '#{@fleet-session}')\" == '$NP' ]]"
 "$REPO/scripts/persist-save.sh"
 check "save records the never-prompted agent's id" "grep -q '$NP' '$CACHE/fleet.state'"
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"; sleep 0.6
 # shellcheck disable=SC2034 # starts read inside the eval'd check() condition below
 starts="$(tx list-panes -t np -F '#{pane_start_command}')"
@@ -94,7 +94,7 @@ printf 'id t1\nintent run the suite\ndir %s\nkind claude\npane %s\norigin task\n
 printf 't1\n' > "$CACHE/panes/$ta.task"
 sleep 0.4
 "$REPO/scripts/persist-save.sh"
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"; sleep 0.6
 # shellcheck disable=SC2034 # fstart/pstart read inside the eval'd check() conditions below
 fstart="$(tx list-panes -t fresh -F '#{?@fleet-sidenav,1,0}|#{pane_start_command}' | awk -F'|' '$1 != "1" {print $2}')"

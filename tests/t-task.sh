@@ -110,7 +110,7 @@ check "ack logged as idle" "[[ \"\$(tail -1 '$rec')\" == 'state idle '* ]]"
 tx kill-session -t __boot__ 2>/dev/null
 "$REPO/scripts/persist-save.sh"
 check "save records the task id" "grep -q '$tid' '$CACHE/fleet.state'"
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 sleep 0.6
 np="$(tx list-panes -a -F '#{pane_id} #{@fleet-task}' 2>/dev/null | awk -v t="$tid" '$2==t{print $1; exit}')"

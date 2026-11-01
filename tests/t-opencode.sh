@@ -66,7 +66,7 @@ tx kill-session -t __boot__ 2>/dev/null; sleep 0.3
 "$REPO/scripts/persist-save.sh"
 check "save records kind opencode" "grep -q 'opencode' '$CACHE/fleet.state'"
 
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 # Poll, don't nap: respawn-pane lands whenever the slow runner schedules it.
 poll_until 20 "tx list-panes -t xwork -F '#{pane_start_command}' 2>/dev/null | grep -c 'opencode --session'"

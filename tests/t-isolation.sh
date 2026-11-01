@@ -127,7 +127,7 @@ fi
 
 # --- restore keeps the rung --------------------------------------------------
 "$REPO/scripts/persist-save.sh"
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 poll_until 20 "tx list-panes -a -F '#{pane_start_command}' 2>/dev/null | grep -c 'claude'"
 # shellcheck disable=SC2034
@@ -136,7 +136,7 @@ check "restore relaunches with the sandbox overlay" "grep -qF \"\$SBF\" <<<\"\$a
 
 # Purged cache: restore REGENERATES the overlay from the record rather than
 # silently relaunching unsandboxed under a record that still says sandbox.
-tx kill-server; sleep 0.4
+kill_server
 rm -f "$SBF"
 "$REPO/scripts/persist-restore.sh"
 poll_until 10 "[[ -f '$SBF' ]]"

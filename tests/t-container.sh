@@ -149,7 +149,7 @@ rm -rf "$REPODIR/.devcontainer"
 
 # --- restore re-link: resumed IN a container, never on the host -------
 "$REPO/scripts/persist-save.sh"
-tx kill-server; sleep 0.4
+kill_server
 : > "$DLOG"
 "$REPO/scripts/persist-restore.sh"
 # The shim rebuilds the container command from the record and resumes the

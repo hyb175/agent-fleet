@@ -71,6 +71,16 @@ poll_until() {
   eval "$cond" >/dev/null 2>&1
 }
 
+# kill_server — kill the test server and wait until it is really gone. On
+# tmux 3.6 (Linux) kill-server returns while the socket still accepts a
+# connection; a `tmux -f conf new-session` issued in that window joins the
+# dying server and fails with "server exited" — the restore tests' flake.
+kill_server() {
+  tx kill-server 2>/dev/null
+  local s; s="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$SOCK"
+  wait_for 10 "[[ ! -e '$s' ]] && ! tx list-sessions >/dev/null 2>&1"
+}
+
 # Boot a conf-loaded server with the fleet env pushed (most tests want this).
 boot_server() {  # [session] [dir]
   tmux -L "$SOCK" -f "$REPO/conf/agent-fleet.conf" new-session -d -s "${1:-t}" -c "${2:-$WORK}"

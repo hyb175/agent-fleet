@@ -79,7 +79,7 @@ tx kill-session -t __boot__ 2>/dev/null; sleep 0.3
 "$REPO/scripts/persist-save.sh"
 check "save records kind codex" "grep -q 'codex' '$CACHE/fleet.state'"
 
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 poll_until 20 "tx list-panes -t xwork -F '#{pane_start_command}' 2>/dev/null | grep -c 'codex resume'"
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions below
@@ -124,7 +124,7 @@ touch -t 202510252200 "$RD/rollout-2026-10-25T22-00-00-$U_USER.jsonl"
 touch -t 202510252300 "$RD/rollout-2026-10-25T23-00-00-$U_SUB.jsonl"
 touch -t 202510260000 "$RD/rollout-2026-10-26T00-00-00-$U_OTHER.jsonl"
 
-tx kill-server; sleep 0.4
+kill_server
 HOME="$FAKEHOME" "$REPO/scripts/persist-restore.sh"
 poll_until 20 "tx list-panes -s -t xwork -F '#{pane_start_command}' 2>/dev/null | grep -q 'codex resume $U_USER2'"
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions below

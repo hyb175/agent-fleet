@@ -35,7 +35,7 @@ sleep 1
 
 before="$(snapshot)"
 "$REPO/scripts/persist-save.sh"
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"; rc=$?
 sleep 1
 after="$(snapshot)"
@@ -81,14 +81,14 @@ rm -f "/private/tmp/tmux-$(id -u)/$OTHER" 2>/dev/null
 
 # Geometry-immunity: restore under a different rail width — the old
 # left/top/width match would find nothing and leave shells behind.
-tx kill-server; sleep 0.4
+kill_server
 AGENT_FLEET_SIDENAV_WIDTH=25 "$REPO/scripts/persist-restore.sh"
 sleep 1
 check "rails respawn under width mismatch (identity, not geometry)" "rails_running"
 
 # Concurrent cold boots: two restores race; one holds the lock, the other
 # adopts its outcome — no duplicate/stray sessions, rails intact.
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh" & r1=$!
 "$REPO/scripts/persist-restore.sh" & r2=$!
 wait "$r1"; rc1=$?
@@ -100,7 +100,7 @@ sess_list="$(tx list-sessions -F '#{session_name}' 2>/dev/null | sort | tr '\n' 
 check "no duplicate/stray sessions (got: $sess_list)" "[[ '$sess_list' == 'alpha beta ' ]]"
 check "rails intact after parallel restore" "rails_running"
 
-tx kill-server 2>/dev/null; sleep 0.3
+kill_server
 rm -rf "$XDG_CACHE_HOME"; mkdir -p "$XDG_CACHE_HOME"
 
 # --- part 2: big window + auto-rail opt-out (private HOME for local.conf) ---
@@ -119,7 +119,7 @@ before_n="$(tx list-panes -t big | wc -l | tr -d ' ')"
 before_r="$(tx list-panes -t big -F '#{pane_left},#{pane_top},#{pane_width},#{pane_height}' | sort | tr '\n' ' ')"
 
 "$REPO/scripts/persist-save.sh"
-tx kill-server; sleep 0.4
+kill_server
 "$REPO/scripts/persist-restore.sh"
 sleep 0.8
 after_n="$(tx list-panes -t big 2>/dev/null | wc -l | tr -d ' ')"

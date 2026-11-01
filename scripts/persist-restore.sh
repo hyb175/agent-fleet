@@ -146,7 +146,15 @@ rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session 
 # --- start the server (loads conf: hooks + rail-auto), then suppress the auto
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt
 #     windows stay under our control; it's removed at the end. --------------
-"${TMUX_BIN:-tmux}" -L "$SOCK" -f "$CONF" new-session -d -s "__af_restore__" -x 220 -y 50 2>/dev/null || exit 1
+# A server killed a moment ago can still be on the socket (tmux 3.6 on Linux
+# returns from kill-server before the socket is unlinked): the client then
+# connects to it and gets "server exited" instead of starting a fresh one.
+# Retry briefly rather than give up the whole rebuild.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  "${TMUX_BIN:-tmux}" -L "$SOCK" -f "$CONF" new-session -d -s "__af_restore__" -x 220 -y 50 2>/dev/null && break
+  sleep 0.2
+done
+tx has-session -t "__af_restore__" 2>/dev/null || exit 1
 # Remember the user's effective auto-rail setting (conf + local.conf just
 # loaded) so we can put it back afterwards instead of clobbering an opt-out.
 prev_auto="$(tx show-option -gqv @fleet-sidenav-auto 2>/dev/null)"
