@@ -4,6 +4,9 @@
 #     DESTROYED (Prefix x, `agent-fleet kill %id`) — tmux fires pane-exited for
 #     the first and after-kill-pane for the second, never both
 #   - a window that still has a work pane is left alone
+#   - a new window whose command exits at once never takes the ACTIVE window
+#     with it (the rail hook used to tag the active pane when its own target
+#     was already gone, and the reaper then closed that window as empty)
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
@@ -49,5 +52,16 @@ base="$(nwin)"
 AGENT_FLEET_SOCKET="$SOCK" "$REPO/bin/agent-fleet" kill "$(workpane t:2)" >/dev/null 2>&1
 wait_for 15 "[[ \"\$(nwin)\" == '$((base - 1))' ]]"
 check "rail-only window reaped after 'agent-fleet kill' (got $(nwin), want $((base - 1)))" "[[ \"\$(nwin)\" == '$((base - 1))' ]]"
+
+# --- a window command that exits immediately must not cost the active window ---
+tx new-window -d -t t: -n keep -c "$WORK"
+wait_for 15 "[[ -n \"\$(workpane t:keep)\" ]]"
+tx select-window -t t:keep
+base="$(nwin)"
+tx new-window -d -t t: -n dies -c "$WORK" true
+sleep 1.5
+check "active window survives an instantly-exiting new window" "[[ -n \"\$(tx list-windows -t t -F '#{window_name}' | grep -x keep)\" ]]"
+check "…and its work pane is still a work pane" "[[ \"\$(tx display-message -p -t \"\$(workpane t:keep)\" '#{@fleet-sidenav}')\" != '1' ]]"
+check "the dead window is gone (got $(nwin), want $base)" "[[ \"\$(nwin)\" == '$base' ]]"
 
 exit "$FAIL"

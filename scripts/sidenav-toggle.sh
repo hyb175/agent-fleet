@@ -60,6 +60,10 @@ create_rail() {
   sess="$(tx display-message -p -t "$win" '#{session_name}' 2>/dev/null || true)"
   newp="$(tx split-window -h -b -f -d -l "$WIDTH" -t "$win" -P -F '#{pane_id}' \
           "exec env AGENT_FLEET_SOCKET='$SOCKET' AGENT_FLEET_ROOT='$ROOT' AGENT_FLEET_RAIL_WIN='$win' AGENT_FLEET_RAIL_SESS='$sess' '$ROOT/scripts/rail-launch.sh'")"
+  # The window can be gone already (its command exited at once; the hook runs
+  # after). An empty target below would mean the ACTIVE pane — tagging it a
+  # rail, and the reaper then closes the active window as "empty".
+  [[ -n "$newp" ]] || return 0
   tx set -p -t "$newp" @fleet-sidenav 1
   tx set -p -t "$newp" remain-on-exit off
   redraw   # split -l already set the width; just paint cleanly
