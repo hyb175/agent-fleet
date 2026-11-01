@@ -94,7 +94,8 @@ tx kill-server; sleep 0.4
 wait "$r1"; rc1=$?
 wait "$r2"; rc2=$?
 sleep 1
-check "parallel restores both report success" "[[ $rc1 -eq 0 && $rc2 -eq 0 ]]"
+check "parallel restores both report success (rc $rc1/$rc2)" "[[ $rc1 -eq 0 && $rc2 -eq 0 ]]"
+[[ $rc1 -eq 0 && $rc2 -eq 0 ]] || { echo "--- restore.log ---"; cat "$XDG_CACHE_HOME/agent-fleet/$SOCK/restore.log" 2>/dev/null; }
 sess_list="$(tx list-sessions -F '#{session_name}' 2>/dev/null | sort | tr '\n' ' ')"
 check "no duplicate/stray sessions (got: $sess_list)" "[[ '$sess_list' == 'alpha beta ' ]]"
 check "rails intact after parallel restore" "rails_running"
