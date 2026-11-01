@@ -1408,9 +1408,30 @@ cmd_upgrade() {
 # are unaffected. Block body arrives on stdin (install only).
 _AF_BLK_BEGIN="# >>> agent-fleet hooks >>>"
 _AF_BLK_END="# <<< agent-fleet hooks <<<"
+# A TOML hook handler line whose command's FIRST token is the status hook —
+# single-quoted (how install writes it; the path may hold spaces) or bare. The
+# one identity the unfenced codex tier keys on: grep for status, awk (via -v,
+# so no backslash escapes) for the strip. A wrapper passing the hook as an
+# ARGUMENT does not match.
+_AF_HOOKCMD_RE=$'^[ \t]*command[ \t]*=[ \t]*"(\'[^\']*agent-status-hook[.]sh\'|[^ "\']*agent-status-hook[.]sh[" ])'
 manage_hooks_block() {  # <tool> <conf> <install|remove|status> [post-install note]
   local tool="$1" conf="$2" sub="$3" note="${4:-}"
   local b="$_AF_BLK_BEGIN" e="$_AF_BLK_END" tmp="$conf.af.$$"
+  # A tool with a <tool>_hooks_strip function re-serializes its own config
+  # (codex appends its trust table and TUI state wherever the file ends — i.e.
+  # INSIDE a trailing fence), so its block is identified by content, stripped
+  # structurally, and written without fence markers.
+  local strip="${tool}_hooks_strip"
+  declare -F "$strip" >/dev/null || strip=""
+  # hooks_present: fence marker for fenced tools; for stripped tools, the
+  # config is "installed" exactly when the stripper would change it.
+  hooks_present() {
+    if [[ -n "$strip" ]]; then grep -Eq "$_AF_HOOKCMD_RE" "$conf"
+    else grep -qxF "$b" "$conf"; fi
+  }
+  hooks_stripped() {  # the config minus the fleet block, on stdout
+    if [[ -n "$strip" ]]; then "$strip" < "$conf"; else sed "/^$b\$/,/^$e\$/d" "$conf"; fi
+  }
   case "$sub" in
     install)
       if [[ ! -f "$conf" ]]; then
@@ -1419,24 +1440,28 @@ manage_hooks_block() {  # <tool> <conf> <install|remove|status> [post-install no
       fi
       # Drop any previous fleet block first (idempotent; also migrates the
       # block when the repo path or socket changes), keep everything else.
-      sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" || { rm -f "$tmp"; exit 1; }
+      hooks_stripped > "$tmp" || { rm -f "$tmp"; exit 1; }
       # Guard against a config with no trailing newline — the block marker
       # must start its own line or remove's range match misses it.
       if [[ -s "$tmp" && "$(tail -c1 "$tmp")" != "" ]]; then echo >> "$tmp"; fi
-      { printf '%s\n' "$b"; cat; printf '%s\n' "$e"; } >> "$tmp"
+      if [[ -n "$strip" ]]; then cat >> "$tmp"
+      else { printf '%s\n' "$b"; cat; printf '%s\n' "$e"; } >> "$tmp"; fi
       mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
       echo "$tool hooks installed in $conf (remove with: agent-fleet $tool-hooks remove)"
       [[ -n "$note" ]] && echo "$note" || true
       ;;
     remove)
       [[ -f "$conf" ]] || { echo "nothing to remove ($conf not found)"; return 0; }
-      if ! grep -qxF "$b" "$conf"; then echo "no fleet hooks block in $conf"; return 0; fi
-      # shellcheck disable=SC2015 # chained error trap, not if/then/else: sed OR mv failing must hit the handler
-      sed "/^$b\$/,/^$e\$/d" "$conf" > "$tmp" && mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
+      if ! hooks_present; then echo "no fleet hooks block in $conf"; return 0; fi
+      # shellcheck disable=SC2015 # chained error trap, not if/then/else: strip OR mv failing must hit the handler
+      hooks_stripped > "$tmp" && mv "$tmp" "$conf" || { rm -f "$tmp"; exit 1; }
+      if hooks_present; then
+        echo "warning: some fleet entries survived (unexpected layout) — check $conf by hand" >&2
+      fi
       echo "$tool hooks removed from $conf"
       ;;
     status)
-      if [[ -f "$conf" ]] && grep -qxF "$b" "$conf"; then
+      if [[ -f "$conf" ]] && hooks_present; then
         echo "installed ($conf)"
       else
         echo "not installed"
@@ -1623,6 +1648,43 @@ TOML
 # trusted hash), so install alone changes nothing until the user says yes
 # in codex. The status hook prints nothing to stdout, so the
 # PermissionRequest handler never emits an allow/deny decision.
+# No fence: codex rewrites config.toml (recording trust, TUI state) and lands
+# its own tables before a trailing fence, so a range delete would take them
+# with it. Identity lives in the data — see codex_hooks_strip.
+#
+# Strip fleet-owned hook entries from a codex config on stdin -> stdout:
+# every [[hooks.<Event>.hooks]] handler whose command's FIRST token is the
+# status hook, then any [[hooks.<Event>]] group that held only such handlers
+# (a group the user added their own handler to keeps the group and theirs).
+# Fleet comment lines and legacy fence markers go too; nothing else moves.
+codex_hooks_strip() {
+  awk -v re="$_AF_HOOKCMD_RE" '
+    function flush(   i, k, keep, anyours, mixed) {
+      if (gn == 0) return
+      anyours = 0; mixed = 0
+      for (k = 1; k <= hn; k++) if (ours[k]) anyours = 1; else mixed = 1
+      for (i = 1; i <= gn; i++) {
+        keep = 1
+        if (anyours && !mixed) keep = 0
+        else for (k = 1; k <= hn; k++) if (ours[k] && i >= hs[k] && i <= he[k]) keep = 0
+        if (keep) print g[i]
+      }
+      gn = 0; hn = 0
+    }
+    /^# (>>>|<<<) agent-fleet hooks (>>>|<<<)$/ { next }
+    /^# Managed by agent-fleet / { next }
+    /^# Maps codex lifecycle events to fleet pane states/ { next }
+    /^\[\[hooks\.[A-Za-z]+\]\][ \t]*$/ { flush(); ingroup = 1; gn = 1; g[1] = $0; next }
+    ingroup && /^\[\[hooks\.[A-Za-z]+\.hooks\]\][ \t]*$/ { hn++; g[++gn] = $0; hs[hn] = gn; he[hn] = gn; ours[hn] = 0; next }
+    /^[ \t]*\[/ { flush(); ingroup = 0 }
+    ingroup {
+      g[++gn] = $0
+      if (hn) { he[hn] = gn; if ($0 ~ re) ours[hn] = 1 }
+      next
+    }
+    { print }
+    END { flush() }'
+}
 cmd_codex_hooks() {
   local sub="${1:-install}" hook="$ROOT_DIR/scripts/agent-status-hook.sh" ev st
   if [[ "$sub" != "install" ]]; then

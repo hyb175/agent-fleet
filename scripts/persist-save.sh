@@ -50,7 +50,15 @@ tmp="$STATE.tmp.$$"
   # agent kind (or -) / task id (or -). New fields append at the END so state
   # files from older versions still parse — a missing kind defaults to claude,
   # a missing task id to none.
+  # A scrape-tier agent (hand-started, hooks never fired) carries no kind tag;
+  # the snapshot's A-record label is its detected kind ("~" = scraped), so an
+  # untagged pane borrows it and restore relaunches the agent, not a shell.
   tx list-panes -a \
     -F "P${US}#{session_name}${US}#{window_index}${US}#{pane_index}${US}#{?@fleet-sidenav,1,0}${US}#{pane_active}${US}#{?@fleet-session,#{@fleet-session},-}${US}#{pane_current_path}${US}#{?@fleet-agent-kind,#{@fleet-agent-kind},-}${US}#{?@fleet-task,#{@fleet-task},-}" \
-    2>/dev/null
+    2>/dev/null \
+  | awk -F"$US" -v OFS="$US" -v snap="$CACHE/fleet.snapshot" '
+      BEGIN { while ((getline l < snap) > 0) if (substr(l, 1, 2) == "A ") {
+                split(substr(l, 3), a, "|"); k = a[6]; sub(/~$/, "", k); kind[a[1] "\t" a[3] "\t" a[8]] = k } }
+      $9 == "-" && (($2 "\t" $3 "\t" $4) in kind) { $9 = kind[$2 "\t" $3 "\t" $4] }
+      { print }'
 } > "$tmp" 2>/dev/null && mv "$tmp" "$STATE" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; exit 0; }

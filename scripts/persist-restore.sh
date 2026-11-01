@@ -53,6 +53,26 @@ respawn() {
   printf '%(%F %T)T respawn %s: %s\n' -1 "$1" "${out:-failed}" >> "$RLOG" 2>/dev/null
   return 1
 }
+# codex_session_for_dir <cwd> — the newest codex thread a user started in that
+# dir, from the rollout files codex keeps (filename ends in the thread id, the
+# first line names the cwd — within its first few hundred bytes in every codex
+# version seen, hence the 4 KiB read). Subagent threads are skipped: resuming
+# one would detach it from its parent. Ids already handed to another pane this
+# run (SIDS_TAKEN) are skipped too: two panes in one dir must not both append
+# to the same thread. Empty when nothing matches.
+codex_session_for_dir() {
+  local f head
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    head="$(head -c 4096 "$f" 2>/dev/null)"
+    [[ "$head" == *"\"cwd\":\"$1\""* ]] || continue
+    [[ "$head" == *'"subagent"'* ]] && continue
+    f="${f##*/rollout-}"; f="${f%.jsonl}"; f="${f:20}"   # past "YYYY-MM-DDTHH-MM-SS-"
+    [[ "$SIDS_TAKEN" == *" $f "* ]] && continue
+    printf '%s' "$f"
+    return
+  done < <(ls -t "$HOME"/.codex/sessions/*/*/*/rollout-*.jsonl 2>/dev/null)
+}
 
 # The cache dir is socket-scoped (cache.sh), so this state file already lives
 # under the socket that saved it — but this in-band check stays as a second
@@ -110,6 +130,12 @@ while IFS="$US" read -r kind f2 f3 f4 f5 f6 f7 f8 f9 f10 _; do
   esac
 done < "$STATE"
 (( ${#sess_order[@]} )) || exit 1
+# Every recorded session id, so a guessed id (codex_session_for_dir) can never
+# double up a thread some hooked pane resumes by record — whatever the order.
+SIDS_TAKEN=" "
+while IFS="$US" read -r kind _ _ _ _ _ f7 _; do
+  [[ "$kind" == "P" && -n "$f7" && "$f7" != "-" ]] && SIDS_TAKEN+="$f7 "
+done < "$STATE"
 
 # A fresh server reuses pane ids from %0, so every per-pane state file from the
 # previous boot is stale — and a stale .session gate file would permanently
@@ -245,7 +271,15 @@ for s in "${sess_order[@]}"; do
         # kimi/codex hooks are install-wide, so their fresh form takes no flag.
         case "$skind" in
           kimi)     (( has_sid )) && rc="kimi --session $sid" || rc="kimi" ;;
-          codex)    (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
+          codex)    # No hook-recorded id (scrape tier): codex's own rollouts
+                    # name the thread's cwd, so the newest user thread started
+                    # in this dir is the best guess — better than a fresh codex.
+                    # Same charset gate as a recorded id: it lands in $rc.
+                    if (( ! has_sid )); then
+                      sid="$(codex_session_for_dir "$scwd")"
+                      if [[ -n "$sid" && "$sid" != *[!A-Za-z0-9._-]* ]]; then has_sid=1; SIDS_TAKEN+="$sid "; fi
+                    fi
+                    (( has_sid )) && rc="codex resume $sid"   || rc="codex" ;;
           opencode) (( has_sid )) && rc="opencode --session $sid" || rc="opencode" ;;
           hermes)   (( has_sid )) && rc="hermes --resume $sid" || rc="hermes" ;;
           *)     (( has_sid )) && rc="claude --resume $sid" || rc="claude"

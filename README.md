@@ -275,7 +275,7 @@ Prefix is `Ctrl-a`. The fleet runs on its own socket, so no collision with daily
 
 **Hand-typed `claude` is hooked too.** Shell panes start through a launcher (`default-command`) that puts the repo's `shims/` on `PATH`, so `claude`, `claude -r`, `claude --resume`, `claude -c` resolve to a shim that attaches the hooks (and resume-after-reboot). Non-interactive calls (`-p`, `--help`, `--version`) and commands already carrying `--settings` pass through; `AGENT_FLEET_SHIM=0` opts out.
 
-**Kimi and Codex** load hooks only from their global config, so `agent-fleet kimi-hooks` / `codex-hooks` write a fenced, removable block there (idempotent, a no-op outside fleet panes). Same event map; codex trust-gates hooks, so approve them once in its startup review.
+**Kimi and Codex** load hooks only from their global config, so `agent-fleet kimi-hooks` / `codex-hooks` write a removable block there (idempotent, a no-op outside fleet panes). Same event map; codex trust-gates hooks, so approve them once in its startup review. Kimi's block is fenced; codex rewrites its config and appends its own tables at the end, so the codex entries are identified by content and `remove` strips exactly them — codex's trust table and anything you added stay.
 
 **Hermes Agent** (`agent-fleet hermes-hooks`) maps `on_session_start`→identity, `pre_llm_call`/`pre_tool_call`→working, `pre_approval_request`→wait, `on_session_end`→done in `~/.hermes/config.yaml`. No fenced block — hermes re-serializes its config and strips comments, so the entries are identified by their command string (the same string hermes' consent allowlist keys on). Install is inert until you approve each (event, command) pair in hermes' own trust flow: it prompts at the next interactive session, and `hermes hooks list` shows pending/approved. Reboot restore relaunches `hermes --resume <id>`.
 
@@ -320,7 +320,7 @@ tmux is in-memory, so a reboot ends the fleet. agent-fleet saves the layout to `
 
 **Restored** — sessions, tabs (names + order), the exact split layout, each pane's working directory. Hooked agents come back **resumed**: the fleet records each agent's session id and kind and relaunches `claude --resume <id>`, `kimi --session <id>`, or `codex resume <id>`. This covers `add` / `Prefix C`, hand-typed `claude` / `claude -r`, and hand-typed `kimi` / `codex`.
 
-The id is recorded at launch (`SessionStart`), so an agent you opened but never prompted still resumes. If the id is missing anyway, the agent comes back **fresh** in that dir — a new conversation, not a shell.
+The id is recorded at launch (`SessionStart`), so an agent you opened but never prompted still resumes. If the id is missing anyway, the agent comes back **fresh** in that dir — a new conversation, not a shell. Scrape-tier agents (hand-started, hooks never fired) are saved under their detected kind, so they come back fresh too; a scrape-tier codex resumes the newest thread codex itself recorded for that dir.
 
 **Not restored** — other programs and non-agent panes come back as shells in the right dir; a failed/expired resume also falls back to a shell. `AGENT_FLEET_RESTORE_AGENTS=0` restores everything as shells.
 
