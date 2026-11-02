@@ -128,12 +128,13 @@ matters and are reproduced by the checks named).
 | --- | --- | --- | --- |
 | H1 | `claude -p --session-id S … "Reply OK"` then `claude -p --resume S …` | both `result` events carry `session_id: S`, `uuid`, `num_turns`, `is_error`, `permission_denials`; `UserPromptSubmit`, `Stop`, `SessionStart` hooks fire in headless mode too | headless turns are a provider-native, serialized input API with a correlated receipt. The owned backend already relies on it. |
 | A1 | interactive pane, `send-keys -l text; Enter` | `UserPromptSubmit{prompt == text, prompt_id P, session_id S}` then `Stop{prompt_id P}` | consumption is observable natively; `prompt_id` ties a turn end to its prompt. |
-| A2 | human has typed `half typed ` (no Enter); fleet sends `Reply with exactly: BETA` | consumed prompt is `half typed Reply with exactly: BETA` | the race the handoff warns about is real; checking the pane *before* typing cannot see it. Only the receipt can: the hash differs → `mismatch`. |
+| A2 | human has typed `half typed ` (no Enter); fleet sends `Reply with exactly: BETA` | consumed prompt is `half typed Reply with exactly: BETA` | the race the handoff warns about is real. A draft is now caught before the paste by reading the composer (`composer_busy`, proof C2) and live typing by `human_active`; whatever slips between that read and the paste is caught by the receipt: the hash differs → `mismatch`. |
 | A3 | two-line text via tmux bracketed paste + Enter | one prompt, `"prompt":"line one\nline two: …"` | multi-line is safe through `paste-buffer -p`; `send-keys` alone would submit at the first newline. |
 | A4 | send while the agent is mid-turn | Claude Code queued it; **both** prompts reported the same `prompt_id`; two `Stop`s | the provider queues, but the receipt is then ambiguous. Fleet refuses `busy` instead and the caller keeps its queue. |
 | B | `claude -p --resume S` **while the interactive process holding S is alive** | exit 0, same `session_id`; the pane's next answer listed every prompt **except** the headless one; transcript has two leaves | in-place connection to an unmediated interactive session through the native API is **not** safe: it forks the conversation and the live agent never sees the message. |
-| I1 | Escape during a running claude turn | no `Stop`, no `Notification`; the pane returns to the prompt with the interrupted text back in the composer; the next prompt works normally (I2); Escape while idle does nothing (I3) | an interrupt has **no native receipt**; fleet reports `status=sent` only. The composer may hold the old text afterwards, so a following `send` can legitimately come back `mismatch`. |
+| I1 | Escape during a running claude turn | no `Stop`, no `Notification`; the pane returns to the prompt with the interrupted text back in the composer; the next prompt works normally (I2); Escape while idle does nothing (I3) | an interrupt has **no native receipt**; fleet reports `status=sent` only. The composer holds the interrupted text afterwards, so a following `send` is refused `composer_busy` until someone clears it (a second Escape clears claude's composer; fleet has no clearing verb, deliberately: that text may be a human's). |
 | C1 | codex-cli 0.165.0 in a pane, hooks trusted, bracketed paste + Enter (2026-11-02) | `SessionStart{session_id, transcript_path, cwd, source}` at launch; `UserPromptSubmit{session_id, turn_id, transcript_path, cwd, hook_event_name, model, permission_mode, prompt}` then `Stop{turn_id, last_assistant_message}`; a raw `send-keys` burst followed at once by Enter left the text in the composer unsent | codex has the same receipt shape with `turn_id`; the paste-then-Enter transport is required for it and is now used for both providers. `codex-hooks install` now wires `SessionStart` so the session id (and thus `send`'s receipt channel) exists before the first prompt; codex asks to trust the new hook once. The hook finds `prompt` by key, pinned in [t-runtime](../tests/t-runtime.sh) against this payload and a reordered one. |
+| C2 | composer rendering under `capture-pane -e`, claude 2.1.316 and codex-cli 0.165.0 (2026-11-02): empty, one typed line, a wrapped line, a bracketed multi-line paste, after `C-u` and `Escape` | claude: `❯` + NBSP, then either the hint in dim (`\e[2m`) or the text plain, continuation lines indented two spaces, the box closed by a `─` rule; codex: `›` then the hint dim (`Ask Codex to do anything`) or the text plain, continuation lines indented two spaces. `send-keys`/`paste-buffer` never advance tmux's `session_activity`; `attach`/`switch-client`/client keys do. | `send` refuses `composer_busy` on plain text after the marker and ignores dim text; the human-typing gate uses `session_activity`. Pinned in [t-send](../tests/t-send.sh) with the captured bytes. The dim convention is a CLI rendering choice: a version that drops it turns every idle send into `composer_busy` (loud, safe), never into a merge. |
 
 Conclusions the protocol is built on:
 
@@ -178,8 +179,13 @@ did; `--status` never waits. The `human_active` gate reads
 `switch-client` (never on `send-keys`/`paste-buffer`, verified on tmux 3.6)
 and which equals `#{session_created}` until a client has touched the session;
 fleet's own `go`/`focus` navigation therefore counts as a human for `--idle`
-seconds. Text left in the composer earlier than `--idle` is still caught
-only after the fact, by the hash (`mismatch`).
+seconds. Text left in the composer earlier than `--idle` is caught by the
+`composer_busy` gate: `send` reads the pane with attributes
+(`capture-pane -e`), finds the composer marker (`❯` for claude, `›` for
+codex), and refuses when the text after it is not dim. Both CLIs render the
+empty-composer hint dim and typed text plain (proof C2, below); a screen with
+no marker is unknown and the send proceeds, so the receipt hash remains the
+last line of defence (`mismatch`).
 
 Journal `AF_STATE_DIR/deliveries/<op>` (key-value lines, written **before**
 any keystroke): `op pane session pid kind sha chars created turns_at`, then

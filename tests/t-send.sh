@@ -122,6 +122,40 @@ check "--status keeps mismatch (rc=$rc)" "[[ $rc -eq 5 ]]"
 # land before the status-file manipulation below.
 wait_for 5 "grep -q '^e [0-9]* p4$' '$CACHE/panes/$ap.turns'"
 
+# --- composer_busy: text already sitting in the prompt box is refused before
+# the paste; the dim placeholder hint is not text. Screens are the bytes real
+# claude 2.1.316 / codex 0.165.0 panes produced under capture-pane -e.
+cat > "$WORK/screen" <<'FIX'
+#!/usr/bin/env bash
+case "$1" in
+  claude-busy)  printf '\033[38;5;244m\342\224\200\342\224\200\342\224\200\n\033[39m\342\235\257\302\240 half typed\n  second line\n\033[38;5;244m\342\224\200\342\224\200\342\224\200\n\033[39m  \033[38;5;220mauto mode on\033[39m\n' ;;
+  claude-empty) printf '\033[38;5;244m\342\224\200\342\224\200\342\224\200\n\033[39m\342\235\257\302\240 \033[2mTry\033[0m \033[2m"how does <filepath> work?"\033[0m\n\033[38;5;244m\342\224\200\342\224\200\342\224\200\n\033[39m  auto mode on\n' ;;
+  codex-busy)   printf '\033[1m\342\200\272\033[0m half typed\n  GPT default \302\267 /x\n' ;;
+  codex-empty)  printf '\033[1m\342\200\272\033[0m \033[2mAsk Codex to do anything\033[0m\n  GPT default \302\267 /x\n  \033[1m?\033[0m for shortcuts\n' ;;
+  claude-dim2)  printf '\342\235\257\302\240 \033[2;38;5;244mTry "x"\033[0m\n\342\224\200\342\224\200\n' ;;   # dim folded into one SGR
+  claude-glyph) printf '\342\235\257\302\240 see \342\200\272\n\342\224\200\342\224\200\n' ;;                        # a draft ending in a marker glyph
+esac
+exec cat
+FIX
+chmod +x "$WORK/screen"
+fixture() {  # <screen> <kind> -> pane id, tagged like a hooked agent
+  local p; p="$(tx new-window -d -P -F '#{pane_id}' -t t: "$WORK/screen $1")"
+  tx set-option -p -t "$p" @fleet-agent-kind "$2"; printf 'sess-%s\n' "$1" > "$CACHE/panes/$p.session"
+  wait_for 5 "tx capture-pane -p -t $p | grep -Eq 'half typed|Try|Ask Codex|see'"; printf '%s' "$p"
+}
+for k in claude codex; do
+  fb="$(fixture "$k-busy" "$k")"; fe="$(fixture "$k-empty" "$k")"
+  out="$(af send "$fb" "over a draft" --op "opb-$k" --wait 1)"; rc=$?
+  check "$k: typed text in the composer refuses before the paste (rc=$rc): $out" "[[ $rc -eq 1 ]] && grep -q 'reason=composer_busy' <<<\"\$out\" && [[ ! -e '$STATE/deliveries/opb-$k' ]]"
+  out="$(af send "$fe" "over a hint" --op "ope-$k" --wait 1)"; rc=$?
+  check "$k: the dim placeholder hint is not a draft (rc=$rc): $out" "[[ $rc -eq 4 ]] && grep -q 'status=unconfirmed' <<<\"\$out\" && [[ -f '$STATE/deliveries/ope-$k' ]]"
+done
+fd="$(fixture claude-dim2 claude)"; fg="$(fixture claude-glyph claude)"
+out="$(af send "$fd" "over a hint" --op opd --wait 1)"; rc=$?
+check "dim folded into a combined SGR is still the hint (rc=$rc): $out" "[[ $rc -eq 4 ]] && [[ -f '$STATE/deliveries/opd' ]]"
+out="$(af send "$fg" "over a draft" --op opg --wait 1)"; rc=$?
+check "a draft ending in a marker glyph is still a draft (rc=$rc): $out" "[[ $rc -eq 1 ]] && grep -q 'reason=composer_busy' <<<\"\$out\""
+
 # --- busy / waiting: nothing sent. The snapshot (a tick stale) says done;
 # the hook-written status file says working — the fresher file wins.
 printf 'T %s 1\nA ws|@1|1|a|%s|claude|done|1|-|x\n' "$(date +%s)" "$ap" > "$CACHE/fleet.snapshot"

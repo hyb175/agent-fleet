@@ -2991,6 +2991,8 @@ consumption receipt. Prints one line of key=value fields:
                human_active: a client typed into, attached to or switched to
                the pane's session less than --idle seconds ago (default 2) —
                a paste would merge with their typing, so retry;
+               composer_busy: the prompt box already holds typed text (read
+               from the screen; the dim placeholder hint does not count);
                no_receipt_channel, stale, remote, no_pane, unknown_op)           exit 1
   conflict     the same --op with different text (payload_conflict) or for a
                different pane (target_conflict); nothing sent                   exit 2
@@ -3021,6 +3023,35 @@ send_json_escape() {  # <text> -> SEND_ESC
 }
 
 send_field() { awk -v k="$2" '$1==k{print $2}' "$1" 2>/dev/null | tail -1; }
+
+# What a human has left in the composer, or empty. Reads the pane WITH
+# attributes: claude ("❯ " box between ─ rules) and codex ("› ") both render
+# the empty-composer hint dim and typed text plain (proved 2026-11-02 on
+# claude 2.1.316 / codex-cli 0.165.0). No marker on screen → unknown → empty;
+# the receipt hash still judges after the fact.
+send_composer() {  # <pane> <kind> -> SEND_COMPOSER
+  SEND_COMPOSER="$({ tx capture-pane -p -e -t "$1" 2>/dev/null || true; } | LC_ALL=C awk -v kind="$2" '
+    function plain(s) { gsub(/\033\[[0-9;:]*m/, "", s); return s }
+    function dim(prm,  a, n, i) {   # SGR params carry a standalone 2 (not a 38;5;2 colour index)
+      n = split(prm, a, ";")
+      for (i = 1; i <= n; i++) { if (a[i] == "2") return 1
+        if (a[i] == "38" || a[i] == "48" || a[i] == "58") i += (a[i + 1] == "2") ? 4 : 2 }
+      return 0 }
+    BEGIN { mk = (kind == "claude") ? "\342\235\257" : "\342\200\272" }
+    { raw[NR] = $0; if (index(plain($0), mk) == 1) m = NR }
+    END {
+      if (!m) exit
+      rest = substr(raw[m], index(raw[m], mk) + 3)
+      for (;;) {
+        if (match(rest, /^\033\[[0-9;:]*m/)) { if (dim(substr(rest, 3, RLENGTH - 3))) exit; rest = substr(rest, RLENGTH + 1) }
+        else if (!sub(/^( |\302\240)/, "", rest)) break }
+      out = plain(rest); sub(/[ \t]+$/, "", out)
+      if (kind == "claude") for (i = m + 1; i <= NR; i++) {
+        p = plain(raw[i]); if (p ~ /^\342\224\200/) break
+        sub(/[ \t]+$/, "", p); if (p != "") out = out "\n" p }
+      sub(/^[ \t\n]+/, "", out); printf "%s", out
+    }')"
+}
 
 # Resolve a delivery record against the pane's turn receipts, append what is
 # newly known, print the status line. Nothing here types anything.
@@ -3172,6 +3203,9 @@ cmd_send() {
   read -r act created ppid < <(tx display-message -p -t "$pane" '#{session_activity} #{session_created} #{pane_pid}' 2>/dev/null || echo '0 0 -')
   af_now
   if [[ "$act" =~ ^[0-9]+$ && "$act" != "$created" ]] && (( AF_NOW - act < idle )); then refuse human_active; fi
+  # …and text already sitting in the composer (older than --idle) would too.
+  send_composer "$pane" "$kind"
+  [[ -z "$SEND_COMPOSER" ]] || refuse composer_busy
   [[ -f "$f" ]] && send_replay "$f" "$pane" "$sha" "$wait"   # a racer may have claimed it during the gates
 
   # Intent before effect: the journal exists before any keystroke, and it
