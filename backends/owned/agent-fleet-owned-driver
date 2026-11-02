@@ -1,0 +1,12 @@
+#!/usr/bin/env python3
+"""Optional agent-fleet owned protocol entry point."""
+
+import importlib
+from pathlib import Path
+import sys
+
+here = Path(__file__).resolve().parent
+sys.path.insert(0, str(here.parent))
+
+if __name__ == '__main__':
+    raise SystemExit(importlib.import_module(here.name + '.driver').main())

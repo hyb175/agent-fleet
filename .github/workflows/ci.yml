@@ -107,3 +107,19 @@ jobs:
       # per-line disable. SC2086 (quoting) stays enabled.
       - name: Lint shell sources
         run: shellcheck bin/agent-fleet scripts/*.sh shims/* tests/*.sh docker/*.sh
+
+  # The optional owned-worker backend is Python and Linux-only; ordinary fleet
+  # never imports it. Sandbox tests skip themselves when the runner forbids
+  # unprivileged user namespaces.
+  owned-backend:
+    name: owned backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends bubblewrap git python3
+      - name: Run backend tests
+        run: python3 -m unittest discover -s backends/owned/tests -t .
