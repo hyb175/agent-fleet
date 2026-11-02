@@ -249,6 +249,33 @@ if [[ -n "$tid" && -f "$rec" ]] && ! grep -q '^session ' "$rec" 2>/dev/null; the
   [[ -n "$sid" ]] && printf 'session %s\n' "$sid" >> "$rec" 2>/dev/null || true
 fi
 
+# Turn receipts for `agent-fleet send`. The native UserPromptSubmit event is
+# the proof a prompt was CONSUMED by the agent (typing into the pane is not),
+# and its prompt_id ties the later Stop to that same turn. Appended to
+# panes/<pane>.turns:
+#   s <epoch> <prompt_id> <sha256 of the prompt as it is JSON-escaped in the event>
+#   e <epoch> <prompt_id>
+# The sender hashes its own JSON-escaped text, so a prompt that reached the
+# agent merged with half-typed human input hashes differently and is reported
+# as a mismatch instead of a delivery. Glob tests keep the per-tool hot path
+# fork-free; the sed and the hash run once per turn. Claude only: the payload
+# shape (compact JSON, "prompt" as the last key) is what was proved.
+if [[ "$kind" == "claude" ]]; then
+  case "$input" in
+    *'"hook_event_name":"UserPromptSubmit"'*'"prompt":"'*)
+      _tp="${input#*\"prompt\":\"}"; _tp="${_tp%\"\}*}"
+      _tpid="$(printf '%s' "$input" | sed -n 's/.*"prompt_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      af_sha256 "$_tp"; af_now
+      [[ -n "$_tpid" ]] && printf 's %s %s %s\n' "$AF_NOW" "$_tpid" "$AF_SHA" >> "$cache/${pane}.turns" 2>/dev/null
+      ;;
+    *'"hook_event_name":"Stop"'*)
+      _tpid="$(printf '%s' "$input" | sed -n 's/.*"prompt_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      af_now
+      [[ -n "$_tpid" ]] && printf 'e %s %s\n' "$AF_NOW" "$_tpid" >> "$cache/${pane}.turns" 2>/dev/null
+      ;;
+  esac
+fi
+
 # (The terminal progress bar is NOT emitted here: hooks fire only on
 # transitions and tmux forwards passthrough only from visible panes, which
 # made a hook-driven bar unreliable. snapshotd emits it continuously instead.)

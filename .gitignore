@@ -6,3 +6,4 @@
 
 # native UI binary (make ui)
 /bin/afui
+__pycache__/

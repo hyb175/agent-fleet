@@ -1148,10 +1148,7 @@ class OwnedDriverTests(unittest.TestCase):
         self.assertEqual(json.loads(found.stdout)['result']['text'], 'from state')
         self.assertEqual(json.loads((self.attempt / 'claim.json').read_text())['fleet_cache'], str(self.cache))
 
-    def test_retired_attempt_answers_inspect_without_aios(self):
-        import os
-        import stat
-        import sys
+    def retired_driver(self):
         from backends.owned import retirement
         self.start('launch', self.payload)
         claim = json.loads((self.attempt / 'claim.json').read_text())
@@ -1175,6 +1172,12 @@ class OwnedDriverTests(unittest.TestCase):
         (self.root / 'cgroup').mkdir()
         driver = self.driver_module.OwnedDriver(str(self.root / 'fleet.sock'), str(self.cache),
             systemctl=str(systemctl), proc_root=str(proc), cgroup_root=str(self.root / 'cgroup'))
+        return driver, record, proc
+
+    def test_retired_attempt_answers_inspect_without_aios(self):
+        import os
+        import sys
+        driver, record, _ = self.retired_driver()
         response = driver.execute('inspect', self.request(operation_id='retired'))
         self.assertEqual(response['status'], 'quiescent')
         self.assertEqual(response['retirement']['retirement_hash'], record['retirement_hash'])
@@ -1188,3 +1191,20 @@ class OwnedDriverTests(unittest.TestCase):
             cwd=repository, env={key: value for key, value in os.environ.items() if key != 'PYTHONPATH'},
             capture_output=True, text=True, timeout=10)
         self.assertEqual(probe.returncode, 0, probe.stderr)
+
+    def test_retired_cgroup_members_decide_quiescence(self):
+        driver, _, proc = self.retired_driver()
+        (proc / '4242').mkdir()
+        (proc / '4242' / 'stat').write_text('4242 (worker) S 1 ' + '0 ' * 17 + '99\n')
+        (proc / '4242' / 'cgroup').write_text('0::/elsewhere\n')
+        group = self.root / 'cgroup' / 'owned'
+        group.mkdir()
+        (group / 'cgroup.procs').write_text('4242\n')
+        live = driver.execute('inspect', self.request(operation_id='retired-live'))
+        self.assertEqual(live['status'], 'uncertain')
+        self.assertFalse(live['retirement']['quiescent'])
+        self.assertEqual(live['retirement']['processes'][0]['process_ids'], [4242])
+        (group / 'cgroup.procs').write_text('')
+        gone = driver.execute('inspect', self.request(operation_id='retired-gone'))
+        self.assertEqual(gone['status'], 'quiescent')
+        self.assertEqual(gone['retirement']['processes'][0]['process_ids'], [])

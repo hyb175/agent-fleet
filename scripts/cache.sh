@@ -19,6 +19,20 @@ AF_CACHE_ROOT="${XDG_CACHE_HOME:-$HOME/.cache}/agent-fleet"
 _af_cache_socket="${AGENT_FLEET_SOCKET:-agent-fleet}"
 _af_cache_socket="${_af_cache_socket//[^A-Za-z0-9._-]/_}"
 AF_CACHE_DIR="$AF_CACHE_ROOT/$_af_cache_socket"
+# Durable, socket-scoped state: survives the per-boot cache purge. Delivery
+# journals (`agent-fleet send`) and the optional owned backend's ledgers live
+# here — losing a journal must never read as "that message was never sent".
+# shellcheck disable=SC2034 # read by bin/agent-fleet (send journal) and cmd_owned
+AF_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-fleet/$_af_cache_socket"
+
+# sha256 hex of a string into AF_SHA (GNU sha256sum or BSD shasum). One fork;
+# callers keep it off the per-tool hot path.
+# shellcheck disable=SC2034 # AF_SHA is the out-param
+af_sha256() {  # <string>
+  if command -v sha256sum >/dev/null 2>&1; then AF_SHA="$(printf '%s' "$1" | sha256sum)"
+  else AF_SHA="$(printf '%s' "$1" | shasum -a 256)"; fi
+  AF_SHA="${AF_SHA%% *}"
+}
 
 # One-time upgrade path: fleets that ran before socket-scoping kept everything
 # directly under AF_CACHE_ROOT. Move the known old-layout entries into the

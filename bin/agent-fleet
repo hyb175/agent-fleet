@@ -51,25 +51,42 @@ cmd_owned() {
   if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
     cat <<'HELP'
 Usage: agent-fleet owned --driver /absolute/executable launch|inspect|answer|stop
+       agent-fleet owned --backend fleet          launch|inspect|answer|stop
 
-Send a versioned JSON request on stdin to an explicitly selected owned-worker
-backend. The backend receives --fleet-socket, --fleet-cache and the action as
-separate arguments. It must enforce ownership, isolation and durable operation
-identity; the CLI grants no authority over ordinary fleet tasks.
+Send a versioned JSON request on stdin to an owned-worker backend. The backend
+receives --fleet-socket, --fleet-cache and the action as separate arguments.
+It must enforce ownership, isolation and durable operation identity; the CLI
+grants no authority over ordinary fleet tasks.
+
+  --driver <exe>    an external backend (the protocol v1 path; unchanged)
+  --backend fleet   the bundled backend (backends/owned/, Linux + python3 +
+                    systemd --user + bubblewrap); its ledgers root under
+                    --fleet-state, the durable $XDG_STATE_HOME dir, not the cache.
+                    Unavailable hosts exit 2 with the reason; nothing degrades.
 HELP
     return 0
   fi
-  if [[ $# -ne 3 || "${1:-}" != --driver || "${2:-}" != /* || ! -f "${2:-}" || ! -x "${2:-}" ]]; then
-    echo 'owned requires --driver /absolute/executable and an action (see owned --help)' >&2
+  local driver="" action="${3:-}" state=()
+  if [[ $# -eq 3 && "${1:-}" == --driver && "${2:-}" == /* && -f "${2:-}" && -x "${2:-}" ]]; then
+    driver="$2"
+  elif [[ $# -eq 3 && "${1:-}" == --backend && "${2:-}" == fleet ]]; then
+    driver="$ROOT_DIR/backends/owned/agent-fleet-owned-driver"
+    local why=""
+    [[ "$(uname -s 2>/dev/null)" == Linux ]] || why="Linux only (systemd --user and bubblewrap)"
+    [[ -n "$why" || -x "$driver" ]] || why="backend not installed at $driver"
+    [[ -n "$why" ]] || command -v python3 >/dev/null 2>&1 || why="python3 not on PATH"
+    if [[ -n "$why" ]]; then echo "owned backend unavailable: $why" >&2; return 2; fi
+  else
+    echo 'owned requires --driver /absolute/executable or --backend fleet, and an action (see owned --help)' >&2
     return 2
   fi
-  local driver="$2" action="$3"
   case "$action" in
     launch|inspect|answer|stop) ;;
     *) echo "unknown owned action: $action" >&2; return 2 ;;
   esac
   source "$ROOT_DIR/scripts/cache.sh"
-  exec "$driver" --fleet-socket "$SOCKET" --fleet-cache "$AF_CACHE_DIR" "$action"
+  [[ "${1:-}" == --backend ]] && state=(--fleet-state "$AF_STATE_DIR")
+  exec "$driver" --fleet-socket "$SOCKET" --fleet-cache "$AF_CACHE_DIR" ${state[@]+"${state[@]}"} "$action"
 }
 
 if [[ "${1:-}" == owned ]]; then
@@ -299,7 +316,7 @@ ensure_server() {
     # previous boot are stale (a leftover .session gate file would block the
     # hook from capturing new session ids). persist-restore purges too, but
     # this also covers the no-state fresh-boot path.
-    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session "$AF_CACHE_DIR/panes/"*.task "$AF_CACHE_DIR/panes/"*.question 2>/dev/null || true
+    rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session "$AF_CACHE_DIR/panes/"*.task "$AF_CACHE_DIR/panes/"*.question "$AF_CACHE_DIR/panes/"*.turns 2>/dev/null || true
     # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
     # we have one; otherwise start a fresh home workspace.
     local rc=1
@@ -2876,6 +2893,225 @@ cmd_answer() {
 }
 
 
+usage_send() {
+  cat <<EOF
+Usage: agent-fleet send <task-id|%pane> "<text>" [--op <id>] [--fp <checksum>] [--wait <secs>]
+       agent-fleet send --status <op-id>
+
+Deliver a message into an IDLE hooked claude pane and wait for the agent's own
+consumption receipt. Prints one line of key=value fields:
+
+  op=<id> status=<s> pane=%N [prompt_id=<native turn id>] [reason=<why>]
+
+  consumed     claude accepted exactly this text as a prompt (UserPromptSubmit)  exit 0
+  turn_ended   …and the turn it started has ended (Stop with the same prompt_id) exit 0
+  unconfirmed  typed (or interrupted while typing); no receipt within --wait
+               (default 15s). NEVER resent: use --status later, or decide with
+               a human. reason=recipient_changed: the pane now holds another
+               session; send_failed: tmux refused mid-send; unknown: the
+               journal never reached 'submitted' (crash)                        exit 4
+  mismatch     prompts were consumed since the journal, none is this text — it
+               merged with something being typed, or another prompt went first.
+               --status re-evaluates; a late receipt can still confirm it      exit 5
+  busy         the agent is mid-turn: nothing sent, queue it and retry           exit 3
+  refused      nothing sent; reason says why (waiting_on_input → use answer,
+               no_receipt_channel, stale, remote, no_pane, unknown_op)           exit 1
+  payload conflict: the same --op with different text; nothing sent             exit 2
+
+  --op <id>    caller operation id ([A-Za-z0-9._-]). Replaying it reports the
+               recorded outcome and never types again; the same id with other
+               text is a payload conflict (exit 2).
+  --fp <sum>   refuse unless the pane still matches this fingerprint (answer <pane> fp).
+  --status     re-read a past operation (after a crash or a lost response).
+
+Intent is journaled under \$XDG_STATE_HOME/agent-fleet/<socket>/deliveries/<op>
+BEFORE anything is typed; the record names the pane and its session id, and a
+receipt counts only when the pane still holds that session.
+Multi-line text is pasted bracketed; control characters other than newline and
+tab are rejected. Receipts exist for hooked claude panes only; other agents are
+refused (no_receipt_channel) rather than typed into blind.
+EOF
+}
+
+# JSON-escape the way the hook sees the prompt inside the UserPromptSubmit
+# event (JSON.stringify: \\ \" \n \t; other control characters are rejected
+# upstream, non-ASCII stays raw), so both sides hash the same bytes.
+send_json_escape() {  # <text> -> SEND_ESC
+  local t="$1"
+  t="${t//\\/\\\\}"; t="${t//\"/\\\"}"; t="${t//$'\n'/\\n}"; t="${t//$'\t'/\\t}"
+  SEND_ESC="$t"
+}
+
+send_field() { awk -v k="$2" '$1==k{print $2}' "$1" 2>/dev/null | tail -1; }
+
+# Resolve a delivery record against the pane's turn receipts, append what is
+# newly known, print the status line. Nothing here types anything.
+send_status() {  # <record> -> prints "op=… status=… …"; returns the status exit code
+  local f="$1" op pane sha off st pid="" reason="" k p h sess other=""
+  op="$(send_field "$f" op)"; pane="$(send_field "$f" pane)"; sha="$(send_field "$f" sha)"
+  off="$(send_field "$f" turns_at)"; [[ "$off" =~ ^[0-9]+$ ]] || off=0
+  pid="$(awk '$1=="consumed"{print $3}' "$f" 2>/dev/null | tail -1)"
+  if [[ -n "$pid" ]]; then
+    st="consumed"
+  else
+    # Only receipts written AFTER the journal (byte offset taken at intent
+    # time) can be ours: no clock comparison, no same-second ambiguity. A
+    # journal that never reached `submitted` (crash mid-keystroke, Enter
+    # failure) is evaluated the same way — the text may well have gone in.
+    st="unconfirmed"
+    local tf="$AF_CACHE_DIR/panes/$pane.turns"
+    if [[ -f "$tf" ]]; then
+      while read -r k _ p h; do
+        [[ "$k" == "s" ]] || continue
+        if [[ "$h" == "$sha" ]]; then st="consumed"; pid="$p"; break; fi
+        other=1
+      done < <(tail -c "+$(( off + 1 ))" "$tf" 2>/dev/null)
+    fi
+    # The receipt must come from the session the journal named: a pane that
+    # was released and reused by another claude is a different recipient.
+    sess="$(cat "$AF_CACHE_DIR/panes/$pane.session" 2>/dev/null || true)"
+    if [[ -n "$sess" && "$sess" != "$(send_field "$f" session)" ]]; then
+      st="unconfirmed"; pid=""; reason="recipient_changed"
+    fi
+    if [[ "$st" == "consumed" ]]; then
+      af_now; printf 'consumed %s %s\n' "$AF_NOW" "$pid" >> "$f"
+    elif [[ -n "$SEND_WAITING" ]]; then
+      st="submitted"
+    elif [[ -n "$other" && -z "$reason" ]]; then
+      st="mismatch"
+    elif [[ -z "$reason" ]] && ! grep -q '^submitted ' "$f" 2>/dev/null; then
+      if grep -q '^failed ' "$f" 2>/dev/null; then reason="send_failed"; else reason="unknown"; fi
+    fi
+  fi
+  if [[ "$st" == "consumed" ]]; then
+    if grep -q '^ended ' "$f" 2>/dev/null; then st="turn_ended"
+    elif grep -q "^e [0-9]* $pid\$" "$AF_CACHE_DIR/panes/$pane.turns" 2>/dev/null; then
+      af_now; printf 'ended %s\n' "$AF_NOW" >> "$f"; st="turn_ended"
+    fi
+  fi
+  printf 'op=%s status=%s pane=%s%s%s\n' "$op" "$st" "$pane" "${pid:+ prompt_id=$pid}" "${reason:+ reason=$reason}"
+  case "$st" in consumed|turn_ended) return 0 ;; mismatch) return 5 ;; refused) return 1 ;; *) return 4 ;; esac
+}
+
+cmd_send() {
+  local target="" text="" op="" fp="" wait=15 status_op="" have_text=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --op)      op="${2:?error: --op needs an id}"; shift 2 ;;
+      --fp)      fp="${2:?error: --fp needs a checksum}"; shift 2 ;;
+      --wait)    wait="${2:?error: --wait needs seconds}"; shift 2 ;;
+      --status)  status_op="${2:?error: --status needs an op id}"; shift 2 ;;
+      -h|--help) usage_send; return 0 ;;
+      -*) echo "error: unexpected arg: $1" >&2; usage_send >&2; exit 2 ;;
+      *)  if [[ -z "$target" ]]; then target="$1"
+          elif [[ -z "$have_text" ]]; then text="$1"; have_text=1
+          else echo "error: unexpected arg: $1" >&2; usage_send >&2; exit 2; fi
+          shift ;;
+    esac
+  done
+  local dir="$AF_STATE_DIR/deliveries"
+  SEND_WAITING=""
+  refuse() { printf 'op=%s status=refused pane=%s reason=%s\n' "${op:--}" "${pane:--}" "$1"; exit 1; }
+  if [[ -n "$status_op" ]]; then
+    [[ "$status_op" =~ ^[A-Za-z0-9._-]{1,128}$ && -f "$dir/$status_op" ]] || { op="$status_op"; refuse unknown_op; }
+    send_status "$dir/$status_op" && exit 0 || exit $?
+  fi
+  [[ -n "$target" && -n "$have_text" ]] || { usage_send >&2; exit 2; }
+  [[ -n "$text" ]] || { echo "error: empty text" >&2; exit 2; }
+  [[ -z "$op" || "$op" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "error: --op must match [A-Za-z0-9._-]{1,128}" >&2; exit 2; }
+  [[ "$wait" =~ ^[0-9]+$ ]] || { echo "error: --wait needs whole seconds" >&2; exit 2; }
+  local probe="${text//[$'\n\t']/}"
+  [[ "$probe" == *[[:cntrl:]]* ]] && { echo "error: text has control characters (only newline and tab are allowed)" >&2; exit 2; }
+
+  local pane="$target" tid
+  if [[ "$target" != %* && "$target" != */* ]]; then
+    tid="$(task_id_for "$target")" || exit 1
+    pane="$(awk '$1=="pane"{p=$2} END{print p}' "$AF_TASKS_DIR/$tid" 2>/dev/null)"
+    [[ -n "$pane" ]] || refuse no_pane
+  fi
+  [[ "$pane" == */* ]] && refuse remote
+
+  send_json_escape "$text"; af_sha256 "$SEND_ESC"
+  local sha="$AF_SHA" now
+  if [[ -z "$op" ]]; then af_now; op="d$AF_NOW-$$-${pane#%}"; fi
+  local f="$dir/$op"
+  if [[ -f "$f" ]]; then
+    if [[ "$(send_field "$f" sha)" != "$sha" ]]; then
+      printf 'op=%s status=refused pane=%s reason=payload_conflict\n' "$op" "$(send_field "$f" pane)"; exit 2
+    fi
+    send_status "$f" && exit 0 || exit $?     # replay: report, never type again
+  fi
+
+  # Only a hooked claude pane can hand back a consumption receipt; everything
+  # else is refused rather than typed into blind.
+  local kind sess ppid st
+  kind="$(tx display-message -p -t "$pane" '#{@fleet-agent-kind}' 2>/dev/null || true)"
+  sess="$(cat "$AF_CACHE_DIR/panes/$pane.session" 2>/dev/null || true)"
+  [[ "$kind" == "claude" && -n "$sess" ]] || refuse no_receipt_channel
+  # Busy gate on the hook-written status file FIRST: the snapshot is up to a
+  # tick stale, and a prompt typed into a turn that just started is queued by
+  # claude under the previous turn's prompt_id (receipt ambiguity, proved).
+  st="$(cat "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true)"
+  [[ -n "$st" ]] || st="$(answer_state "$pane")"
+  case "$st" in
+    working) printf 'op=%s status=busy pane=%s\n' "$op" "$pane"; exit 3 ;;
+    wait)    refuse waiting_on_input ;;
+  esac
+  if [[ -n "$fp" ]]; then
+    [[ "$(answer_fp "$pane")" == "$fp" ]] || refuse stale
+  fi
+  ppid="$(tx display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
+
+  # Intent before effect: the journal exists before any keystroke, and it
+  # pins where the pane's receipt log ended, so only later receipts count.
+  mkdir -p "$dir" 2>/dev/null || { echo "error: state dir unwritable: $dir" >&2; exit 1; }
+  local toff=0
+  [[ -f "$AF_CACHE_DIR/panes/$pane.turns" ]] && { toff="$(wc -c < "$AF_CACHE_DIR/panes/$pane.turns")"; toff="${toff//[[:space:]]/}"; }
+  af_now; now="$AF_NOW"
+  {
+    printf 'op %s\npane %s\nsession %s\npid %s\nkind %s\nsha %s\nchars %s\ncreated %s\nturns_at %s\n' \
+      "$op" "$pane" "$sess" "${ppid:--}" "$kind" "$sha" "${#text}" "$now" "${toff:-0}"
+  } > "$f" || { echo "error: cannot journal $f" >&2; exit 1; }
+  local ok=1
+  if [[ "$text" == *$'\n'* ]]; then
+    printf '%s' "$text" | tx load-buffer -b "af-send-$$" - 2>/dev/null \
+      && tx paste-buffer -p -d -b "af-send-$$" -t "$pane" 2>/dev/null || ok=""
+  else
+    # tmux drops an unescaped trailing ';' from an argv element.
+    [[ "$text" == *';' ]] && text="${text%;}\;"
+    tx send-keys -t "$pane" -l -- "$text" 2>/dev/null || ok=""
+  fi
+  [[ -n "$ok" ]] && { tx send-keys -t "$pane" Enter 2>/dev/null || ok=""; }
+  af_now
+  if [[ -z "$ok" ]]; then
+    printf 'failed %s\n' "$AF_NOW" >> "$f"
+    printf 'op=%s status=unconfirmed pane=%s reason=send_failed\n' "$op" "$pane"; exit 4
+  fi
+  printf 'submitted %s\n' "$AF_NOW" >> "$f"
+
+  local deadline=$(( SECONDS + wait )) out rc
+  while :; do
+    SEND_WAITING=1; (( SECONDS >= deadline )) && SEND_WAITING=""
+    out="$(send_status "$f")" && rc=0 || rc=$?
+    case "$out" in *status=submitted*) ;; *) break ;; esac
+    sleep 0.2
+  done
+  printf '%s\n' "$out"; exit "$rc"
+}
+
+# capabilities — what THIS install can honestly do for a machine caller,
+# per provider/mode/host. key=value lines; absent means unsupported.
+cmd_capabilities() {
+  local host; host="$(uname -s 2>/dev/null)"
+  local drv="$ROOT_DIR/backends/owned/agent-fleet-owned-driver" backend="unavailable"
+  if [[ "$host" == Linux && -x "$drv" ]] && command -v python3 >/dev/null 2>&1; then backend="available"; fi
+  printf 'fleet_version=%s\nhost=%s\nsocket=%s\ncache_dir=%s\nstate_dir=%s\n' \
+    "$AGENT_FLEET_VERSION" "$host" "$SOCKET" "$AF_CACHE_DIR" "$AF_STATE_DIR"
+  printf 'owned_protocol=1\nowned_driver_external=available\nowned_backend_fleet=%s\n' "$backend"
+  printf 'send_receipts=claude:hook\nsend_transport=tmux-keys+native-receipt\nsend_journal=%s/deliveries\n' "$AF_STATE_DIR"
+  printf 'answer_guard=fingerprint\ndiscovery=%s/fleet.snapshot\n' "$AF_CACHE_DIR"
+}
+
 # ask-human — an agent PUSHES its question into the inbox instead of being
 # scraped into a bare wait. Runs inside the agent's own pane; everything is
 # file writes through the (possibly bind-mounted) cache, so it works from
@@ -3313,8 +3549,12 @@ Verbs:
   agent-fleet task intent <id|%pane> "<text>"
                                    Set a task's intent (the rail/picker row title).
   agent-fleet task done|drop|clean Lifecycle: mark terminal, reclaim worktrees (see task -h).
-  agent-fleet owned --driver <path> launch|inspect|answer|stop
+  agent-fleet owned --driver <path>|--backend fleet launch|inspect|answer|stop
                                    Optional owned-worker JSON backend (see owned --help).
+  agent-fleet send <id|%pane> "<text>" [--op <id>] [--wait <s>]
+                                   Deliver a message to an idle hooked claude pane and wait for
+                                   its consumption receipt; journaled, replay-safe (see send -h).
+  agent-fleet capabilities         key=value lines: what this install supports for machine callers.
   agent-fleet history              Finished tasks per day: duration, wait time, outcome (task history).
   agent-fleet review <id|%pane>    Diff a done task vs its base; PR / merge / send-back (see review -h).
   agent-fleet answer <id|%pane> approve|deny|text "<reply>" [--fp <sum>]
@@ -3393,6 +3633,8 @@ main() {
     history)    task_history "$@" ;;
     review)     cmd_review "$@" ;;
     answer)     cmd_answer "$@" ;;
+    send)       cmd_send "$@" ;;
+    capabilities) cmd_capabilities "$@" ;;
     ask-human)  cmd_ask_human "$@" ;;
     goto)       cmd_goto "$@" ;;
     back)       cmd_back "$@" ;;
@@ -3427,7 +3669,7 @@ main() {
                 for o in @fleet-agent-kind @fleet-task @fleet-session; do
                   tx set-option -p -t "$TMUX_PANE" -u "$o" 2>/dev/null || true
                 done
-                rm -f "$AF_CACHE_DIR/panes/$TMUX_PANE.task" "$AF_CACHE_DIR/panes/$TMUX_PANE.session" 2>/dev/null
+                rm -f "$AF_CACHE_DIR/panes/$TMUX_PANE.task" "$AF_CACHE_DIR/panes/$TMUX_PANE.session" "$AF_CACHE_DIR/panes/$TMUX_PANE.turns" 2>/dev/null
                 exit 0 ;;
     # Internal: restore's relaunch shim for container-rung tasks.
     _container-resume) cmd_container_resume "$@" ;;

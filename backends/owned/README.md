@@ -31,4 +31,4 @@ bubblewrap cannot run or the runtime is not the Nix store.
 
 Differences from the AIOS copy: location; no `aios` import (the retirement
 reader and census helpers are ported into `retirement.py`, which accepts only
-`owned` records and has no total-time budget); the `--fleet-state` flag.
+`owned` records; it has no total time or byte budget and no per-input stat recheck, only rechecks of the record, process list, cgroup members, unit properties and boot id); the `--fleet-state` flag.

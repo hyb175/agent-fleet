@@ -60,6 +60,19 @@ for args in 'launch' '--driver relative inspect' '--driver /nonexistent inspect'
 done
 "$AF" owned --driver "$WORK/driver dir/driver" inspect --driver /other </dev/null >/dev/null 2>&1; rc=$?
 owned_check 'extra options are rejected before driver' test "$rc" -eq 2
+# --backend fleet: the bundled driver answers in protocol v1 on Linux (an
+# identity-only payload has no claim → protocol error, exit 1, no state dir);
+# any other host refuses up front with exit 2 and runs nothing.
+out="$(printf '{"protocol_version":1,"owner_namespace":"ns","attempt_id":"a","dispatch_id":"d","generation":"g","operation_id":"o"}' \
+  | "$AF" owned --backend fleet inspect 2>&1)"; rc=$?
+if [[ "$(uname -s)" == Linux ]] && command -v python3 >/dev/null 2>&1; then
+  owned_check 'bundled backend answers protocol v1 (exit 1 + error JSON)' test "$rc" -eq 1
+  owned_check 'bundled backend names the missing claim' grep -q '"error":"existing owned claim required"' <<<"$out"
+  owned_check 'bundled backend creates nothing without a claim' test ! -e "$XDG_STATE_HOME/agent-fleet/$SOCK/owned"
+else
+  owned_check 'bundled backend unavailable off Linux (exit 2)' test "$rc" -eq 2
+  owned_check 'bundled backend says why' grep -q 'owned backend unavailable' <<<"$out"
+fi
 owned_check 'owned path never calls tmux' test ! -e "$OWNED_TMUX_CALLS"
 owned_check 'owned path never migrates manual task state' manual_unchanged
 exit "$FAIL"

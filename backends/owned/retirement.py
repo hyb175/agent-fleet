@@ -245,7 +245,7 @@ def _members(reader, cgroup_root, group, proc_root):
     return members
 
 
-def observe_retirement(record, *, reader, systemctl, proc_root='/proc', cgroup_root='/sys/fs/cgroup'):
+def observe_retirement(record, *, reader, path, systemctl, proc_root='/proc', cgroup_root='/sys/fs/cgroup'):
     value = validate_retirement(record)
     boot = _boot(proc_root, reader)
     root = absolute(proc_root)
@@ -257,7 +257,7 @@ def observe_retirement(record, *, reader, systemctl, proc_root='/proc', cgroup_r
     for name in names:
         identities[name] = _proc_stat(reader, root, int(name))
         groups[name] = reader.read(root / name / 'cgroup').decode()
-    observations = []
+    observations, listed = [], []
     for item in value['processes']:
         actual = _properties(reader, systemctl, item['unit'])
         absent = actual.get('LoadState') == 'not-found'
@@ -265,6 +265,7 @@ def observe_retirement(record, *, reader, systemctl, proc_root='/proc', cgroup_r
         members = []
         if group and (absolute(cgroup_root) / group.lstrip('/')).exists():
             members = _members(reader, cgroup_root, group, proc_root)
+        listed.append(members)
         host_members = [int(name) for name, text in groups.items() if group and any(
             line.split(':', 2)[-1] == group or line.split(':', 2)[-1].startswith(group + '/') for line in text.splitlines())]
         matched = boot == item['boot_id']
@@ -291,6 +292,13 @@ def observe_retirement(record, *, reader, systemctl, proc_root='/proc', cgroup_r
         if (_proc_stat(reader, root, int(name)) != identities[name]
                 or reader.read(root / name / 'cgroup').decode() != groups[name]):
             raise ValueError('retirement process identity changed')
+    for item, members in zip(value['processes'], listed):
+        group = item['cgroup']
+        if members != (_members(reader, cgroup_root, group, proc_root)
+                       if group and (absolute(cgroup_root) / group.lstrip('/')).exists() else []):
+            raise ValueError('retired cgroup membership changed during census')
+    if validate_retirement(reader.json(path)) != value:
+        raise ValueError('retirement record changed during census')
     if _boot(proc_root, reader) != boot:
         raise ValueError('retirement boot identity changed')
     return dict(version=1, retirement_hash=value['retirement_hash'],

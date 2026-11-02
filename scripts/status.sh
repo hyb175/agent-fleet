@@ -200,9 +200,9 @@ gc() {
   local live f base
   live="$("$AF_TMUX" -L "$AF_SOCKET" list-panes -a -F '#{pane_id}' 2>/dev/null || true)"
   [[ -z "$live" ]] && return 0
-  for f in "$AF_CACHE"/*.status "$AF_CACHE"/*.ackdone "$AF_CACHE"/*.session "$AF_CACHE"/*.task "$AF_CACHE"/*.question; do
+  for f in "$AF_CACHE"/*.status "$AF_CACHE"/*.ackdone "$AF_CACHE"/*.session "$AF_CACHE"/*.task "$AF_CACHE"/*.question "$AF_CACHE"/*.turns; do
     [[ -e "$f" ]] || continue
-    base="$(basename "$f")"; base="${base%.*}"   # strip .status / .ackdone / .session / .task / .question
+    base="$(basename "$f")"; base="${base%.*}"   # strip .status / .ackdone / .session / .task / .question / .turns
     grep -qx "$base" <<<"$live" || rm -f "$f"
   done
 }

@@ -689,7 +689,7 @@ class OwnedDriver:
                     raise DriverError('owned attempt is retired')
                 if payload['generation'] not in claim['generations']:
                     raise DriverError('unknown retired generation')
-                observation = retirement.observe_retirement(record, reader=reader, systemctl=self.systemctl,
+                observation = retirement.observe_retirement(record, reader=reader, path=root / 'retired.json', systemctl=self.systemctl,
                     proc_root=self.proc_root, cgroup_root=self.cgroup_root)
                 self._validate_lock(root)
                 return {**{key:payload[key] for key in ('protocol_version', 'owner_namespace', 'attempt_id', 'dispatch_id', 'generation')},
