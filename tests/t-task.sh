@@ -102,10 +102,10 @@ check "history: one working, then done" \
 # task ls under pipefail once the listing has more than one row.
 check "task ls shows current state" "grep -q '$tid  *done' <<<\"\$('$AF' task ls)\""
 check "task list is ls" "grep -q '$tid  *done' <<<\"\$('$AF' task list)\""
-n_before="$(ls "$CACHE/tasks" | wc -l)"
+n_before="$(find "$CACHE/tasks" -mindepth 1 | wc -l)"
 "$AF" task bogus >/dev/null 2>&1; rc=$?
 check "an unknown bare word exits 2 and spawns nothing" \
-  "[[ $rc == 2 && \"\$(ls '$CACHE/tasks' | wc -l)\" == '$n_before' ]]"
+  "[[ $rc == 2 && \"\$(find '$CACHE/tasks' -mindepth 1 | wc -l)\" == '$n_before' ]]"
 
 # Visiting a done agent acks it — the flip is logged as an idle transition.
 "$REPO/scripts/status.sh" clear-done "$pane"
