@@ -21,8 +21,8 @@ XDG_CONFIG_HOME="$(mktemp -d)"; export XDG_CONFIG_HOME
 # pwd -P like WORK: macOS mktemp yields /var/folders/… which tmux reports
 # physically as /private/var/… — unresolved, every cwd comparison fails there.
 XDG_STATE_HOME="$(cd "$(mktemp -d)" && pwd -P)"; export XDG_STATE_HOME
-# The running fleet exports AGENT_FLEET_THEME into every pane's env; unset it so
-# a suite launched from inside a themed fleet still resolves the default.
+# A pane of an older fleet may still carry AGENT_FLEET_THEME (it used to be
+# exported into every pane's env); unset it so the suite resolves the default.
 # Same for the escalation override: the inbox '!' marker tests assume the
 # shipped default.
 unset AGENT_FLEET_THEME AGENT_FLEET_NOTIFY_ESCALATE

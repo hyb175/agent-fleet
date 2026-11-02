@@ -120,12 +120,14 @@ export AGENT_FLEET_SOCKET="$SOCKET"
 export AGENT_FLEET_CONF="$CONF"
 # Resolve the palette (AGENT_FLEET_THEME) and render its tmux side before any
 # tx call can boot the server — the conf sources $AGENT_FLEET_THEME_CONF at
-# parse time.
+# parse time. Only when no server is up: a live fleet's theme.conf changes via
+# `theme`/`reload`, never as a side effect of some call whose env still names
+# an older theme (that rewrote the shared file back to it).
 source "$ROOT_DIR/scripts/theme.sh"
-theme_write_conf
 tx() { "$TMUX_BIN" -L "$SOCKET" -f "$CONF" "$@"; }
 
 server_up() { tx list-sessions >/dev/null 2>&1; }
+server_up || theme_write_conf
 
 # True iff this shell is attached to the fleet's OWN tmux socket.
 in_fleet_tmux() {
@@ -140,9 +142,12 @@ in_fleet_tmux() {
 ensure_server_env() {
   tx set-environment -g AGENT_FLEET_ROOT "$ROOT_DIR" 2>/dev/null || true
   tx set-environment -g AGENT_FLEET_SOCKET "$SOCKET" 2>/dev/null || true
-  # Rails/pickers spawned by tmux hooks resolve the palette from this; the
-  # conf's %if needs THEME_CONF in the server env to re-style on re-parse.
-  tx set-environment -g AGENT_FLEET_THEME "$AF_THEME" 2>/dev/null || true
+  # The theme NAME stays out of the server env: every pane inherited it, it
+  # outranks the persisted choice, and any `af` call from a pane older than a
+  # `theme` switch put the old palette back fleet-wide. Rails, pickers and the
+  # status bar resolve the persisted choice themselves. Unset heals servers
+  # booted before this. The conf's %if needs THEME_CONF to re-style on re-parse.
+  tx set-environment -gu AGENT_FLEET_THEME 2>/dev/null || true
   tx set-environment -g AGENT_FLEET_THEME_CONF "$AGENT_FLEET_THEME_CONF" 2>/dev/null || true
 }
 
@@ -1878,6 +1883,7 @@ JS
 # live pre-pull daemon (and rails) would otherwise run stale code forever.
 cmd_reload() {
   if ! server_up; then echo "fleet not running" >&2; exit 1; fi
+  theme_write_conf
   ensure_server_env
   local pf="$AF_CACHE_DIR/snapshotd.lock/pid" dpid
   # Comm-check before killing (same as `stop`): after an unclean shutdown the

@@ -77,4 +77,14 @@ check "reloads don't pile up terminal-overrides" \
 check "Claude Code is let out of its 256-color tmux clamp" \
   "[[ \"\$(tx show-environment -g CLAUDE_CODE_TMUX_TRUECOLOR)\" == CLAUDE_CODE_TMUX_TRUECOLOR=1 ]]"
 
+# A pane older than a `theme` switch still carries the old name in its env
+# (the CLI used to push it into the server env, so every pane inherited it).
+# An `af` call from there must not put the old palette back fleet-wide.
+tconf="$XDG_CACHE_HOME/agent-fleet/theme.conf"
+tx set-environment -g AGENT_FLEET_THEME nord   # what an older CLI left behind
+before="$(head -1 "$tconf")"
+AGENT_FLEET_THEME=nord "$REPO/bin/agent-fleet" add stale --to t --cmd 'sleep 300' >/dev/null
+check "a stale-env call leaves the live theme.conf alone" "[[ \"\$(head -1 '$tconf')\" == '$before' ]]"
+check "the theme name stays out of the server env" "! tx show-environment -g AGENT_FLEET_THEME >/dev/null 2>&1"
+
 exit "$FAIL"
