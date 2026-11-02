@@ -3231,10 +3231,13 @@ cmd_events() {
   if (( off > size )); then echo "status=expired"; echo "cursor=$token:0"; exit 6; fi
   # Bounded to the size just measured: a writer appending meanwhile is next
   # call's business, so a cursor never re-delivers what it already handed out.
-  if [[ -n "$pane" ]]; then
-    tail -c "+$(( off + 1 ))" "$f" | head -c "$(( size - off ))" | awk -v p="$pane" '$1 ~ /^[0-9]+$/ && $2 == p'
-  else
-    tail -c "+$(( off + 1 ))" "$f" | head -c "$(( size - off ))" | awk '$1 ~ /^[0-9]+$/'
+  # (Skipped entirely when nothing is new: BSD head rejects `-c 0`.)
+  if (( size > off )); then
+    if [[ -n "$pane" ]]; then
+      tail -c "+$(( off + 1 ))" "$f" | head -c "$(( size - off ))" | awk -v p="$pane" '$1 ~ /^[0-9]+$/ && $2 == p'
+    else
+      tail -c "+$(( off + 1 ))" "$f" | head -c "$(( size - off ))" | awk '$1 ~ /^[0-9]+$/'
+    fi
   fi
   echo "cursor=$token:$size"
 }
