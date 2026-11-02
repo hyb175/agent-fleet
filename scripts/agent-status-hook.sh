@@ -130,6 +130,9 @@ if [[ "$state" == "done" && -f "$cache/${pane}.question" ]]; then
 fi
 
 [[ -n "$state" ]] && printf '%s\n' "$state" > "$f"
+# Every status transition is an event (record or no record); same-state
+# re-fires stay fork-free and silent.
+[[ -n "$state" && "$state" != "$prev" ]] && af_event "$pane" state "$state"
 
 # Retire the question when the USER answered: a prompt-submission event, not
 # just any working write — PreToolUse/PostToolUse fire while the asking turn
@@ -228,6 +231,7 @@ if [[ ! -f "$sf" ]]; then
   if [[ -n "$sid" ]]; then
     printf '%s\n' "$sid" > "$sf" 2>/dev/null || true
     command -v "${TMUX_BIN:-tmux}" >/dev/null 2>&1 && "${TMUX_BIN:-tmux}" -L "$socket" set-option -p -t "$pane" @fleet-session "$sid" </dev/null 2>/dev/null || true
+    af_event "$pane" session "$sid" "${kind:--}"
   fi
   # Tag the pane's agent kind (hand-started agents have none yet) so the rail
   # labels it without ps-scraping and persist-restore relaunches the right CLI.
@@ -258,20 +262,28 @@ fi
 # The sender hashes its own JSON-escaped text, so a prompt that reached the
 # agent merged with half-typed human input hashes differently and is reported
 # as a mismatch instead of a delivery. Glob tests keep the per-tool hot path
-# fork-free; the sed and the hash run once per turn. Claude only: the payload
-# shape (compact JSON, "prompt" as the last key) is what was proved.
-if [[ "$kind" == "claude" ]]; then
+# fork-free; the seds and the hash run once per turn. Claude and codex only:
+# their payload shape (compact JSON, a per-turn id named prompt_id or turn_id
+# that the Stop event repeats) is what was proved. The prompt is taken by key,
+# wherever it sits: a JSON string is `"` … `"` with backslash escapes inside.
+if [[ "$kind" == "claude" || "$kind" == "codex" ]]; then
   case "$input" in
-    *'"hook_event_name":"UserPromptSubmit"'*'"prompt":"'*)
-      _tp="${input#*\"prompt\":\"}"; _tp="${_tp%\"\}*}"
+    *'"hook_event_name":"UserPromptSubmit"'*)
+      _tp="$(printf '%s' "$input" | sed -n 's/.*"prompt":"\([^"\\]*\(\\.[^"\\]*\)*\)".*/\1/p' | head -1)"
       _tpid="$(printf '%s' "$input" | sed -n 's/.*"prompt_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-      af_sha256 "$_tp"; af_now
+      [[ -n "$_tpid" ]] || _tpid="$(printf '%s' "$input" | sed -n 's/.*"turn_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      # No prompt field: still a turn receipt, with a hash no sender can match.
+      if [[ -n "$_tp" ]]; then af_sha256 "$_tp"; else AF_SHA=none; fi
+      af_now
       [[ -n "$_tpid" ]] && printf 's %s %s %s\n' "$AF_NOW" "$_tpid" "$AF_SHA" >> "$cache/${pane}.turns" 2>/dev/null
+      [[ -n "$_tpid" ]] && af_event "$pane" prompt "$_tpid" "$AF_SHA"
       ;;
     *'"hook_event_name":"Stop"'*)
       _tpid="$(printf '%s' "$input" | sed -n 's/.*"prompt_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+      [[ -n "$_tpid" ]] || _tpid="$(printf '%s' "$input" | sed -n 's/.*"turn_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
       af_now
       [[ -n "$_tpid" ]] && printf 'e %s %s\n' "$AF_NOW" "$_tpid" >> "$cache/${pane}.turns" 2>/dev/null
+      [[ -n "$_tpid" ]] && af_event "$pane" turn_end "$_tpid"
       ;;
   esac
 fi

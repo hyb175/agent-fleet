@@ -49,7 +49,7 @@ static matrix, with what each cell's evidence is:
 | --- | --- | --- | --- | --- | --- |
 | claude, interactive, hooked (shim, `add`, `task`) | yes, hook tier | yes, fingerprint-guarded, blind | **yes** — proved on Linux, claude 2.1.316 (below); macOS uses the same hook path, not re-run | yes (`--resume`) | no |
 | claude, controlled | n/a (no pane) | per-generation `answer` action | per-generation turn via `-p --resume` | n/a (generations) | **Linux only**: bundled backend, or external driver |
-| codex, interactive, hooked | yes | blind | no — `no_receipt_channel` (UserPromptSubmit payload not inventoried) | yes (rollout lookup) | no |
+| codex, interactive, hooked | yes | blind | **yes** — proved on Linux, codex-cli 0.165.0 (C1 below); `turn_id` plays the role of `prompt_id` | yes (rollout lookup) | no |
 | opencode / kimi / hermes, hooked | yes | blind | no | yes / yes / yes | no |
 | any, scrape tier (`~` label) | heuristic | blind | no | kind only | no |
 | federated (`host/…`) | read-only mirror | refused | refused | n/a | n/a |
@@ -132,6 +132,8 @@ matters and are reproduced by the checks named).
 | A3 | two-line text via tmux bracketed paste + Enter | one prompt, `"prompt":"line one\nline two: …"` | multi-line is safe through `paste-buffer -p`; `send-keys` alone would submit at the first newline. |
 | A4 | send while the agent is mid-turn | Claude Code queued it; **both** prompts reported the same `prompt_id`; two `Stop`s | the provider queues, but the receipt is then ambiguous. Fleet refuses `busy` instead and the caller keeps its queue. |
 | B | `claude -p --resume S` **while the interactive process holding S is alive** | exit 0, same `session_id`; the pane's next answer listed every prompt **except** the headless one; transcript has two leaves | in-place connection to an unmediated interactive session through the native API is **not** safe: it forks the conversation and the live agent never sees the message. |
+| I1 | Escape during a running claude turn | no `Stop`, no `Notification`; the pane returns to the prompt with the interrupted text back in the composer; the next prompt works normally (I2); Escape while idle does nothing (I3) | an interrupt has **no native receipt**; fleet reports `status=sent` only. The composer may hold the old text afterwards, so a following `send` can legitimately come back `mismatch`. |
+| C1 | codex-cli 0.165.0 in a pane, hooks trusted, bracketed paste + Enter (2026-11-02) | `SessionStart{session_id, transcript_path, cwd, source}` at launch; `UserPromptSubmit{session_id, turn_id, transcript_path, cwd, hook_event_name, model, permission_mode, prompt}` then `Stop{turn_id, last_assistant_message}`; a raw `send-keys` burst followed at once by Enter left the text in the composer unsent | codex has the same receipt shape with `turn_id`; the paste-then-Enter transport is required for it and is now used for both providers. `codex-hooks install` now wires `SessionStart` so the session id (and thus `send`'s receipt channel) exists before the first prompt; codex asks to trust the new hook once. The hook finds `prompt` by key, pinned in [t-runtime](../tests/t-runtime.sh) against this payload and a reordered one. |
 
 Conclusions the protocol is built on:
 
@@ -180,10 +182,10 @@ event (`\\ \" \n \t`); `send` escapes identically. Pinned in
 mis-parse on either side yields a false negative (`unconfirmed`/`mismatch`),
 never a false `consumed`.
 
-Guards, in order: hooked claude pane (`@fleet-agent-kind` = claude and a
+Guards, in order: hooked claude or codex pane (`@fleet-agent-kind` and a
 `.session` file) → status file, then snapshot, not `working`/`wait` →
-optional fingerprint → journal → type (single line `send-keys -l`, multi-line
-bracketed paste) → Enter → poll receipts. Text may contain newline and tab; other control
+optional fingerprint → journal → bracketed paste → Enter as its own key →
+poll receipts. Text may contain newline and tab; other control
 characters are rejected before anything happens (an ESC sequence could drive
 the TUI).
 
@@ -204,14 +206,32 @@ tool. `review --send` and `answer text` keep their manual, blind behaviour.
 
 ## Events and native source references
 
-Available now, all file reads, no tmux in the hot path:
+`agent-fleet events [--since <token:offset>] [--pane %N]` is the resumable
+event stream: `<epoch> <pane> <kind> [fields…]` lines, last line
+`cursor=<token>:<offset>`. Kinds: `session <id> <agent>`, `state <s>`,
+`prompt <turn-id> <sha>`, `turn_end <turn-id>`, `question`,
+`delivery <op> submitted|failed|consumed|turn_ended [turn-id]`, `interrupt`,
+`released`, `killed <pids|none>`. Writers append one line each (hook tier,
+`send`, `interrupt`, `kill --wait`, `_release`, `ask-human`); nothing polls.
+The log lives in the cache and is rotated on every cold boot, which is exactly
+when pane ids restart; a cursor from before the rotation answers
+`status=expired` (exit 6) with a fresh cursor, and the caller re-discovers from
+the snapshot. Durable facts stay in task records and delivery journals; the
+stream is for ordering and wake-ups. Hook-tier panes only: scrape-tier panes
+produce no events and keep their `~` label.
+
+Turn attribution with the stream: a `turn_end` whose id is not the id a
+`delivery … consumed` line carried belongs to older work.
+
+Underlying files, all plain reads, no tmux in the hot path:
 
 - `fleet.snapshot` — the UI inventory; append-only format
   ([snapshot-format](snapshot-format.md)); staleness rule unchanged.
 - `panes/<pane>.status` and task record `state <s> <epoch>` lines — lifecycle
   transitions, hook tier only; scrape tier is heuristic and labelled `~`.
-- `panes/<pane>.turns` — per-turn `s`/`e` receipts (claude).
+- `panes/<pane>.turns` — per-turn `s`/`e` receipts (claude, codex).
 - `panes/<pane>.question` — an `ask-human` question; the row's text.
+- `events.log` — the stream above.
 
 Native references for a claude pane: session id as above; transcript
 `~/.claude/projects/<cwd with "/" → "-">/<session_id>.jsonl`; subagent
@@ -220,17 +240,23 @@ carry `transcript_path` verbatim. For codex: `~/.codex/sessions/Y/M/D/rollout-<t
 first line holds `cwd` and `source.subagent` for child threads. Terminal
 scrollback is display context only. Discovery never scans transcripts.
 
-Not yet available: a resumable event journal with a cursor. Receipts and
-status files are the raw material; the journal is stage 4 work.
+## Interrupt, stop, fencing, restore
 
-## Stop, fencing, restore
+Four different things, four different verbs, none implied by another:
+
+| Intent | Verb | Evidence returned |
+| --- | --- | --- |
+| interrupt the current response | `interrupt <id\|%pane>` (hooked claude in `working`; Escape) | none exists natively (I1): `status=sent reason=no_native_receipt`, exit 4. The `working` gate reads the status file, which can lag a permission prompt by one hook round-trip; an Escape landing in that window cancels the prompt rather than the response. Codex refused (`no_interrupt_capability`) until proved. |
+| stop a controlled run | `owned … stop` | fence written before the effect; unit stopped by invocation id; terminal receipt or `uncertain` |
+| end an interactive session | `kill <target> --wait [s]` | the pane's process tree (pid + start time, from one `ps`) and any task container are censused **before** the kill and polled after: `status=stopped processes=N` only when every one is gone and no container runs; otherwise `status=unknown alive=<pids>` (exit 4). Without `--wait` the verb is the plain tmux kill it always was. |
+| retire an attempt | AIOS, via `retired.json` | the backend's retirement census |
 
 - Owned v1: `stop` writes the fence before any effect; a fenced attempt refuses
   every later start even after cache loss of other files; `never_started` is
   proved, not assumed. Restore never relaunches an owned worker.
-- Interactive: `kill %pane` and `_release` act on the pane; there is no
-  descendant census and no quiescence receipt. Callers treat a killed pane as
-  "pane gone", not "work stopped". Closing that gap is stage 4.
+- `kill --wait` identifies processes by pid **and** start time, so a pid reused
+  after exit never counts as a survivor; a process it cannot see (a container's
+  inner tree) is covered only through the task record's container name.
 - Delivery journals survive restore; pane ids do not. After a restore every
   `unconfirmed` op stays unconfirmed (`recipient_changed` once the pane holds
   another session). Nothing is replayed.
@@ -244,7 +270,7 @@ status files are the raw material; the journal is stage 4 work.
 | 1 Contract and compatibility inventory | done | this file; `agent-fleet capabilities` |
 | 2 Input-delivery proof | done | tables above; `send` verb; `t-send` |
 | 3 Fleet-owned controlled runtime | packaged | `backends/owned/` (protocol v1, `--fleet-state`, no AIOS imports, 110 donor-derived tests, CI job); `owned --backend fleet`. Declared gaps: CI runs no real bubblewrap sandbox (those tests skip off the Nix store) and the retired-attempt census with a populated cgroup has no fixture; the donor's own `_members` call was broken there, so AIOS never exercised it either. |
-| 4 Session messaging and events | next | event journal with cursor; descendant census for interactive stop; codex receipt inventory; interrupt verb (capability-gated) |
+| 4 Session messaging and events | done | `events` stream with cursor and explicit expiry; `kill --wait` process-census evidence; codex receipts proved and enabled in `send`; `interrupt` verb that claims only what it can see. Open: an interrupt receipt (none exists upstream), codex interrupt evidence, container-inner trees beyond the named container. |
 | 5 Compatibility and consumer handoff | partial | see below |
 
 ### What AIOS changes to adopt this (stage 5 inputs)

@@ -25,6 +25,29 @@ AF_CACHE_DIR="$AF_CACHE_ROOT/$_af_cache_socket"
 # shellcheck disable=SC2034 # read by bin/agent-fleet (send journal) and cmd_owned
 AF_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/agent-fleet/$_af_cache_socket"
 
+# Append one runtime event: `<epoch> <pane> <kind> [fields…]` to the
+# socket's event log. The first line of a fresh log is `# agent-fleet events
+# <token>`; a reader's cursor is `<token>:<byte offset>`, so a log that was
+# rotated (cold boot) or removed makes every old cursor expire explicitly
+# instead of silently pointing into a different file. Fork-free (printf with
+# O_APPEND; one line < PIPE_BUF stays whole across concurrent writers); the
+# header is claimed with noclobber so two first writers cannot both write it.
+# bash 3.2 (hook tier). Best effort: a log failure never fails the caller.
+af_event() {  # <pane> <kind> [fields…]
+  local _ef="$AF_CACHE_DIR/events.log" _ep="$1" _ek="$2"
+  shift 2
+  if [[ ! -s "$_ef" ]]; then
+    # Header via link(2): the complete line exists before the name does, so
+    # a concurrent first writer can neither append under it nor overwrite it.
+    af_now
+    printf '# agent-fleet events %s-%s\n' "$AF_NOW" "$$" > "$_ef.$$" 2>/dev/null \
+      && { ln "$_ef.$$" "$_ef" 2>/dev/null || true; }
+    rm -f "$_ef.$$" 2>/dev/null || true
+  fi
+  af_now
+  printf '%s %s %s%s\n' "$AF_NOW" "$_ep" "$_ek" "${*:+ $*}" >> "$_ef" 2>/dev/null || true
+}
+
 # sha256 hex of a string into AF_SHA (GNU sha256sum or BSD shasum). One fork;
 # callers keep it off the per-tool hot path.
 # shellcheck disable=SC2034 # AF_SHA is the out-param

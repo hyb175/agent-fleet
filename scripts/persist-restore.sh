@@ -142,6 +142,7 @@ done < "$STATE"
 # block the hook from capturing the new claude session id (gc only prunes files
 # for DEAD panes; recycled ids look live). Purge before any id is reused.
 rm -f "$CACHE/panes/"*.status "$CACHE/panes/"*.ackdone "$CACHE/panes/"*.session "$CACHE/panes/"*.task "$CACHE/panes/"*.question "$CACHE/panes/"*.turns 2>/dev/null || true
+[[ -f "$CACHE/events.log" ]] && mv -f "$CACHE/events.log" "$CACHE/events.log.1" 2>/dev/null || true
 
 # --- start the server (loads conf: hooks + rail-auto), then suppress the auto
 #     rail. The scratch session takes the first-window auto-rail so our rebuilt

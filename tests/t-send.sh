@@ -22,18 +22,19 @@ af() { AGENT_FLEET_SOCKET="$SOCK" "$REPO/bin/agent-fleet" "$@"; }
 # The fake agent: one hook event sequence per line read, like claude.
 cat > "$WORK/fake-claude" <<'FAKE'
 #!/usr/bin/env bash
-# fake-claude <hook> <socket> <session> <outfile> [silent]
-HOOK="$1" SOCK="$2" SID="$3" OUT="$4" MODE="${5:-ok}"
-printf '{"session_id":"%s","hook_event_name":"SessionStart","cwd":"/x"}' "$SID" | bash "$HOOK" start "$SOCK" claude
+# fake-claude <hook> <socket> <session> <outfile> [ok|silent] [claude|codex]
+HOOK="$1" SOCK="$2" SID="$3" OUT="$4" MODE="${5:-ok}" KIND="${6:-claude}"
+IDKEY=prompt_id; [[ "$KIND" == codex ]] && IDKEY=turn_id
+printf '{"session_id":"%s","hook_event_name":"SessionStart","cwd":"/x"}' "$SID" | bash "$HOOK" start "$SOCK" "$KIND"
 n=0
 while IFS= read -r line; do
   n=$((n+1)); printf '%s\n' "$line" >> "$OUT"
   [[ "$MODE" == silent ]] && continue
   esc="${line//\\/\\\\}"; esc="${esc//\"/\\\"}"; esc="${esc//	/\\t}"
-  printf '{"session_id":"%s","cwd":"/x","hook_event_name":"UserPromptSubmit","prompt_id":"p%s","prompt":"%s"}' "$SID" "$n" "$esc" \
-    | bash "$HOOK" working "$SOCK" claude
+  printf '{"session_id":"%s","cwd":"/x","hook_event_name":"UserPromptSubmit","%s":"p%s","prompt":"%s"}' "$SID" "$IDKEY" "$n" "$esc" \
+    | bash "$HOOK" working "$SOCK" "$KIND"
   sleep 0.3
-  printf '{"session_id":"%s","cwd":"/x","hook_event_name":"Stop","prompt_id":"p%s"}' "$SID" "$n" | bash "$HOOK" done "$SOCK" claude
+  printf '{"session_id":"%s","cwd":"/x","hook_event_name":"Stop","%s":"p%s"}' "$SID" "$IDKEY" "$n" | bash "$HOOK" done "$SOCK" "$KIND"
 done
 FAKE
 chmod +x "$WORK/fake-claude"
@@ -44,10 +45,10 @@ stop_daemon() {
   kill "$(cat "$CACHE/snapshotd.lock/pid" 2>/dev/null)" 2>/dev/null || true
   for _ in $(seq 1 30); do [[ -d "$CACHE/snapshotd.lock" ]] || break; sleep 0.2; done
 }
-spawn() {  # <session> <outfile> [silent] -> pane id, hook tier proven (.session present)
+spawn() {  # <session> <outfile> [ok|silent] [claude|codex] -> pane id, hook tier proven (.session present)
   local p
-  p="$(tx new-window -d -P -F '#{pane_id}' -t t: "$WORK/fake-claude '$HOOK' '$SOCK' '$1' '$2' ${3:-}")"
-  wait_for 10 "[[ -s '$CACHE/panes/$p.session' && \"\$(tx display-message -p -t $p '#{@fleet-agent-kind}')\" == claude ]]"
+  p="$(tx new-window -d -P -F '#{pane_id}' -t t: "$WORK/fake-claude '$HOOK' '$SOCK' '$1' '$2' ${3:-ok} ${4:-claude}")"
+  wait_for 10 "[[ -s '$CACHE/panes/$p.session' && \"\$(tx display-message -p -t $p '#{@fleet-agent-kind}')\" == ${4:-claude} ]]"
   printf '%s' "$p"
 }
 ap="$(spawn sess-a "$WORK/a.out")"
@@ -148,10 +149,16 @@ check "unknown op on --status (rc=$rc)" "[[ $rc -eq 1 ]] && grep -q 'reason=unkn
 af send "$ap" $'esc\e[2J' --op op10 >/dev/null 2>&1; rc=$?
 check "control characters rejected before any effect (rc=$rc)" "[[ $rc -eq 2 && ! -e '$STATE/deliveries/op10' ]]"
 
+# --- codex: same receipt channel, turn_id instead of prompt_id ---
+cp="$(spawn sess-c "$WORK/c.out" ok codex)"; stop_daemon
+out="$(af send "$cp" "codex hello" --op opc --wait 10)"; rc=$?
+check "codex pane consumed by turn_id (rc=$rc): $out" "[[ $rc -eq 0 ]] && grep -q 'status=\(consumed\|turn_ended\) pane=$cp prompt_id=p1' <<<\"\$out\""
+check "codex received the text" "[[ \"\$(cat '$WORK/c.out')\" == 'codex hello' ]]"
+
 # --- capabilities ---
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions
 caps="$(af capabilities)"
-check "capabilities names the receipt channel and journal" "grep -q '^send_receipts=claude:hook$' <<<\"\$caps\" && grep -q \"^send_journal=$STATE/deliveries$\" <<<\"\$caps\""
+check "capabilities names the receipt channels and journal" "grep -q '^send_receipts=claude:hook codex:hook$' <<<\"\$caps\" && grep -q \"^send_journal=$STATE/deliveries$\" <<<\"\$caps\""
 check "capabilities states the owned backend availability" "grep -q '^owned_backend_fleet=\(available\|unavailable\)$' <<<\"\$caps\""
 
 exit "$FAIL"

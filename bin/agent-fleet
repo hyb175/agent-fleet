@@ -317,6 +317,9 @@ ensure_server() {
     # hook from capturing new session ids). persist-restore purges too, but
     # this also covers the no-state fresh-boot path.
     rm -f "$AF_CACHE_DIR/panes/"*.status "$AF_CACHE_DIR/panes/"*.ackdone "$AF_CACHE_DIR/panes/"*.session "$AF_CACHE_DIR/panes/"*.task "$AF_CACHE_DIR/panes/"*.question "$AF_CACHE_DIR/panes/"*.turns 2>/dev/null || true
+    # Pane ids restart too, so the event log's pane column would lie across
+    # the boundary: rotate it, which expires every reader's cursor.
+    [[ -f "$AF_CACHE_DIR/events.log" ]] && mv -f "$AF_CACHE_DIR/events.log" "$AF_CACHE_DIR/events.log.1" 2>/dev/null || true
     # Cold boot (e.g. after a reboot): rebuild the last saved layout as shells if
     # we have one; otherwise start a fresh home workspace.
     local rc=1
@@ -921,15 +924,79 @@ cmd_attach() {
   fi
 }
 
+# kill <target> [--wait [secs]] — without --wait, exactly the pane/window/
+# session kill it always was. With --wait, the target's process trees are
+# censused BEFORE the kill (pid + start time per process, container name from
+# the task record) and polled after it, so the result is evidence, not a
+# guess: status=stopped only when every censused process is gone and any
+# named container is not running; otherwise status=unknown with what is
+# still alive (exit 4). Claims nothing it did not observe.
 cmd_kill() {
-  local target="${1:?usage: agent-fleet kill <session> | <session>:<window> | <pane_id>}"
-  if [[ "$target" == %* ]]; then
-    tx kill-pane -t "$target" && echo "killed pane $target"
-  elif [[ "$target" == *:* ]]; then
-    tx kill-window -t "=$target" && echo "killed window $target"
-  else
-    tx kill-session -t "=$target" && echo "killed workspace $target"
+  local target="" wait="" arg
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wait) wait=10; if [[ "${2:-}" =~ ^[0-9]+$ ]]; then wait="$2"; shift; fi; shift ;;
+      -h|--help) echo 'usage: agent-fleet kill <session> | <session>:<window> | <pane_id> [--wait [secs]]' >&2; return 0 ;;
+      *) if [[ -z "$target" ]]; then target="$1"; else echo "error: unexpected arg: $1" >&2; exit 2; fi; shift ;;
+    esac
+  done
+  [[ -n "$target" ]] || { echo 'usage: agent-fleet kill <session> | <session>:<window> | <pane_id> [--wait [secs]]' >&2; exit 2; }
+  local panes="" p trees="" tids="" tid
+  if [[ -n "$wait" ]]; then
+    if [[ "$target" == %* ]]; then panes="$target"
+    elif [[ "$target" == *:* ]]; then panes="$(tx list-panes -t "=$target" -F '#{pane_id}' 2>/dev/null || true)"
+    else panes="$(tx list-panes -s -t "=$target" -F '#{pane_id}' 2>/dev/null || true)"; fi
+    for p in $panes; do
+      trees+="$(pane_tree "$p")"$'\n'
+      tid="$(cat "$AF_CACHE_DIR/panes/$p.task" 2>/dev/null || true)"
+      [[ -n "$tid" && -f "$AF_TASKS_DIR/$tid" ]] && tids+="$tid "
+    done
   fi
+  local krc=0
+  if [[ "$target" == %* ]]; then
+    { tx kill-pane -t "$target" && echo "killed pane $target"; } || krc=$?
+  elif [[ "$target" == *:* ]]; then
+    { tx kill-window -t "=$target" && echo "killed window $target"; } || krc=$?
+  else
+    { tx kill-session -t "=$target" && echo "killed workspace $target"; } || krc=$?
+  fi
+  [[ -n "$wait" && "$krc" -eq 0 ]] || return "$krc"
+  local n; n="$(grep -c '^[0-9]' <<<"$trees" || true)"
+  if (( n == 0 )); then
+    # The pane was there but its process tree could not be read: no evidence.
+    printf 'status=unknown processes=0 reason=no_census\n'; exit 4
+  fi
+  # A pane's docker client dying does not stop its container: stop the task's
+  # container(s) the way task cleanup does, then verify by name/label.
+  for tid in $tids; do task_container_stop "$tid"; done
+  local deadline=$(( SECONDS + wait )) alive cn cdir ids unsure running
+  while :; do
+    alive="$(tree_alive "$trees")"
+    running=""; unsure=""
+    for tid in $tids; do
+      cn="$(awk '$1=="container"{v=$2} END{print v}' "$AF_TASKS_DIR/$tid" 2>/dev/null || true)"
+      if [[ -n "$cn" ]]; then
+        case "$(container_state "$cn")" in running) running+="$cn " ;; unknown) unsure+="$cn " ;; esac
+      fi
+      cdir="$(awk '$1=="containerdir"{sub(/^containerdir /,""); print; exit}' "$AF_TASKS_DIR/$tid" 2>/dev/null || true)"
+      if [[ -n "$cdir" ]]; then
+        if ! command -v "$DOCKER_BIN" >/dev/null 2>&1; then unsure+="devcontainer:$tid "
+        else
+          ids="$("$DOCKER_BIN" ps -q --filter "label=devcontainer.local_folder=$cdir" 2>/dev/null)" || unsure+="devcontainer:$tid "
+          [[ -n "$ids" ]] && running+="devcontainer:$tid "
+        fi
+      fi
+    done
+    [[ -z "$alive" && -z "$running" && -z "$unsure" ]] && break
+    (( SECONDS >= deadline )) && break
+    sleep 0.2
+  done
+  for p in $panes; do af_event "$p" killed "${alive:-none}"; done
+  if [[ -z "$alive" && -z "$running" && -z "$unsure" ]]; then
+    printf 'status=stopped processes=%s\n' "$n"; return 0
+  fi
+  printf 'status=unknown processes=%s%s%s%s\n' "$n" "${alive:+ alive=${alive% }}" \
+    "${running:+ containers_running=${running% }}" "${unsure:+ containers_unknown=${unsure% }}"; exit 4
 }
 
 cmd_list() {
@@ -1712,7 +1779,7 @@ cmd_codex_hooks() {
     "note: codex trust-gates hooks — approve them once in the review codex shows at next start" <<TOML
 # Managed by agent-fleet — 'agent-fleet codex-hooks remove' deletes this block.
 # Maps codex lifecycle events to fleet pane states; no-op outside fleet panes.
-$(for ev in "UserPromptSubmit working" "PreToolUse working" "PostToolUse working" \
+$(for ev in "SessionStart start" "UserPromptSubmit working" "PreToolUse working" "PostToolUse working" \
             "PermissionRequest wait" "Stop done"; do
     st="${ev##* }"; ev="${ev%% *}"
     printf '[[hooks.%s]]\n[[hooks.%s.hooks]]\ntype = "command"\ncommand = "'\''%s'\'' %s %s codex"\ntimeout_sec = 10\n\n' \
@@ -2975,6 +3042,7 @@ send_status() {  # <record> -> prints "op=… status=… …"; returns the statu
     fi
     if [[ "$st" == "consumed" ]]; then
       af_now; printf 'consumed %s %s\n' "$AF_NOW" "$pid" >> "$f"
+      af_event "$pane" delivery "$op" consumed "$pid"
     elif [[ -n "$SEND_WAITING" ]]; then
       st="submitted"
     elif [[ -n "$other" && -z "$reason" ]]; then
@@ -2987,6 +3055,7 @@ send_status() {  # <record> -> prints "op=… status=… …"; returns the statu
     if grep -q '^ended ' "$f" 2>/dev/null; then st="turn_ended"
     elif grep -q "^e [0-9]* $pid\$" "$AF_CACHE_DIR/panes/$pane.turns" 2>/dev/null; then
       af_now; printf 'ended %s\n' "$AF_NOW" >> "$f"; st="turn_ended"
+      af_event "$pane" delivery "$op" turn_ended "$pid"
     fi
   fi
   printf 'op=%s status=%s pane=%s%s%s\n' "$op" "$st" "$pane" "${pid:+ prompt_id=$pid}" "${reason:+ reason=$reason}"
@@ -3042,12 +3111,13 @@ cmd_send() {
     send_status "$f" && exit 0 || exit $?     # replay: report, never type again
   fi
 
-  # Only a hooked claude pane can hand back a consumption receipt; everything
-  # else is refused rather than typed into blind.
+  # Only a hooked claude or codex pane can hand back a consumption receipt
+  # (their UserPromptSubmit payloads were proved); everything else is refused
+  # rather than typed into blind.
   local kind sess ppid st
   kind="$(tx display-message -p -t "$pane" '#{@fleet-agent-kind}' 2>/dev/null || true)"
   sess="$(cat "$AF_CACHE_DIR/panes/$pane.session" 2>/dev/null || true)"
-  [[ "$kind" == "claude" && -n "$sess" ]] || refuse no_receipt_channel
+  [[ ( "$kind" == "claude" || "$kind" == "codex" ) && -n "$sess" ]] || refuse no_receipt_channel
   # Busy gate on the hook-written status file FIRST: the snapshot is up to a
   # tick stale, and a prompt typed into a turn that just started is queued by
   # claude under the previous turn's prompt_id (receipt ambiguity, proved).
@@ -3072,22 +3142,21 @@ cmd_send() {
     printf 'op %s\npane %s\nsession %s\npid %s\nkind %s\nsha %s\nchars %s\ncreated %s\nturns_at %s\n' \
       "$op" "$pane" "$sess" "${ppid:--}" "$kind" "$sha" "${#text}" "$now" "${toff:-0}"
   } > "$f" || { echo "error: cannot journal $f" >&2; exit 1; }
+  # Always a bracketed paste, then Enter as its own key after a beat: a raw
+  # keystroke burst submits at the first newline (claude) or swallows the
+  # Enter that follows it (codex); the paste terminator ends the burst.
   local ok=1
-  if [[ "$text" == *$'\n'* ]]; then
-    printf '%s' "$text" | tx load-buffer -b "af-send-$$" - 2>/dev/null \
-      && tx paste-buffer -p -d -b "af-send-$$" -t "$pane" 2>/dev/null || ok=""
-  else
-    # tmux drops an unescaped trailing ';' from an argv element.
-    [[ "$text" == *';' ]] && text="${text%;}\;"
-    tx send-keys -t "$pane" -l -- "$text" 2>/dev/null || ok=""
-  fi
-  [[ -n "$ok" ]] && { tx send-keys -t "$pane" Enter 2>/dev/null || ok=""; }
+  printf '%s' "$text" | tx load-buffer -b "af-send-$$" - 2>/dev/null \
+    && tx paste-buffer -p -d -b "af-send-$$" -t "$pane" 2>/dev/null || ok=""
+  [[ -n "$ok" ]] && { sleep 0.4; tx send-keys -t "$pane" Enter 2>/dev/null || ok=""; }
   af_now
   if [[ -z "$ok" ]]; then
     printf 'failed %s\n' "$AF_NOW" >> "$f"
+    af_event "$pane" delivery "$op" failed
     printf 'op=%s status=unconfirmed pane=%s reason=send_failed\n' "$op" "$pane"; exit 4
   fi
   printf 'submitted %s\n' "$AF_NOW" >> "$f"
+  af_event "$pane" delivery "$op" submitted
 
   local deadline=$(( SECONDS + wait )) out rc
   while :; do
@@ -3108,8 +3177,131 @@ cmd_capabilities() {
   printf 'fleet_version=%s\nhost=%s\nsocket=%s\ncache_dir=%s\nstate_dir=%s\n' \
     "$AGENT_FLEET_VERSION" "$host" "$SOCKET" "$AF_CACHE_DIR" "$AF_STATE_DIR"
   printf 'owned_protocol=1\nowned_driver_external=available\nowned_backend_fleet=%s\n' "$backend"
-  printf 'send_receipts=claude:hook\nsend_transport=tmux-keys+native-receipt\nsend_journal=%s/deliveries\n' "$AF_STATE_DIR"
-  printf 'answer_guard=fingerprint\ndiscovery=%s/fleet.snapshot\n' "$AF_CACHE_DIR"
+  printf 'send_receipts=claude:hook codex:hook\nsend_transport=tmux-paste+native-receipt\nsend_journal=%s/deliveries\n' "$AF_STATE_DIR"
+  printf 'interrupt=claude:keys-no-receipt\nkill_evidence=process-census\n'
+  printf 'events=%s/events.log\nanswer_guard=fingerprint\ndiscovery=%s/fleet.snapshot\n' "$AF_CACHE_DIR" "$AF_CACHE_DIR"
+}
+
+# events [--since <cursor>] [--pane %N] — the runtime event log, a resumable
+# view over what the hooks and verbs already write (state transitions,
+# session ids, prompt/turn receipts, deliveries, interrupts, releases). The
+# last line is always `cursor=<token>:<offset>`; pass it back to read only
+# what is new. A rotated log (cold boot) prints `status=expired` with the
+# fresh cursor: re-discover from the snapshot, then resume. Disposable by
+# design — durable facts live in task records and delivery journals.
+usage_events() {
+  cat <<EOF
+Usage: agent-fleet events [--since <token:offset>] [--pane %N]
+
+  <epoch> <pane> <kind> [fields…]      kinds: session <id> <agent>, state <s>,
+                                       prompt <turn-id> <sha>, turn_end <turn-id>,
+                                       question, delivery <op> <status> [turn-id],
+                                       interrupt, released, killed <pids…>
+  cursor=<token>:<offset>              always last; resume with --since
+  status=expired                       the log was rotated since that cursor
+                                       (exit 6); the cursor line that follows is fresh
+EOF
+}
+cmd_events() {
+  local since="" pane="" f="$AF_CACHE_DIR/events.log" token off tok head
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --since) since="${2:?error: --since needs token:offset}"; shift 2 ;;
+      --pane)  pane="${2:?error: --pane needs %N}"; shift 2 ;;
+      -h|--help) usage_events; return 0 ;;
+      *) echo "error: unexpected arg: $1" >&2; usage_events >&2; exit 2 ;;
+    esac
+  done
+  head=""
+  [[ -f "$f" ]] && { read -r head || true; } < "$f"
+  token="${head#\# agent-fleet events }"
+  if [[ "$head" != "# agent-fleet events "* || -z "$token" ]]; then
+    # No log yet (or a headerless stub): nothing to resume from.
+    if [[ -n "$since" && "$since" != "none:0" ]]; then echo "status=expired"; echo "cursor=none:0"; exit 6; fi
+    echo "cursor=none:0"; return 0
+  fi
+  off=0
+  if [[ -n "$since" ]]; then
+    tok="${since%%:*}"; off="${since#*:}"
+    if [[ "$tok" != "$token" || ! "$off" =~ ^[0-9]+$ ]]; then
+      echo "status=expired"; echo "cursor=$token:0"; exit 6
+    fi
+  fi
+  local size; size="$(wc -c < "$f")"; size="${size//[[:space:]]/}"
+  if (( off > size )); then echo "status=expired"; echo "cursor=$token:0"; exit 6; fi
+  # Bounded to the size just measured: a writer appending meanwhile is next
+  # call's business, so a cursor never re-delivers what it already handed out.
+  if [[ -n "$pane" ]]; then
+    tail -c "+$(( off + 1 ))" "$f" | head -c "$(( size - off ))" | awk -v p="$pane" '$1 ~ /^[0-9]+$/ && $2 == p'
+  else
+    tail -c "+$(( off + 1 ))" "$f" | head -c "$(( size - off ))" | awk '$1 ~ /^[0-9]+$/'
+  fi
+  echo "cursor=$token:$size"
+}
+
+# interrupt <id|%pane> — stop the CURRENT RESPONSE of a hooked claude pane
+# (Escape), nothing more: not a stop, not a kill, not a release. Claude emits
+# no event for an interrupt (proved: no Stop hook, the prompt returns to the
+# composer), so the only honest outcome is "sent", exit 4 — the caller
+# confirms through the next state change or the snapshot. Codex is refused
+# until it has its own evidence.
+cmd_interrupt() {
+  local target="${1:-}" pane tid kind st
+  case "$target" in
+    -h|--help|"") echo 'usage: agent-fleet interrupt <task-id|%pane>   (Escape to a working hooked claude pane; prints status=sent, exit 4 — no native receipt exists)' >&2
+                  [[ -n "$target" ]] && return 0; exit 2 ;;
+  esac
+  pane="$target"
+  if [[ "$target" != %* && "$target" != */* ]]; then
+    tid="$(task_id_for "$target")" || exit 1
+    pane="$(awk '$1=="pane"{p=$2} END{print p}' "$AF_TASKS_DIR/$tid" 2>/dev/null)"
+    [[ -n "$pane" ]] || { printf 'status=refused pane=- reason=no_pane\n'; exit 1; }
+  fi
+  [[ "$pane" == */* ]] && { printf 'status=refused pane=%s reason=remote\n' "$pane"; exit 1; }
+  kind="$(tx display-message -p -t "$pane" '#{@fleet-agent-kind}' 2>/dev/null || true)"
+  [[ "$kind" == "claude" ]] || { printf 'status=refused pane=%s reason=no_interrupt_capability kind=%s\n' "$pane" "${kind:--}"; exit 1; }
+  st="$(cat "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true)"
+  [[ -n "$st" ]] || st="$(answer_state "$pane")"
+  [[ "$st" == "working" ]] || { printf 'status=refused pane=%s reason=not_working state=%s\n' "$pane" "${st:-idle}"; exit 1; }
+  tx send-keys -t "$pane" Escape 2>/dev/null || { printf 'status=refused pane=%s reason=tmux_failed\n' "$pane"; exit 1; }
+  af_event "$pane" interrupt
+  printf 'status=sent pane=%s reason=no_native_receipt\n' "$pane"; exit 4
+}
+
+# Pids of a pane's whole process tree (pane_pid and every descendant) with
+# each one's start time, from one ps: `<pid> <lstart…>` lines. The start time
+# is the identity — a reused pid after exit is a different process.
+pane_tree() {  # <pane>
+  local root; root="$(tx display-message -p -t "$1" '#{pane_pid}' 2>/dev/null || true)"
+  [[ "$root" =~ ^[0-9]+$ ]] || return 0
+  ps -eo pid=,ppid=,lstart= 2>/dev/null | awk -v r="$root" '
+    { pp[$1] = $2; s = $3; for (i = 4; i <= NF; i++) s = s " " $i; st[$1] = s }
+    END { for (p in pp) { x = p; while (x in pp && pp[x] != x) { if (x == r) { print p, st[p]; break }; x = pp[x] }
+          if (x == r && p != r) print p, st[p] } }'
+}
+tree_alive() {  # <"pid lstart" lines> -> prints the pids still alive with the same start
+  local pid rest now
+  while read -r pid rest; do
+    [[ -n "$pid" ]] || continue
+    # ps, not kill -0: a root-owned descendant answers EPERM to kill -0 and
+    # would read as gone. Squeeze like the census did (awk re-joined the
+    # fields): `lstart` pads single-digit days with two spaces.
+    now="$(ps -o lstart= -p "$pid" 2>/dev/null | tr -s ' ' | sed 's/^ *//; s/ *$//')"
+    [[ -n "$now" && "$now" == "$rest" ]] && printf '%s ' "$pid"
+  done <<<"$1"
+}
+
+# running | gone | unknown for a docker container by name. Missing docker, a
+# dead daemon or an unparseable answer are unknown, never gone.
+container_state() {  # <name>
+  local o
+  command -v "$DOCKER_BIN" >/dev/null 2>&1 || { echo unknown; return 0; }
+  o="$("$DOCKER_BIN" inspect -f '{{.State.Running}}' "$1" 2>&1)" || true
+  case "$o" in
+    true) echo running ;;
+    false|*"No such object"*|*"No such container"*) echo gone ;;
+    *) echo unknown ;;
+  esac
 }
 
 # ask-human — an agent PUSHES its question into the inbox instead of being
@@ -3154,6 +3346,7 @@ cmd_ask_human() {
   printf '%s\n' "$q" > "$AF_CACHE_DIR/panes/$pane.question" \
     || { echo "error: cache unwritable" >&2; exit 1; }
   printf 'wait\n' > "$AF_CACHE_DIR/panes/$pane.status" 2>/dev/null || true
+  af_event "$pane" question
   # The task record keeps the question in the task's history.
   local tid rec _n
   tid="$(cat "$AF_CACHE_DIR/panes/$pane.task" 2>/dev/null || true)"
@@ -3552,8 +3745,12 @@ Verbs:
   agent-fleet owned --driver <path>|--backend fleet launch|inspect|answer|stop
                                    Optional owned-worker JSON backend (see owned --help).
   agent-fleet send <id|%pane> "<text>" [--op <id>] [--wait <s>]
-                                   Deliver a message to an idle hooked claude pane and wait for
-                                   its consumption receipt; journaled, replay-safe (see send -h).
+                                   Deliver a message to an idle hooked claude/codex pane and wait
+                                   for its consumption receipt; journaled, replay-safe (see send -h).
+  agent-fleet interrupt <id|%pane> Escape a working hooked claude pane's current response (no
+                                   native receipt exists: prints status=sent, exit 4).
+  agent-fleet events [--since <cursor>] [--pane %N]
+                                   Runtime event log with a resumable cursor (see events -h).
   agent-fleet capabilities         key=value lines: what this install supports for machine callers.
   agent-fleet history              Finished tasks per day: duration, wait time, outcome (task history).
   agent-fleet review <id|%pane>    Diff a done task vs its base; PR / merge / send-back (see review -h).
@@ -3572,7 +3769,10 @@ Verbs:
   agent-fleet move [<target>] --to <ws> [--focus]
                                    Move a tab to another workspace. Target: %pane, <ws>:<win>,
                                    @window-id, or the current tab. --focus follows it there.
-  agent-fleet kill <target>        Kill a workspace, window (<ws>:<win>), or pane (%id).
+  agent-fleet kill <target> [--wait [s]]
+                                   Kill a workspace, window (<ws>:<win>), or pane (%id). --wait
+                                   censuses the process trees first and reports status=stopped
+                                   only once every one is gone (else status=unknown, exit 4).
   agent-fleet list                 List workspaces and their agents.
   agent-fleet pick                 Open the picker popup (or attach from a bare shell).
   agent-fleet kimi-hooks [install|remove|status]
@@ -3634,6 +3834,8 @@ main() {
     review)     cmd_review "$@" ;;
     answer)     cmd_answer "$@" ;;
     send)       cmd_send "$@" ;;
+    interrupt)  cmd_interrupt "$@" ;;
+    events)     cmd_events "$@" ;;
     capabilities) cmd_capabilities "$@" ;;
     ask-human)  cmd_ask_human "$@" ;;
     goto)       cmd_goto "$@" ;;
@@ -3670,6 +3872,7 @@ main() {
                   tx set-option -p -t "$TMUX_PANE" -u "$o" 2>/dev/null || true
                 done
                 rm -f "$AF_CACHE_DIR/panes/$TMUX_PANE.task" "$AF_CACHE_DIR/panes/$TMUX_PANE.session" "$AF_CACHE_DIR/panes/$TMUX_PANE.turns" 2>/dev/null
+                af_event "$TMUX_PANE" released
                 exit 0 ;;
     # Internal: restore's relaunch shim for container-rung tasks.
     _container-resume) cmd_container_resume "$@" ;;
