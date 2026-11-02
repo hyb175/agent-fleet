@@ -2982,18 +2982,23 @@ consumption receipt. Prints one line of key=value fields:
                --status re-evaluates; a late receipt can still confirm it      exit 5
   busy         the agent is mid-turn: nothing sent, queue it and retry           exit 3
   refused      nothing sent; reason says why (waiting_on_input → use answer,
+               human_active: a client typed into, attached to or switched to
+               the pane's session less than --idle seconds ago (default 2) —
+               a paste would merge with their typing, so retry;
                no_receipt_channel, stale, remote, no_pane, unknown_op)           exit 1
-  payload conflict: the same --op with different text; nothing sent             exit 2
+  conflict     the same --op with different text (payload_conflict) or for a
+               different pane (target_conflict); nothing sent                   exit 2
 
   --op <id>    caller operation id ([A-Za-z0-9._-]). Replaying it reports the
-               recorded outcome and never types again; the same id with other
-               text is a payload conflict (exit 2).
+               recorded outcome and never types again; concurrent retries
+               share one paste (the loser waits on the winner's record).
   --fp <sum>   refuse unless the pane still matches this fingerprint (answer <pane> fp).
+  --idle <s>   required seconds since the last human keystroke in the session.
   --status     re-read a past operation (after a crash or a lost response).
 
 Intent is journaled under \$XDG_STATE_HOME/agent-fleet/<socket>/deliveries/<op>
-BEFORE anything is typed; the record names the pane and its session id, and a
-receipt counts only when the pane still holds that session.
+BEFORE anything is typed (claimed atomically); the record names the pane and
+its session id, and a receipt counts only when the pane still holds that session.
 Multi-line text is pasted bracketed; control characters other than newline and
 tab are rejected. Receipts exist for hooked claude panes only; other agents are
 refused (no_receipt_channel) rather than typed into blind.
@@ -3041,8 +3046,7 @@ send_status() {  # <record> -> prints "op=… status=… …"; returns the statu
       st="unconfirmed"; pid=""; reason="recipient_changed"
     fi
     if [[ "$st" == "consumed" ]]; then
-      af_now; printf 'consumed %s %s\n' "$AF_NOW" "$pid" >> "$f"
-      af_event "$pane" delivery "$op" consumed "$pid"
+      [[ -n "${SEND_READONLY:-}" ]] || { af_now; printf 'consumed %s %s\n' "$AF_NOW" "$pid" >> "$f"; af_event "$pane" delivery "$op" consumed "$pid"; }
     elif [[ -n "$SEND_WAITING" ]]; then
       st="submitted"
     elif [[ -n "$other" && -z "$reason" ]]; then
@@ -3054,21 +3058,49 @@ send_status() {  # <record> -> prints "op=… status=… …"; returns the statu
   if [[ "$st" == "consumed" ]]; then
     if grep -q '^ended ' "$f" 2>/dev/null; then st="turn_ended"
     elif grep -q "^e [0-9]* $pid\$" "$AF_CACHE_DIR/panes/$pane.turns" 2>/dev/null; then
-      af_now; printf 'ended %s\n' "$AF_NOW" >> "$f"; st="turn_ended"
-      af_event "$pane" delivery "$op" turn_ended "$pid"
+      st="turn_ended"
+      [[ -n "${SEND_READONLY:-}" ]] || { af_now; printf 'ended %s\n' "$AF_NOW" >> "$f"; af_event "$pane" delivery "$op" turn_ended "$pid"; }
     fi
   fi
   printf 'op=%s status=%s pane=%s%s%s\n' "$op" "$st" "$pane" "${pid:+ prompt_id=$pid}" "${reason:+ reason=$reason}"
   case "$st" in consumed|turn_ended) return 0 ;; mismatch) return 5 ;; refused) return 1 ;; *) return 4 ;; esac
 }
 
+# Poll a record until it is final or the deadline passes, then print and exit.
+send_wait() {  # <record> <deadline-SECONDS>
+  local f="$1" out rc
+  while :; do
+    SEND_WAITING=1; (( SECONDS >= $2 )) && SEND_WAITING=""
+    grep -q '^failed ' "$f" 2>/dev/null && SEND_WAITING=""
+    out="$(send_status "$f")" && rc=0 || rc=$?
+    case "$out" in *status=submitted*) ;; *) break ;; esac
+    sleep 0.2
+  done
+  printf '%s\n' "$out"; exit "$rc"
+}
+
+# The op already has a record: report it, never type again. A concurrent
+# retry that lost the claim waits here for the winner's receipt instead of
+# pasting a second copy.
+send_replay() {  # <record> <pane> <sha> <wait>
+  local f="$1" rp c; rp="$(send_field "$f" pane)"
+  [[ "$rp" == "$2" ]] || { printf 'op=%s status=refused pane=%s reason=target_conflict\n' "$op" "$rp"; exit 2; }
+  [[ "$(send_field "$f" sha)" == "$3" ]] || { printf 'op=%s status=refused pane=%s reason=payload_conflict\n' "$op" "$rp"; exit 2; }
+  c="$(send_field "$f" created)"; af_now
+  if [[ "$c" =~ ^[0-9]+$ ]] && (( AF_NOW - c < $4 )) && ! grep -Eq '^(consumed|failed) ' "$f" 2>/dev/null; then
+    send_wait "$f" $(( SECONDS + $4 ))
+  fi
+  send_status "$f" && exit 0 || exit $?
+}
+
 cmd_send() {
-  local target="" text="" op="" fp="" wait=15 status_op="" have_text=""
+  local target="" text="" op="" fp="" wait=15 idle=2 status_op="" have_text=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --op)      op="${2:?error: --op needs an id}"; shift 2 ;;
       --fp)      fp="${2:?error: --fp needs a checksum}"; shift 2 ;;
       --wait)    wait="${2:?error: --wait needs seconds}"; shift 2 ;;
+      --idle)    idle="${2:?error: --idle needs seconds}"; shift 2 ;;
       --status)  status_op="${2:?error: --status needs an op id}"; shift 2 ;;
       -h|--help) usage_send; return 0 ;;
       -*) echo "error: unexpected arg: $1" >&2; usage_send >&2; exit 2 ;;
@@ -3088,7 +3120,7 @@ cmd_send() {
   [[ -n "$target" && -n "$have_text" ]] || { usage_send >&2; exit 2; }
   [[ -n "$text" ]] || { echo "error: empty text" >&2; exit 2; }
   [[ -z "$op" || "$op" =~ ^[A-Za-z0-9._-]{1,128}$ ]] || { echo "error: --op must match [A-Za-z0-9._-]{1,128}" >&2; exit 2; }
-  [[ "$wait" =~ ^[0-9]+$ ]] || { echo "error: --wait needs whole seconds" >&2; exit 2; }
+  [[ "$wait" =~ ^[0-9]+$ && "$idle" =~ ^[0-9]+$ ]] || { echo "error: --wait/--idle need whole seconds" >&2; exit 2; }
   local probe="${text//[$'\n\t']/}"
   [[ "$probe" == *[[:cntrl:]]* ]] && { echo "error: text has control characters (only newline and tab are allowed)" >&2; exit 2; }
 
@@ -3104,12 +3136,7 @@ cmd_send() {
   local sha="$AF_SHA" now
   if [[ -z "$op" ]]; then af_now; op="d$AF_NOW-$$-${pane#%}"; fi
   local f="$dir/$op"
-  if [[ -f "$f" ]]; then
-    if [[ "$(send_field "$f" sha)" != "$sha" ]]; then
-      printf 'op=%s status=refused pane=%s reason=payload_conflict\n' "$op" "$(send_field "$f" pane)"; exit 2
-    fi
-    send_status "$f" && exit 0 || exit $?     # replay: report, never type again
-  fi
+  [[ -f "$f" ]] && send_replay "$f" "$pane" "$sha" "$wait"
 
   # Only a hooked claude or codex pane can hand back a consumption receipt
   # (their UserPromptSubmit payloads were proved); everything else is refused
@@ -3130,7 +3157,16 @@ cmd_send() {
   if [[ -n "$fp" ]]; then
     [[ "$(answer_fp "$pane")" == "$fp" ]] || refuse stale
   fi
-  ppid="$(tx display-message -p -t "$pane" '#{pane_pid}' 2>/dev/null || true)"
+  # A human typing into the pane would merge with the paste. tmux stamps
+  # session_activity on client input, attach and switch-client only (never on
+  # send-keys/paste, proved), and it equals session_created until a client
+  # has touched the session. Text left in the composer longer than --idle ago
+  # is still only caught by the receipt hash.
+  local act created
+  read -r act created ppid < <(tx display-message -p -t "$pane" '#{session_activity} #{session_created} #{pane_pid}' 2>/dev/null || echo '0 0 -')
+  af_now
+  if [[ "$act" =~ ^[0-9]+$ && "$act" != "$created" ]] && (( AF_NOW - act < idle )); then refuse human_active; fi
+  [[ -f "$f" ]] && send_replay "$f" "$pane" "$sha" "$wait"   # a racer may have claimed it during the gates
 
   # Intent before effect: the journal exists before any keystroke, and it
   # pins where the pane's receipt log ended, so only later receipts count.
@@ -3141,7 +3177,15 @@ cmd_send() {
   {
     printf 'op %s\npane %s\nsession %s\npid %s\nkind %s\nsha %s\nchars %s\ncreated %s\nturns_at %s\n' \
       "$op" "$pane" "$sess" "${ppid:--}" "$kind" "$sha" "${#text}" "$now" "${toff:-0}"
-  } > "$f" || { echo "error: cannot journal $f" >&2; exit 1; }
+  } > "$f.$$" || { echo "error: cannot journal $f" >&2; exit 1; }
+  # ln claims the op atomically: of two concurrent sends with the same op,
+  # exactly one pastes and the other waits on its record.
+  if ! ln "$f.$$" "$f" 2>/dev/null; then
+    rm -f "$f.$$"
+    [[ -f "$f" ]] || { echo "error: cannot journal $f" >&2; exit 1; }
+    SEND_READONLY=1; send_replay "$f" "$pane" "$sha" "$wait"   # the claim holder writes the record
+  fi
+  rm -f "$f.$$"
   # Always a bracketed paste, then Enter as its own key after a beat: a raw
   # keystroke burst submits at the first newline (claude) or swallows the
   # Enter that follows it (codex); the paste terminator ends the burst.
@@ -3157,15 +3201,7 @@ cmd_send() {
   fi
   printf 'submitted %s\n' "$AF_NOW" >> "$f"
   af_event "$pane" delivery "$op" submitted
-
-  local deadline=$(( SECONDS + wait )) out rc
-  while :; do
-    SEND_WAITING=1; (( SECONDS >= deadline )) && SEND_WAITING=""
-    out="$(send_status "$f")" && rc=0 || rc=$?
-    case "$out" in *status=submitted*) ;; *) break ;; esac
-    sleep 0.2
-  done
-  printf '%s\n' "$out"; exit "$rc"
+  send_wait "$f" $(( SECONDS + wait ))
 }
 
 # capabilities — what THIS install can honestly do for a machine caller,

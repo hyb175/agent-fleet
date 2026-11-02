@@ -153,7 +153,7 @@ Conclusions the protocol is built on:
 ### Protocol
 
 ```
-agent-fleet send <task-id|%pane> "<text>" [--op <id>] [--fp <sum>] [--wait <secs>]
+agent-fleet send <task-id|%pane> "<text>" [--op <id>] [--fp <sum>] [--wait <secs>] [--idle <secs>]
 agent-fleet send --status <op>
 → op=<id> status=<s> pane=%N [prompt_id=<P>] [reason=<r>]
 ```
@@ -165,8 +165,21 @@ agent-fleet send --status <op>
 | `unconfirmed` | 4 | no matching receipt within `--wait`; re-read later with `--status`. Reasons: `recipient_changed` (the pane holds another session), `send_failed` (tmux refused mid-send; text may sit in the input box), `unknown` (the journal never reached `submitted`: the sender died mid-keystroke) |
 | `mismatch` | 5 | prompts were consumed after the journal but none is this text: it merged with typing or another prompt went first. Not final: `--status` re-evaluates and a later matching receipt confirms it. Never resent. |
 | `busy` | 3 | status file (fresher than the snapshot) says `working`: nothing typed, no journal; the caller queues and retries |
-| `refused` | 1 | nothing typed. Reasons: `waiting_on_input` (use `answer`), `no_receipt_channel`, `stale`, `remote`, `no_pane`, `unknown_op` |
-| payload conflict | 2 | `--op` reused with different text; nothing typed |
+| `refused` | 1 | nothing typed. Reasons: `waiting_on_input` (use `answer`), `human_active` (a client keystroke reached the pane's tmux session less than `--idle` seconds ago, default 2; retry), `no_receipt_channel`, `stale`, `remote`, `no_pane`, `unknown_op` |
+| conflict | 2 | `--op` reused with different text (`payload_conflict`) or for a different pane (`target_conflict`, `pane=` names the original); nothing typed |
+
+The journal is claimed atomically (`ln` of a temp file): of two concurrent
+sends with the same `--op`, exactly one pastes and the other waits on the
+winner's record (read-only, so the record and the events stream get one
+`consumed` line) and reports its receipt. A replay of any record younger
+than `--wait` that is not yet final waits the same way the original call
+did; `--status` never waits. The `human_active` gate reads
+`#{session_activity}`, which tmux stamps on client input, `attach` and
+`switch-client` (never on `send-keys`/`paste-buffer`, verified on tmux 3.6)
+and which equals `#{session_created}` until a client has touched the session;
+fleet's own `go`/`focus` navigation therefore counts as a human for `--idle`
+seconds. Text left in the composer earlier than `--idle` is still caught
+only after the fact, by the hash (`mismatch`).
 
 Journal `AF_STATE_DIR/deliveries/<op>` (key-value lines, written **before**
 any keystroke): `op pane session pid kind sha chars created turns_at`, then

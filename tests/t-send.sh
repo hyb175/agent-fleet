@@ -78,8 +78,39 @@ check "…and typed nothing again" "[[ \$(wc -l < '$WORK/a.out') -eq 1 ]]"
 out="$(af send "$ap" "something else" --op op1 --wait 10)"; rc=$?
 check "same op, other text: payload conflict (rc=$rc)" "[[ $rc -eq 2 ]] && grep -q 'reason=payload_conflict' <<<\"\$out\""
 check "…nothing typed" "[[ \$(wc -l < '$WORK/a.out') -eq 1 ]]"
+out="$(af send "$bp" "$msg" --op op1 --wait 10)"; rc=$?
+check "same op, other pane: target conflict naming the original pane (rc=$rc): $out" \
+  "[[ $rc -eq 2 ]] && grep -q 'status=refused pane=$ap reason=target_conflict' <<<\"\$out\""
+check "…nothing typed into the other pane" "[[ ! -s '$WORK/b.out' ]]"
 
-# --- mismatch: half-typed human input merges with the delivery ---
+# --- concurrent retries with one op: exactly one paste, both see the receipt ---
+af send "$ap" "race me" --op op11 --wait 10 > "$WORK/r1.out" & r1=$!
+af send "$ap" "race me" --op op11 --wait 10 > "$WORK/r2.out" & r2=$!
+wait "$r1"; rc1=$?; wait "$r2"; rc2=$?
+check "both racers report the delivery (rc=$rc1/$rc2): $(cat "$WORK/r1.out" "$WORK/r2.out" | tr '\n' ' ')" \
+  "[[ $rc1 -eq 0 && $rc2 -eq 0 ]] && grep -q 'prompt_id=p2' '$WORK/r1.out' && grep -q 'prompt_id=p2' '$WORK/r2.out'"
+check "…and the agent received the text exactly once" "[[ \$(grep -c '^race me$' '$WORK/a.out') -eq 1 ]]"
+check "…one claim holder wrote the record once" "[[ \$(grep -c '^consumed ' '$STATE/deliveries/op11') -eq 1 ]]"
+wait_for 5 "grep -q '^e [0-9]* p2$' '$CACHE/panes/$ap.turns'"
+
+# --- a human typing into the session: refused before anything is pasted ---
+hw="$(tx new-window -P -F '#{window_id}' -t t: 'cat')"      # current window: keystrokes land here
+hc="$(tx new-window -d -P -F '#{pane_id}' -t t: "env -u TMUX tmux -L '$SOCK' attach -t t")"
+wait_for 5 "[[ \$(tx list-clients -t t | wc -l) -ge 1 ]]"
+# attaching stamps the activity clock too; let that age out so the refusal below proves the keystroke
+wait_for 5 "(( \$(date +%s) - \$(tx display-message -p -t $ap '#{session_activity}') >= 2 ))"
+tx send-keys -t "$hc" 'z'; sleep 0.3
+out="$(af send "$ap" "over a human" --op op12 --wait 2)"; rc=$?
+check "keystrokes from a client refuse the send (rc=$rc): $out" "[[ $rc -eq 1 ]] && grep -q 'status=refused pane=$ap reason=human_active' <<<\"\$out\""
+check "…nothing journaled, nothing typed" "[[ ! -e '$STATE/deliveries/op12' && \$(wc -l < '$WORK/a.out') -eq 2 ]]"
+out="$(af send "$ap" "over a human" --op op12 --wait 2 --idle 0)"; rc=$?
+check "--idle 0 waives the gate (rc=$rc): $out" "[[ $rc -eq 0 ]] && grep -q 'prompt_id=p3' <<<\"\$out\""
+tx kill-window -t "$hc"; tx kill-window -t "$hw"
+wait_for 5 "grep -q '^e [0-9]* p3$' '$CACHE/panes/$ap.turns'"
+
+# --- mismatch: half-typed human input (older than --idle, so the activity
+# gate cannot see it) merges with the delivery ---
+sleep 2.1
 tx send-keys -t "$ap" -l -- 'half typed '
 sleep 0.3
 out="$(af send "$ap" "Reply BETA" --op op2 --wait 2)"; rc=$?
@@ -89,7 +120,7 @@ out="$(af send --status op2)"; rc=$?
 check "--status keeps mismatch (rc=$rc)" "[[ $rc -eq 5 ]]"
 # mismatch is reported at the UserPromptSubmit receipt; let that turn's Stop
 # land before the status-file manipulation below.
-wait_for 5 "grep -q '^e [0-9]* p2$' '$CACHE/panes/$ap.turns'"
+wait_for 5 "grep -q '^e [0-9]* p4$' '$CACHE/panes/$ap.turns'"
 
 # --- busy / waiting: nothing sent. The snapshot (a tick stale) says done;
 # the hook-written status file says working — the fresher file wins.
@@ -97,7 +128,7 @@ printf 'T %s 1\nA ws|@1|1|a|%s|claude|done|1|-|x\n' "$(date +%s)" "$ap" > "$CACH
 printf 'working\n' > "$CACHE/panes/$ap.status"
 out="$(af send "$ap" "while busy" --op op3)"; rc=$?
 check "busy agent: status=busy, rc 3 (got $rc): $out" "[[ $rc -eq 3 ]] && grep -q 'status=busy' <<<\"\$out\""
-check "…no journal, nothing typed" "[[ ! -e '$STATE/deliveries/op3' && \$(wc -l < '$WORK/a.out') -eq 2 ]]"
+check "…no journal, nothing typed" "[[ ! -e '$STATE/deliveries/op3' && \$(wc -l < '$WORK/a.out') -eq 4 ]]"
 printf 'T %s 1\n' "$(date +%s)" > "$CACHE/fleet.snapshot"
 printf 'wait\n' > "$CACHE/panes/$ap.status"
 out="$(af send "$ap" "while waiting" --op op4)"; rc=$?
