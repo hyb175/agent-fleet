@@ -94,5 +94,11 @@ for _ in $(seq 1 25); do
   sleep 0.3
 done
 check "hand-typed claude resolves to the shim" "[[ $ok -eq 1 && \"\$(cat '$WORK/which_claude')\" == '$REPO/shims/claude' ]]"
+# tmux itself runs commands under sh (no login-shell config load per popup or
+# pane), yet the shell pane is the login shell and sees it as SHELL.
+check "fleet commands run under sh" "[[ \"\$(tx show -gv default-shell)\" == /bin/sh ]]"
+tx send-keys -t "$np" "echo \$SHELL > $WORK/pane_shell" Enter
+poll_until 8 "[[ -s '$WORK/pane_shell' ]]"
+check "shell pane still gets the login shell as SHELL" "[[ \"\$(cat '$WORK/pane_shell')\" == '${SHELL}' ]]"
 rm -rf "$FAKEBIN"
 exit "$FAIL"

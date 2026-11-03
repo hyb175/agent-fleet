@@ -24,7 +24,10 @@
 set -u
 
 ROOT="${AGENT_FLEET_ROOT:-}"
-_shell="${SHELL:-/bin/sh}"
+# The conf pins default-shell to sh (so tmux overwrote SHELL); the login
+# shell arrives as AGENT_FLEET_LOGIN_SHELL and is handed back as SHELL.
+_shell="${AGENT_FLEET_LOGIN_SHELL:-${SHELL:-/bin/sh}}"
+export SHELL="$_shell"
 _shell_args=(-l)
 
 if [[ "${AGENT_FLEET_SHIM:-1}" == "1" && -n "$ROOT" && -d "$ROOT/shims" ]]; then
