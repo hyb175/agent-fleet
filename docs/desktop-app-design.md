@@ -5,7 +5,8 @@ live terminal, the attention queue, and the event stream, arranged in views the
 user builds and edits in place. It is a client of the fleet, not a second fleet.
 State, guards and lifecycle stay in `agent-fleet`; the app renders them.
 
-Status: design, 2026-11-04. Nothing here is built yet. The proofs marked
+Status: design, 2026-11-04; first light 2026-11-05 (P7: `desktop/` opens one
+read-only tile over a live pane on macOS and Linux). The proofs marked
 **done** were run on tmux 3.6a (Linux) while writing this document. The UI is
 native GPUI from the first milestone (D1); an earlier draft used a Tauri webview.
 
@@ -561,7 +562,7 @@ installed, mirroring `Prefix g` for `desk`.
 | P4 | After seeding from `capture-pane` plus replayed mode flags, do mouse, keypad and bracketed paste behave as in a real attach, for claude and codex? | open |
 | P5 | Do `refresh-client -A '%N:off'` and `-f pause-after=` behave as documented on tmux 3.2 to 3.6? | **partly done**: on 3.6a, `-A %N:off` stopped that pane's `%output` completely and `on` resumed it; `#{client_control_mode}` reads `1` for the app's client. With `-f pause-after=1` and a reader stalled for 2 s on a flooding pane, output switched to `%extended-output %N <age-ms>`, tmux sent `%pause %N`, and its RSS stayed at 6 MB, so a slow app cannot make tmux buffer without bound. Open: versions before 3.6. |
 | P6 | What happens when a normal client and the app share a window? | **done**: the control client's size wins until it detaches; hence the rule in 5.2. |
-| P7 | Does a `gpui-kit` hello window with one terminal tile build and run on macOS, then from a `nix-shell` on NixOS (Wayland and X11)? | open. macOS first: the build and headless tests on CI's `macos-latest`, the window on a real Mac. Pins the GPUI revision, the Xcode/SDK version, and the Nix native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig). |
+| P7 | Does a `gpui-kit` hello window with one terminal tile build and run on macOS, then from a `nix-shell` on NixOS (Wayland and X11)? | **done except Wayland and a real Mac**: `desktop/` (`fleet-tmux`, `term`, `app`) on `gpui-kit` 0.8.0, which pins `gpui-pre` 0.3.9 (zed@93d7456), built with Rust 1.98.1 (`desktop/rust-toolchain.toml`, Zed's pin at that snapshot; nixpkgs' 1.92 is too old). On CI's `macos-26-arm64` image the workspace tests pass and the window opens on the runner's GUI session (Metal, shaders compiled at build time with the image's Xcode), seeding a scratch pane and then showing live output. On NixOS, `desktop/shell.nix` supplies the native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig, freetype) and the same window rendered under Xvfb with Mesa's lavapipe Vulkan. Open: a Wayland session and a real Mac. |
 | P8 | With Neovim in a pane and only a control client attached, does tmux deliver focus in/out to the pane when the app switches the active pane, and report `%paste-buffer-changed` after an OSC 52 yank? | **done** (tmux 3.6a, Neovim 0.11.5): `select-pane` between two panes of one window fired Neovim's `FocusLost` and `FocusGained`, and so did `send-keys -H 1b 5b 4f` / `1b 5b 49` with no client involved; with `set-clipboard on`, an OSC 52 write created `buffer0` and the control client got `%paste-buffer-changed buffer0`. With tmux's default `external`, which the fleet runs today, no buffer is created (F6). |
 
 ### 12.1 Early performance
