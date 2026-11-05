@@ -95,17 +95,21 @@ poll_until 10 settled
 : > "$RESIZED"
 p1="$(env -u TMUX "$AF" add one --to s3 --cmd 'sleep 300')"
 w1="$(tx display-message -p -t "$p1" '#{window_id}')"
-check "add (no --focus, TMUX unset): 110x31 with a 30-col rail on return" \
-  "[[ \"\$(tx display-message -p -t '$w1' '#{window_width}x#{window_height}')\" == 110x31 ]] && rails_ok s3"
+check "add (no --focus, TMUX unset): 110x31 on return" \
+  "[[ \"\$(tx display-message -p -t '$w1' '#{window_width}x#{window_height}')\" == 110x31 ]]"
 env -u TMUX "$AF" add two --new-workspace s4 --cmd "sleep 300" >/dev/null
-check "add --new-workspace: 110x31 with a 30-col rail on return" "[[ \"\$(wsize s4)\" == '110x31 ' ]] && rails_ok s4"
+check "add --new-workspace: 110x31 on return" "[[ \"\$(wsize s4)\" == '110x31 ' ]]"
+# The rail comes from an after-new-window hook that add does not wait on.
+poll_until 10 "rails_ok s3 && rails_ok s4"
+check "once quiet, both adds have a 30-col rail" "rails_ok s3 && rails_ok s4"
 born=""
 for i in 1 2 3; do
   pb="$(env -u TMUX "$AF" add "b$i" --to s3 --cmd 'sleep 300')"
   wb="$(tx display-message -p -t "$pb" '#{window_id}')"; born="$born $wb"
   check "back-to-back add $i is 110x31 as soon as add returns" "[[ \"\$(tx display-message -p -t '$wb' '#{window_width}x#{window_height}')\" == 110x31 ]]"
 done
-check "three back-to-back adds have rails" "rails_ok s3"
+poll_until 10 "rails_ok s3"
+check "three back-to-back adds have rails once quiet" "rails_ok s3"
 sleep 1; poll_until 10 settled
 n=0; for w in $w1 $born $(tx list-windows -t =s4 -F '#{window_id}'); do n=$(( n + $(nresized "$w") )); done
 check "once quiet, no spawned window was ever resized (count $n)" "[[ $n -eq 0 ]]"
