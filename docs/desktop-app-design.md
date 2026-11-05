@@ -6,7 +6,8 @@ user builds and edits in place. It is a client of the fleet, not a second fleet.
 State, guards and lifecycle stay in `agent-fleet`; the app renders them.
 
 Status: design, 2026-11-04. Nothing here is built yet. The proofs marked
-**done** were run on tmux 3.6a (Linux) while writing this document.
+**done** were run on tmux 3.6a (Linux) while writing this document. The UI is
+native GPUI from the first milestone (D1); an earlier draft used a Tauri webview.
 
 ---
 
@@ -73,16 +74,19 @@ states, notifications, a socket API and CLI.
 
 ```
 ┌──────────────────────── Fleet Desktop (one process) ─────────────────────────┐
-│ webview (TS)                     │ Rust core                                 │
+│ app (GPUI)                       │ core (no UI types)                        │
 │  views / tiles / customize UI    │  fleet-core                               │
-│  xterm.js per terminal tile  ◄───┤   snapshot reader (file watch + poll)     │
-│  rail, inbox, events widgets     │   events tail  (agent-fleet events)       │
-│                                  │   verb runner  (agent-fleet <verb>, k=v)  │
+│  terminal element per tile   ◄───┤   snapshot reader (file watch + poll)     │
+│   paints term's grid             │   events tail  (agent-fleet events)       │
+│  rail, inbox, events widgets     │   verb runner  (agent-fleet <verb>, k=v)  │
 │                                  │   capabilities gate                       │
 │                                  │  fleet-tmux                               │
 │                                  │   one control-mode client per workspace   │
 │                                  │   %output → per-pane byte channel         │
 │                                  │   keys → send-keys -H, resize → refresh-c │
+│                                  │  term                                     │
+│                                  │   alacritty_terminal Term per tile        │
+│                                  │   key/mouse encoding from the Term's modes│
 │                                  │  views                                    │
 │                                  │   TOML load/save (toml_edit), hot reload  │
 └──────────────┬───────────────────┴───────────────┬───────────────────────────┘
@@ -90,23 +94,31 @@ states, notifications, a socket API and CLI.
      $AF_CACHE_DIR/fleet.snapshot          agent-fleet …   tmux -L agent-fleet -C
 ```
 
-**Process model.** One app process. The Rust core owns all I/O; the webview only
-renders and sends intents (`focus tile`, `keys`, `answer approve`, `save view`).
-Terminal bytes travel to the webview over a Tauri channel per tile, not as JSON
-events, so a busy agent does not serialize through the event bus.
+**Process model.** One process, no IPC between UI and core. Each control client
+runs on a reader thread that parses lines and feeds `%output` bytes into its
+panes' `Term`s; the GPUI view of a tile is notified once per frame at most and
+paints the `Term`'s grid directly. The UI sends intents to the core
+(`focus tile`, `keys`, `answer approve`, `save view`) as plain method calls.
 
 **Crates** (a `desktop/` Cargo workspace next to `ui/`):
 
 | crate | does | depends on |
 | --- | --- | --- |
-| `fleet-core` | snapshot parser, events cursor loop, verb runner and `key=value` status parser, capabilities | std, `notify`, `tokio` (process) |
-| `fleet-tmux` | control-mode client: line protocol, `%output` octal unescape, `%begin/%end` command replies, `%layout-change`, `%exit`; seeding, keys, resize | `tokio` |
+| `fleet-core` | snapshot parser, events cursor loop, verb runner and `key=value` status parser, capabilities | std, `notify` |
+| `fleet-tmux` | control-mode client: line protocol, `%output` octal unescape, `%begin/%end` command replies, `%layout-change`, `%exit`; seeding, keys, resize | std |
+| `term` | a `Term` per tile, seeded and fed by `fleet-tmux`; keys, mouse and paste encoded from the `Term`'s mode flags; selection and scrollback | `alacritty_terminal` |
 | `views` | view and settings schema, validation, `toml_edit` round trip | `serde`, `toml_edit` |
-| `app` | Tauri 2 shell: commands, channels, window menu, notifications, tray | `tauri`, plugins `notification`, `single-instance` |
+| `app` | GPUI window, tile grid, terminal element, rail, inbox, palette, Customize editor, notifications | `gpui-kit` (re-exports a pinned `gpui`), `notify-rust` |
 
-The webview is plain TypeScript with `xterm.js` (WebGL renderer) and no framework
-beyond what the customize editor needs. The Rust core is UI-agnostic, so the
-frontend can be replaced without touching the hard parts (see D1).
+The library crates use std threads and channels, no async runtime; `app` runs
+their blocking calls on GPUI's background executor. They have no GPUI types,
+so they test with plain `cargo test` and stay usable by a future CLI or TUI.
+
+The terminal element starts from `gpui-terminal` (0.1, MIT/Apache-2.0, built on
+`alacritty_terminal`, takes any byte streams instead of a PTY), vendored into
+`app` and extended with what it lacks: selection, scrollback navigation, mouse
+reporting and bracketed paste. Zed's own `terminal` and `terminal_view` crates
+are the reference for those but are GPL-3.0, so their code is not copied.
 
 ---
 
@@ -153,19 +165,21 @@ iTerm2 uses for its tmux integration:
   such tile goes away. Panes in that workspace that no tile shows are muted
   with `refresh-client -A '%N:off'` and re-enabled with `on` plus a re-seed
   when they become visible (P5).
-- **Seeding.** A tile that starts showing a pane first draws its current
-  screen: `capture-pane -p -e -J -S -<scrollback> -t %N` (with `-a` when
-  `#{alternate_on}` is set), then cursor position from `#{cursor_x}` and
+- **Seeding.** A tile that starts showing a pane first feeds its `Term` the
+  current screen: `capture-pane -p -e -J -S -<scrollback> -t %N` (with `-a`
+  when `#{alternate_on}` is set), then cursor position from `#{cursor_x}` and
   `#{cursor_y}`, then the mouse and keypad modes tmux reports
   (`#{mouse_any_flag}`, `#{mouse_sgr_flag}`, `#{keypad_cursor_flag}`, …)
-  replayed as DECSET sequences, so xterm.js encodes mouse and keys the way the
-  agent expects (P4). Live `%output` is buffered from the moment the capture
-  is requested and applied after it.
-- **Keys.** xterm.js `onData` bytes go out as `send-keys -H -t %N <hex …>`,
-  batched per animation frame. **Paste** goes through `load-buffer` +
+  replayed as DECSET sequences, so the `Term`'s mode flags, and with them the
+  key and mouse encoding, match what the agent expects (P4). Live `%output` is
+  buffered from the moment the capture is requested and applied after it.
+- **Keys.** GPUI key and mouse events are encoded by `term` against the tile's
+  `Term` modes and go out as `send-keys -H -t %N <hex …>`, batched per frame.
+  **Paste** goes through `load-buffer` +
   `paste-buffer -p -d`, which lets tmux bracket the paste only if the pane asked
   for bracketed paste, the same transport `send` uses.
-- **Resize.** A tile's cell size is sent as `refresh-client -C @<window>:<cols>x<rows>`
+- **Resize.** A tile's pixel size divided by the font's cell metrics is sent as
+  `refresh-client -C @<window>:<cols>x<rows>`, and the `Term` resized to match
   (**P1 done**: two windows of one session held 80x20 and 50x12 at the same
   time from one control client). Fleet agents are one pane per window, so the
   window size is the pane size.
@@ -324,7 +338,9 @@ any tile's context menu (opens with that tile selected), or
 The app takes a copy of the view file's text on entry; Cancel restores it
 exactly, and the editor keeps an undo stack (`Ctrl-z` / `Ctrl-Shift-z`) inside
 the session. Agents stay live the whole time: terminals keep streaming, they
-just stop taking keys.
+just stop taking keys. The editor's forms, dropdowns, lists and tabs are
+`gpui-kit` components; tile dragging uses GPUI's own drag and drop, the same
+mechanism Zed's tabs and panes use.
 
 ```
 ┌ Customize: Triage ──────────────────────────── [Undo] [Cancel] [Save ▾] ┐
@@ -438,14 +454,18 @@ installed, mirroring `Prefix g` for `desk`.
   (the probes in section 5 produce them); an integration test on a scratch
   tmux socket with the fake hooked agent from `tests/t-send.sh`: seed, stream,
   type, resize, mute, reconnect.
+- `term`: recorded `%output` transcripts (including a claude redraw) fed into a
+  `Term`, asserting grid text and cursor; key and mouse encoding per mode flag
+  against fixed byte strings.
 - `views`: schema round trip (load → save → byte-identical for an unchanged
   file, comments kept), validation cases, binding resolution and the
   sticky/hold rules on synthetic snapshots.
-- End to end: WebDriver (`tauri-driver`) runs the Customize flow on a scratch
-  fleet: duplicate a preset, add a tile, bind it, save, reload, assert the file
-  and the screen.
-- CI: a `desktop` job on Linux and macOS running `cargo test` for the three
-  library crates; the WebDriver job on Linux only.
+- End to end: `#[gpui::test]` with GPUI's headless test context drives the
+  Customize flow on a scratch fleet: duplicate a preset, add a tile, bind it,
+  save, reload, assert the file and the tile tree. Simulated keystrokes and
+  drags, no window server.
+- CI: a `desktop` job on Linux and macOS running `cargo test` for the whole
+  workspace, end-to-end tests included.
 
 ---
 
@@ -453,10 +473,10 @@ installed, mirroring `Prefix g` for `desk`.
 
 | | Scope | Done when |
 | --- | --- | --- |
-| M0 | Remaining proofs: P3, P4, P5 | each recorded in this doc with versions, like the runtime contract's proofs |
+| M0 | Remaining proofs: P3, P4, P5, P7 | each recorded in this doc with versions, like the runtime contract's proofs |
 | M1 | Read-only: rail, one terminal tile (no input), inbox, events toasts, staleness | a cold-booted fleet displays in the app with every state glyph correct against the snapshot fixtures |
-| M2 | Interactive: keys, paste, mouse, resize with size ownership, answer, send, interrupt, kill, spawn, palette; F1, F4 | the agent-fleet flows in `t-send.sh` pass when driven from the app |
-| M3 | Views and the Customize workflow; presets; F2, F3 | the WebDriver customize test passes, and a hand-edited view reloads live |
+| M2 | Interactive: keys, paste, mouse, selection, scrollback, resize with size ownership, answer, send, interrupt, kill, spawn, palette; F1, F4 | the agent-fleet flows in `t-send.sh` pass when driven from the app |
+| M3 | Views and the Customize workflow; presets; F2, F3 | the headless customize test passes, and a hand-edited view reloads live |
 | M4 | Notifications, onboarding, packaging (Nix flake output, `.app`, `.deb`/AppImage) | installs and runs on both platforms from CI artifacts |
 
 ---
@@ -467,21 +487,26 @@ installed, mirroring `Prefix g` for `desk`.
 | --- | --- | --- |
 | P1 | Can one control client hold different sizes for two windows? | **done**: `refresh-client -C @0:80x20` and `@1:50x12` held together (tmux 3.6a). |
 | P2 | Which panes does `%output` cover? | **done**: every window of the attached session, current or not; nothing from other sessions. |
-| P3 | Does xterm.js (WebGL) in WebKitGTK keep up with a claude redraw storm across 6 tiles? | open. Fallback: the canvas renderer, then D1's alternative frontend. |
+| P3 | Does the GPUI terminal element keep up with a claude redraw storm across 6 tiles at 60 fps? | open. Zed's terminal, GPUI over `alacritty_terminal`, is the existence proof; this checks our element and our per-frame batching. |
 | P4 | After seeding from `capture-pane` plus replayed mode flags, do mouse, keypad and bracketed paste behave as in a real attach, for claude and codex? | open |
 | P5 | Do `refresh-client -A '%N:off'` and `-f pause-after=` behave as documented on tmux 3.2 to 3.6? | **partly done**: on 3.6a, `-A %N:off` stopped that pane's `%output` completely and `on` resumed it; `#{client_control_mode}` reads `1` for the app's client. Open: `pause-after`, and versions before 3.6. |
 | P6 | What happens when a normal client and the app share a window? | **done**: the control client's size wins until it detaches; hence the rule in 5.2. |
+| P7 | Does a `gpui-kit` hello window build and run from a `nix-shell` on NixOS (Wayland and X11) and on macOS? | open. Pins the GPUI revision, the Nix native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig) and the macOS SDK the build needs. |
 
 ---
 
 ## 13. Decisions
 
-**D1. Tauri 2 with an xterm.js webview, not a native Rust UI.** xterm.js is the
-most exercised terminal renderer available (VS Code), and the Customize editor
-is mostly drag-and-drop, forms and color pickers, which the webview has
-natively. The Rust core does all fleet and tmux work and has no UI types, so a
-native frontend (gpui or egui with `alacritty_terminal`, the Zed approach) can
-replace the webview later without touching it. Revisit if P3 fails.
+**D1. GPUI from the start, not a webview.** On Linux a Tauri webview is
+WebKitGTK, whose WebGL and GPU compositing are the least reliable of the three
+platform webviews, and the busiest thing on screen is six streaming terminals.
+GPUI renders on the GPU natively, and Zed already ships a fast terminal on it
+over `alacritty_terminal`. Terminal state also lands in Rust (`term`), where the
+control-mode bytes already are, instead of in JavaScript. The cost is owned
+code: the terminal element (from `gpui-terminal`, plus selection, scrollback,
+mouse and paste) and the Customize editor (from `gpui-kit` components). GPUI is
+pre-1.0, so the workspace pins one `gpui-kit` release (which pins GPUI) and
+upgrades it deliberately; only `app` sees GPUI types, so its churn stops there.
 
 **D2. tmux control mode, not one `tmux attach` per tile.** A PTY per tile
 would draw tmux's status line and window chrome, size every client to the
@@ -519,3 +544,6 @@ shrinking the user's terminal (P6).
 Sources for herdr: [GitHub README](https://github.com/maxjendrall/herdr),
 [tecmint overview](https://tecmint.com/herdr-run-ai-coding-agents-in-linux-terminal),
 [bitdoze review](https://www.bitdoze.com/herdr-agent-multiplexer/).
+UI stack: [gpui-kit / gpui-component](https://github.com/longbridge/gpui-component),
+[gpui-terminal](https://docs.rs/gpui-terminal),
+[gpui](https://github.com/zed-industries/zed/tree/main/crates/gpui).
