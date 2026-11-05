@@ -45,18 +45,19 @@ printf '#!/usr/bin/env bash\necho real-claude "$@"\n' > "$STUB/claude"; chmod +x
 out="$(PATH="$STUB:$PATH" "$B" "$REPO/shims/claude" --version 2>&1)"
 check "shim passes through under $B (got: $out)" "[[ \"\$out\" == 'real-claude --version' ]]"
 
-# presize.sh: needs a conf-loaded server, a client of a known size, and a second
-# unviewed window to resize. The client lives on a throwaway socket of its own.
-boot_server s1
+# presize.sh: needs a client of a known size and a second unviewed window to
+# resize. A bare server (no conf), so the conf's own presize hook cannot do the
+# resize in this run's place. The client lives on a throwaway socket of its own.
+tmux -L "$SOCK" -f /dev/null new-session -d -s s1 -x 80 -y 24 -c "$WORK"
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
 client_sock="$SOCK-c0"
+trap 'tmux -L "$client_sock" kill-server 2>/dev/null; _lib_cleanup' EXIT
 tmux -L "$client_sock" -f /dev/null new-session -d -x 100 -y 30 -- tmux -L "$SOCK" attach -t s1
 poll_until 10 "[[ \$(tx list-clients -F '#{client_session}' | grep -cx s1) -ge 1 ]]"
 client="$(tx list-clients -F '#{client_session} #{client_name}' | awk '$1 == "s1" { print $2; exit }')"
 err="$(AGENT_FLEET_SOCKET="$SOCK" "$B" "$REPO/scripts/presize.sh" "$client" 2>&1 </dev/null)"
 check "presize.sh runs clean under $B (stderr: ${err:-none})" "[[ -z \"\$err\" ]]"
 check "presize.sh resized the unviewed window" "[[ \"\$(tx display-message -p -t s2:0 '#{window_width}x#{window_height}')\" == 100x29 ]]"
-tmux -L "$client_sock" kill-server 2>/dev/null
 
 # The CLI itself: 3.2 can't parse it (heredoc inside $(...)), so the prelude
 # must re-exec under a modern bash before the parser reaches that point.

@@ -91,14 +91,24 @@ poll_until 10 "[[ \"\$(wsize s3)\" == '110x31 110x31 ' ]] && settled"
 # active one (the "latest" policy), so A is the one typing.
 tmux -L "$sa" send-keys -t 0 C-l
 sleep 0.5
+poll_until 10 settled
+: > "$RESIZED"
 p1="$(env -u TMUX "$AF" add one --to s3 --cmd 'sleep 300')"
 w1="$(tx display-message -p -t "$p1" '#{window_id}')"
 check "add (no --focus, TMUX unset): 110x31 with a 30-col rail on return" \
   "[[ \"\$(tx display-message -p -t '$w1' '#{window_width}x#{window_height}')\" == 110x31 ]] && rails_ok s3"
 env -u TMUX "$AF" add two --new-workspace s4 --cmd "sleep 300" >/dev/null
 check "add --new-workspace: 110x31 with a 30-col rail on return" "[[ \"\$(wsize s4)\" == '110x31 ' ]] && rails_ok s4"
-for i in 1 2 3; do env -u TMUX "$AF" add "b$i" --to s3 --cmd 'sleep 300' >/dev/null; done
-check "three back-to-back adds are all 110x31 with rails" "[[ \"\$(tx list-windows -t =s3 -F '#{window_width}x#{window_height}' | sort -u)\" == 110x31 ]] && rails_ok s3"
+born=""
+for i in 1 2 3; do
+  pb="$(env -u TMUX "$AF" add "b$i" --to s3 --cmd 'sleep 300')"
+  wb="$(tx display-message -p -t "$pb" '#{window_id}')"; born="$born $wb"
+  check "back-to-back add $i is 110x31 as soon as add returns" "[[ \"\$(tx display-message -p -t '$wb' '#{window_width}x#{window_height}')\" == 110x31 ]]"
+done
+check "three back-to-back adds have rails" "rails_ok s3"
+sleep 1; poll_until 10 settled
+n=0; for w in $w1 $born $(tx list-windows -t =s4 -F '#{window_id}'); do n=$(( n + $(nresized "$w") )); done
+check "once quiet, no spawned window was ever resized (count $n)" "[[ $n -eq 0 ]]"
 
 echo "a window added to another client's session is left alone by a later resize of A"
 tmux -L "$sb" send-keys -t 0 C-l  # B is the one typing now

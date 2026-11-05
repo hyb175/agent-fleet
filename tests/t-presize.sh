@@ -31,19 +31,20 @@ fresh() {
   : > "$RESIZED"
 }
 
-# client <W> <H> <session> — attach a W×H client; prints its name.
+# client <W> <H> <session> — attach a W×H client; sets c to its name. Not run
+# in a command substitution, so the socket lands in CSOCKS for cleanup.
 client() {
-  local s="$SOCK-c${#CSOCKS[@]}" n
+  local s="$SOCK-c${#CSOCKS[@]}"
   CSOCKS+=("$s")
   tmux -L "$s" -f /dev/null new-session -d -x "$1" -y "$2" -- tmux -L "$SOCK" attach -t "$3"
   poll_until 10 "[[ \$(tx list-clients -F '#{client_session}' | grep -cx '$3') -ge 1 ]]"
-  tx list-clients -F '#{client_session} #{client_name}' | awk -v s="$3" '$1 == s { print $2; exit }'
+  c="$(tx list-clients -F '#{client_session} #{client_name}' | awk -v s="$3" '$1 == s { print $2; exit }')"
 }
 
 # wsize <session> — "WxH" of every window of the session, space-separated.
 # shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 wsize() { tx list-windows -t "$1" -F '#{window_width}x#{window_height}' | tr '\n' ' '; }
-nresized() { grep -c "$1" "$RESIZED" 2>/dev/null || true; }
+nresized() { grep -cx "$1" "$RESIZED" 2>/dev/null || true; }
 
 echo "t-presize:"
 
@@ -52,7 +53,7 @@ fresh
 tx new-window -d -t s1 -c "$WORK"
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
 tx new-window -d -t s2 -c "$WORK"
-c="$(client 100 30 s1)"
+client 100 30 s1
 : > "$RESIZED"
 "$PRESIZE" "$c"
 check "s2 windows follow the client (100x29)" "[[ \"\$(wsize s2)\" == '100x29 100x29 ' ]]"
@@ -82,7 +83,7 @@ echo "20 windows need resizing -> TMUX_BIN wrapper log has <= 2 invocations"
 fresh
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
 for _ in $(seq 19); do tx new-window -d -t s2 -c "$WORK"; done
-c="$(client 100 30 s1)"
+client 100 30 s1
 : > "$RESIZED"
 cat > "$WORK/tmux-wrap" <<EOF
 #!/bin/sh
@@ -97,7 +98,7 @@ check "all 20 windows resized" "[[ \"\$(wsize s2 | tr ' ' '\n' | grep -cx '100x2
 echo "window-size largest -> nothing resized, default-size untouched"
 fresh
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
-c="$(client 100 30 s1)"
+client 100 30 s1
 tx set -g window-size largest
 before="$(tx show-options -gv default-size)"
 : > "$RESIZED"
@@ -112,17 +113,20 @@ tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
 tx split-window -hb -l 30 -t s2 -c "$WORK"
 rail="$(tx list-panes -t s2 -F '#{pane_id}' | head -1)"
 tx set -p -t "$rail" @fleet-sidenav 1
-c="$(client 80 24 s1)"
+client 80 24 s1
 : > "$RESIZED"
 "$PRESIZE" "$c"
 check "s2 window is 80x23" "[[ \"\$(wsize s2)\" == '80x23 ' ]]"
 check "rail pane is 30 wide" "[[ \"\$(tx display-message -p -t '$rail' '#{pane_width}')\" -eq 30 ]]"
 check "default-size is 80x23" "[[ \"\$(tx show-options -gv default-size)\" == 80x23 ]]"
+tx resize-window -t s2 -x 120 -y 40; tx set -wu -t s2 window-size
+AGENT_FLEET_SIDENAV_WIDTH=24 "$PRESIZE" "$c"
+check "AGENT_FLEET_SIDENAV_WIDTH=24 gives a 24-col rail" "[[ \"\$(tx display-message -p -t '$rail' '#{pane_width}')\" -eq 24 ]]"
 
 echo "10 concurrent runs -> exactly one reaches the write"
 fresh
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
-c="$(client 100 30 s1)"
+client 100 30 s1
 cat > "$WORK/tmux-wrap" <<EOF
 #!/bin/sh
 echo "\$*" >> "$WORK/calls"
@@ -130,7 +134,11 @@ exec tmux "\$@"
 EOF
 chmod +x "$WORK/tmux-wrap"
 rm -f "$WORK/calls"
-for _ in $(seq 10); do TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c" & done; 
+# Start all ten together: each waits for the go file, so their tokens land well
+# inside one 150 ms debounce however slowly the runner forks.
+rm -f "$WORK/go"
+for _ in $(seq 10); do ( until [[ -e "$WORK/go" ]]; do sleep 0.01; done; TMUX_BIN="$WORK/tmux-wrap" exec "$PRESIZE" "$c" ) & done
+sleep 0.5; touch "$WORK/go"
 wait
 check "one write among the wrapper calls" "[[ \$(grep -c resize-window '$WORK/calls') -eq 1 ]]"
 check "the losers forked nothing (read + write only)" "[[ \$(wc -l < '$WORK/calls') -eq 2 ]]"
@@ -139,7 +147,7 @@ check "s2 resized" "[[ \"\$(wsize s2)\" == '100x29 ' ]]"
 echo "stale token from a killed run does not block the next run"
 fresh
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
-c="$(client 100 30 s1)"
+client 100 30 s1
 ( source "$REPO/scripts/cache.sh"; mkdir -p "$AF_CACHE_DIR"; echo "99999-12345" > "$AF_CACHE_DIR/presize.token" )
 "$PRESIZE" "$c"
 check "s2 resized despite the stale token" "[[ \"\$(wsize s2)\" == '100x29 ' ]]"
@@ -147,8 +155,8 @@ check "s2 resized despite the stale token" "[[ \"\$(wsize s2)\" == '100x29 ' ]]"
 echo "client size changes between read and write -> next pass applies the new size, at most 3 passes"
 fresh
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
-c="$(client 100 30 s1)"
-cs="$SOCK-c0"  # client() runs in a subshell, so CSOCKS is not updated
+client 100 30 s1
+cs="${CSOCKS[0]}"
 # Before each write while flips remain, the wrapper resizes the client's outer
 # window and waits for the client to report the new width.
 cat > "$WORK/tmux-wrap" <<EOF
@@ -172,10 +180,12 @@ tmux -L "$cs" set -g window-size manual
 echo 1 > "$WORK/flips"; rm -f "$WORK/calls"
 TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c"
 check "second pass applied the new width (110x29)" "[[ \"\$(wsize s2)\" == '110x29 ' ]]"
-check "two reads, two writes" "[[ \$(grep -c display-message '$WORK/calls') -eq 2 && \$(grep -c 'set -g default-size' '$WORK/calls') -eq 2 ]]"
+check "two reads, two writes" "[[ \$(grep -c 'show -gqv window-size' '$WORK/calls') -eq 2 && \$(grep -c 'set -g default-size' '$WORK/calls') -eq 2 ]]"
+# s2 is at the target now, so knock it off size or the first pass has nothing to write.
+tx resize-window -t s2 -x 80 -y 24; tx set -wu -t s2 window-size
 echo 98 > "$WORK/flips"; rm -f "$WORK/calls"
 TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c"
-check "client never settles -> stops at 3 passes" "[[ \$(grep -c display-message '$WORK/calls') -eq 3 ]]"
+check "client never settles -> stops at 3 passes" "[[ \$(grep -c 'show -gqv window-size' '$WORK/calls') -eq 3 ]]"
 
 # --- S-1: the conf's hooks drive presize.sh end to end -----------------------
 echo "S-1: conf hooks pre-size on attach and on resize, switches change nothing"
@@ -203,8 +213,8 @@ sizes() { tx list-windows -a -F '#{window_id} #{window_width}x#{window_height}';
 # shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 settled() { ! pgrep -f "$PRESIZE" >/dev/null; }
 
-c="$(client 100 30 s1)"
-cs="$SOCK-c0"  # client() runs in a subshell, so CSOCKS is not updated
+client 100 30 s1
+cs="${CSOCKS[0]}"
 tmux -L "$cs" set -g window-size manual
 poll_until 10 "unviewed 100x29"
 check "attach: every unviewed window is 100x29, window-size unset" "unviewed 100x29"
