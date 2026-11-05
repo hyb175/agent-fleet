@@ -131,7 +131,7 @@ except the small additions in section 8.
 | --- | --- | --- |
 | Paths, feature flags | `agent-fleet capabilities` | Run at start. Features absent from it are hidden, not greyed: no `send_receipts` for a kind means no "message" action on its tiles. |
 | Workspaces, agents, states, questions, diffstats | `fleet.snapshot` (`docs/snapshot-format.md`) | File watch plus 1 s poll. Same staleness rule as every reader: `now - epoch > interval*3 + 7` shows a banner and disables actions. The Rust parser runs against `tests/fixtures/snapshot/`, shared with the Go suite, including `extra-field.snapshot`. |
-| What changed, in order | `agent-fleet events --since <cursor>` | 500 ms loop. Drives toasts (`question`, `state wait`, `turn_end`, `delivery`). `status=expired` (exit 6) resyncs from the snapshot and restarts at the returned cursor. |
+| What changed, in order | `agent-fleet events --since <cursor>` | Run when the `events` file that `capabilities` names changes (file watch, 100 ms debounce), not on a timer: one call costs about 30 ms of CPU (12.1), so a 500 ms loop would idle at 6% of a core. Drives toasts (`question`, `state wait`, `turn_end`, `delivery`). `status=expired` (exit 6) resyncs from the snapshot and restarts at the returned cursor. |
 | Focus an agent | tile focus + `agent-fleet seen` (F1) | Not `goto`: `goto` switches the user's tmux client, which the app must never hijack. |
 | Spawn | `agent-fleet task "<prompt>" --repo … --name …` | Prints `<task-id> <pane-id>`; the new agent opens where the user chose (focused tile, new tile, background). |
 | Answer a waiting agent | `agent-fleet answer <pane> fp`, then `answer <pane> approve\|deny\|text … --fp <sum>` | The fingerprint is taken when the question card renders, so an answer to a screen that changed since is refused (`stale`) instead of landing on the wrong prompt. |
@@ -532,10 +532,35 @@ installed, mirroring `Prefix g` for `desk`.
 | P2 | Which panes does `%output` cover? | **done**: every window of the attached session, current or not; nothing from other sessions. |
 | P3 | Does the GPUI terminal element keep up with a claude redraw storm across 6 tiles at 60 fps? | open. Zed's terminal, GPUI over `alacritty_terminal`, is the existence proof; this checks our element and our per-frame batching. |
 | P4 | After seeding from `capture-pane` plus replayed mode flags, do mouse, keypad and bracketed paste behave as in a real attach, for claude and codex? | open |
-| P5 | Do `refresh-client -A '%N:off'` and `-f pause-after=` behave as documented on tmux 3.2 to 3.6? | **partly done**: on 3.6a, `-A %N:off` stopped that pane's `%output` completely and `on` resumed it; `#{client_control_mode}` reads `1` for the app's client. Open: `pause-after`, and versions before 3.6. |
+| P5 | Do `refresh-client -A '%N:off'` and `-f pause-after=` behave as documented on tmux 3.2 to 3.6? | **partly done**: on 3.6a, `-A %N:off` stopped that pane's `%output` completely and `on` resumed it; `#{client_control_mode}` reads `1` for the app's client. With `-f pause-after=1` and a reader stalled for 2 s on a flooding pane, output switched to `%extended-output %N <age-ms>`, tmux sent `%pause %N`, and its RSS stayed at 6 MB, so a slow app cannot make tmux buffer without bound. Open: versions before 3.6. |
 | P6 | What happens when a normal client and the app share a window? | **done**: the control client's size wins until it detaches; hence the rule in 5.2. |
 | P7 | Does a `gpui-kit` hello window with one terminal tile build and run on macOS, then from a `nix-shell` on NixOS (Wayland and X11)? | open. macOS first: the build and headless tests on CI's `macos-latest`, the window on a real Mac. Pins the GPUI revision, the Xcode/SDK version, and the Nix native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig). |
 | P8 | With Neovim in a pane and only a control client attached, does tmux deliver focus in/out to the pane when the app switches the active pane, and report `%paste-buffer-changed` after an OSC 52 yank? | **done** (tmux 3.6a, Neovim 0.11.5): `select-pane` between two panes of one window fired Neovim's `FocusLost` and `FocusGained`, and so did `send-keys -H 1b 5b 4f` / `1b 5b 49` with no client involved; with `set-clipboard on`, an OSC 52 write created `buffer0` and the control client got `%paste-buffer-changed buffer0`. With tmux's default `external`, which the fleet runs today, no buffer is created (F6). |
+
+### 12.1 Early performance
+
+Measured 2026-11-05 on Linux (i9-12900HK, tmux 3.6a, `alacritty_terminal`
+0.26.0), before any app code: a scratch tmux server, one control client per
+the design, and a Rust replay of the recorded control stream through the
+`fleet-tmux` parse and one `Term` per pane. The agent load is synthetic: six
+100x30 panes each repainting 26 colored lines at 30 fps inside synchronized
+updates, which is heavier than claude's differential redraw. Flood is six
+panes writing log lines flat out.
+
+| Path | Result |
+| --- | --- |
+| tmux server, agent load | 9.7% of a core with no client, 11.9% with the app's control client: the app costs tmux about 2 points |
+| Wire overhead | `%output` is 1.23x the pane bytes (octal escapes) |
+| App core, agent load | parse and unescape at 1.5 to 1.8 GB/s; `Term` feed at 173 MB/s; 0.36% of a core in total |
+| App core, flood | `Term` feed at 92 MB/s, 2% of a core; tmux itself uses about one core for six flooding panes, client or not |
+| Frame walk | reading all six `Term`s' visible cells: 0.03 ms per frame, of a 16.7 ms budget |
+| Keystroke to echo | idle p50 0.49 ms, p99 0.95 ms; beside five busy panes p50 0.57 ms, p99 3.6 ms, unchanged when they are muted, so the tail is CPU contention rather than control-mode traffic |
+| Seeding a tile | `capture-pane -e -J`: screen only about 1 ms, 2000 lines of history about 5 ms and 204 KB |
+| Fleet verbs | `events --since`, `capabilities`: about 30 ms each (bash startup); hence the file-watched `events` above. User actions (`answer`, `send`) pay the same 30 ms once, which is invisible next to their receipts |
+
+So the core and tmux leave nearly the whole frame budget to drawing. What
+remains unmeasured is GPUI painting six terminals (P3), on macOS, where
+process startup is also slower than on this machine.
 
 ---
 
