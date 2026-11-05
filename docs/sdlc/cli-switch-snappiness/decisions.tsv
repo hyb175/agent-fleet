@@ -1,0 +1,3 @@
+ts	phase	decision	why	evidence	result
+2026-11-05T09:37:45Z	user	Autopilot: Launch autopilot (Recommended)	One workflow runs the whole cycle and stops at the first gate it can't pass. About 20–25 agents.		
+2026-11-05T10:05:49Z	user	New windows: Born at size (Recommended)	The attach/resize hooks also set tmux's global `default-size` to your terminal's size, so new windows are created at the right size and never resize. Less code, no extra hooks. Cost: the fleet now owns `default-size` (unset in your conf today), and after you detach it stays at your last size.		
