@@ -7,3 +7,6 @@
 # native UI binary (make ui)
 /bin/afui
 __pycache__/
+
+# Fleet Desktop build output
+/desktop/target

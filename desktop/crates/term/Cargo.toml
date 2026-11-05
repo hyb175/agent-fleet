@@ -1,0 +1,9 @@
+[package]
+name = "term"
+description = "A terminal grid per tile, fed by tmux control-mode output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+alacritty_terminal.workspace = true
