@@ -883,7 +883,19 @@ cmd_goto() {
   sess="${loc%% *}"
   winid="${loc##* }"
   # Visiting a finished agent clears its 'done' badge back to idle.
-  "$ROOT_DIR/scripts/status.sh" clear-done "$pane" 2>/dev/null || true
+  # Only a finished agent has anything to clear, and the status file says so
+  # without a fork. A scraped agent has no file: its 'done' lives in a slow
+  # capture-pane, so ack it in the background — launched before go_to_session,
+  # which may exec attach and end this shell.
+  local st="" sf="$AF_CACHE_DIR/panes/$pane.status"
+  # `|| true`: read returns 1 on a file without a trailing newline, after
+  # assigning — and a bare failure here would kill us under set -e.
+  [[ -f "$sf" ]] && { read -r st < "$sf" 2>/dev/null || true; }
+  if [[ "$st" == "done" ]]; then
+    "$ROOT_DIR/scripts/status.sh" clear-done "$pane" 2>/dev/null || true
+  elif [[ ! -f "$sf" ]]; then
+    "$ROOT_DIR/scripts/status.sh" clear-done "$pane" >/dev/null 2>&1 &
+  fi
   # Select server-side BEFORE switching: from a bare shell go_to_session execs
   # attach-session, so nothing after it runs — and that's exactly the path
   # `ssh -t <host> agent-fleet goto <pane>` takes for a federated jump.
