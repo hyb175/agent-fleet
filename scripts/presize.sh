@@ -13,6 +13,12 @@
 # client running inside a fleet pane would resize itself and re-fire its own
 # resize hook), and windows already at the target. Does nothing unless the
 # global window-size policy is `latest`.
+#
+# Bursts (an attach or a drag fires many hooks): each run writes a token unique
+# to it, sleeps, and exits unless the file still holds its own, so only the
+# newest of a burst does the pass. Nothing is held: a token left by a killed run
+# is simply overwritten by the next. The write ends by re-reading the clients; if
+# the client's size moved since the read, the pass repeats, at most 3 times.
 
 set -uo pipefail
 
@@ -27,7 +33,15 @@ client="${1:-}"
 rail="${AGENT_FLEET_SIDENAV_WIDTH:-30}"
 T=$'\t'
 
+# Fixed width: racing writers overwrite each other whole, never leave a mixed tail.
+printf -v token '%07d-%05d' "$$" "$RANDOM"
+mkdir -p "$AF_CACHE_DIR"
+printf '%s' "$token" > "$AF_CACHE_DIR/presize.token"
+sleep 0.15
+[[ "$(< "$AF_CACHE_DIR/presize.token")" == "$token" ]] || exit 0
+
 # Record types: O global options, C client, W window, P pane.
+for _pass in 1 2 3; do
 snap="$(tx \
   display-message -p "O${T}#{window-size}${T}#{status}${T}#{default-size}" \; \
   list-clients -F "C${T}#{client_name}${T}#{client_tty}${T}#{client_session}${T}#{client_width}${T}#{client_height}" \; \
@@ -65,5 +79,8 @@ for rec in ${wins[@]+"${wins[@]}"}; do
 done
 
 # Nothing to resize and default-size already right: no write at all.
-(( n > 0 )) || [[ "$cur" != "${w}x${h}" ]] && tx "${cmd[@]}" >/dev/null 2>&1
+(( n > 0 )) || [[ "$cur" != "${w}x${h}" ]] || exit 0
+back="$(tx "${cmd[@]}" \; list-clients -F "#{client_name}${T}#{client_width}${T}#{client_height}" 2>/dev/null)" || exit 0
+[[ "$back" == *"${client}${T}${cw}${T}${ch}"* ]] && exit 0
+done
 exit 0

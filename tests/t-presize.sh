@@ -119,4 +119,62 @@ check "s2 window is 80x23" "[[ \"\$(wsize s2)\" == '80x23 ' ]]"
 check "rail pane is 30 wide" "[[ \"\$(tx display-message -p -t '$rail' '#{pane_width}')\" -eq 30 ]]"
 check "default-size is 80x23" "[[ \"\$(tx show-options -gv default-size)\" == 80x23 ]]"
 
+echo "10 concurrent runs -> exactly one reaches the write"
+fresh
+tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
+c="$(client 100 30 s1)"
+cat > "$WORK/tmux-wrap" <<EOF
+#!/bin/sh
+echo "\$*" >> "$WORK/calls"
+exec tmux "\$@"
+EOF
+chmod +x "$WORK/tmux-wrap"
+rm -f "$WORK/calls"
+for _ in $(seq 10); do TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c" & done; 
+wait
+check "one write among the wrapper calls" "[[ \$(grep -c resize-window '$WORK/calls') -eq 1 ]]"
+check "the losers forked nothing (read + write only)" "[[ \$(wc -l < '$WORK/calls') -eq 2 ]]"
+check "s2 resized" "[[ \"\$(wsize s2)\" == '100x29 ' ]]"
+
+echo "stale token from a killed run does not block the next run"
+fresh
+tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
+c="$(client 100 30 s1)"
+( source "$REPO/scripts/cache.sh"; mkdir -p "$AF_CACHE_DIR"; echo "99999-12345" > "$AF_CACHE_DIR/presize.token" )
+"$PRESIZE" "$c"
+check "s2 resized despite the stale token" "[[ \"\$(wsize s2)\" == '100x29 ' ]]"
+
+echo "client size changes between read and write -> next pass applies the new size, at most 3 passes"
+fresh
+tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
+c="$(client 100 30 s1)"
+cs="$SOCK-c0"  # client() runs in a subshell, so CSOCKS is not updated
+# Before each write while flips remain, the wrapper resizes the client's outer
+# window and waits for the client to report the new width.
+cat > "$WORK/tmux-wrap" <<EOF
+#!/bin/sh
+case "\$*" in
+  *"set -g default-size"*)
+    f=\$(cat "$WORK/flips")
+    if [ "\$f" -gt 0 ]; then
+      echo \$((f - 1)) > "$WORK/flips"
+      w=\$((120 - (f % 2) * 10))
+      tmux -L $cs resize-window -t 0 -x \$w -y 30
+      i=0
+      while [ \$i -lt 50 ] && [ "\$(tmux -L $SOCK list-clients -F '#{client_width}')" != \$w ]; do sleep 0.1; i=\$((i + 1)); done
+    fi ;;
+esac
+echo "\$*" >> "$WORK/calls"
+exec tmux "\$@"
+EOF
+chmod +x "$WORK/tmux-wrap"
+tmux -L "$cs" set -g window-size manual
+echo 1 > "$WORK/flips"; rm -f "$WORK/calls"
+TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c"
+check "second pass applied the new width (110x29)" "[[ \"\$(wsize s2)\" == '110x29 ' ]]"
+check "two reads, two writes" "[[ \$(grep -c display-message '$WORK/calls') -eq 2 && \$(grep -c 'set -g default-size' '$WORK/calls') -eq 2 ]]"
+echo 98 > "$WORK/flips"; rm -f "$WORK/calls"
+TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c"
+check "client never settles -> stops at 3 passes" "[[ \$(grep -c display-message '$WORK/calls') -eq 3 ]]"
+
 exit "$FAIL"
