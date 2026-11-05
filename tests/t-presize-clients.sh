@@ -32,12 +32,15 @@ client() {
 }
 # shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 wsize()    { tx list-windows -t "=$1" -F '#{window_width}x#{window_height}' | tr '\n' ' '; }
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 nresized() { grep -cx "$1" "$RESIZED" 2>/dev/null || true; }
 # resizes_of <session> — total logged resizes across the session's windows.
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 resizes_of() { local n=0 w; for w in $(tx list-windows -t "=$1" -F '#{window_id}'); do n=$(( n + $(nresized "$w") )); done; echo "$n"; }
 # shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 settled() { ! pgrep -f "$REPO/scripts/presize.sh" >/dev/null; }
 # rails_ok <session> — every rail of the session is 30 cols and every window has one.
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 rails_ok() {
   [[ "$(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav}' | grep -cx 1)" == "$(tx list-windows -t "=$1" | wc -l)" ]] &&
     [[ -z "$(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav} #{pane_width}' | awk '$1 == 1 && $2 != 30')" ]]
@@ -51,7 +54,7 @@ poll_until 10 "[[ \$(tx list-panes -a -F '#{@fleet-sidenav}' | grep -cx 1) -eq 6
 tx set-hook -g window-resized "run-shell 'echo #{window_id} >> $RESIZED'"
 
 sa="$SOCK-ca"; sb="$SOCK-cb"; CSOCKS=("$sa" "$sb")
-a="$(client 100 30 s1 a)"; b="$(client 90 20 s2 b)"
+a="$(client 100 30 s1 a)"; client 90 20 s2 b >/dev/null
 tmux -L "$sa" set -g window-size manual
 tmux -L "$sb" set -g window-size manual
 # B attached last, so its pass is the one that lands: wait for it, not just for quiet.
