@@ -48,3 +48,6 @@ US-1 to US-6 and the no-resize probe, D6 guard, fork budget, bash 3.2 case. Clos
 - US-5 AC-3 "under 1 s": the test compares `$SECONDS` deltas, so it asserts `< 2` (integer seconds) against a 2 s capture-pane stub. A foreground ack would take >= 2 s and fail; a 1-2 s regression would pass. Acceptable.
 - Speed p50 (56 -> 40 ms) is recorded by the speed-recording step, not gated here.
 - Per-session `status` overrides (D1) are untested by design (ponytail ceiling).
+
+## UI validation
+Not applicable: the plan has no seam:ui scenarios (all are seam:cli); no browser UI.
