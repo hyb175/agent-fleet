@@ -42,7 +42,7 @@ settled() { ! pgrep -f "$REPO/scripts/presize.sh" >/dev/null; }
 # rails_ok <session> — every rail of the session is 30 cols and every window has one.
 # shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 rails_ok() {
-  [[ "$(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav}' | grep -cx 1)" == "$(tx list-windows -t "=$1" | wc -l)" ]] &&
+  (( $(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav}' | grep -cx 1) == $(tx list-windows -t "=$1" | wc -l) )) &&
     [[ -z "$(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav} #{pane_width}' | awk '$1 == 1 && $2 != 30')" ]]
 }
 # rails_dump <session>… — the layout behind a failed rails_ok.
