@@ -163,9 +163,10 @@ iTerm2 uses for its tmux integration:
   sessions (**P2 done**: a client on session `a` received both `a` windows'
   panes and none of session `b`'s). So the app opens one control client per
   workspace that has at least one visible tile, and closes it when the last
-  such tile goes away. Panes in that workspace that no tile shows are muted
-  with `refresh-client -A '%N:off'` and re-enabled with `on` plus a re-seed
-  when they become visible (P5).
+  such tile goes away. Agent panes stay live even when no tile shows them, so
+  any of them can appear in a tile without a re-seed (5.5); other panes no tile
+  shows are muted with `refresh-client -A '%N:off'` and re-enabled with `on`
+  plus a re-seed when they become visible (P5).
 - **Seeding.** A tile that starts showing a pane first feeds its `Term` the
   current screen: `capture-pane -p -e -J -S -<scrollback> -t %N` (with `-a`
   when `#{alternate_on}` is set), then cursor position from `#{cursor_x}` and
@@ -247,6 +248,32 @@ what Neovim wrote. What the tile must do on top of an agent tile (all M2):
 - **Keys**: `Ctrl-a Ctrl-a` sends Neovim's `Ctrl-a`, as with the tmux prefix now.
   On macOS, `option_as_meta` in `desktop.toml` (default on) sends Option as
   Alt; Cmd chords stay with the app.
+
+### 5.5 Switching without lag
+
+Snappiness is the first requirement. Switching what a tile shows, or which tile
+has focus, must land in the next frame. Measured on the CLI (2026-11-05),
+`agent-fleet goto` itself takes about 56 ms, but a switch into a workspace
+last viewed at another terminal size resizes its windows, and claude's repaint
+after a resize started 355 ms to 1.2 s late in about one resize in four. Until
+then the old screen shows. So:
+
+1. **No resize on switch.** Every window a view can show is sized to the tile
+   that will show it when the view loads or a tile is resized, never when an
+   agent swaps in. Claude's slow repaint then happens while the window is
+   hidden. A Focus tile that follows the selection sizes every candidate
+   window up front.
+2. **No process and no tmux round trip on switch.** Focus and tile swaps are
+   in-process. Each live agent pane keeps a warm `Term` (feeding them all costs
+   under 0.4% of a core for six busy panes, 12.1), so a swap is a repaint from
+   memory, not a `capture-pane`. Hidden panes keep the screen and a short
+   scrollback; scrolling further back reads tmux's history on demand.
+   `agent-fleet seen` (F1) runs after the frame, off the switch path.
+3. **Budgets.** Switch to first correct frame: one frame (16.7 ms at 60 Hz).
+   Keystroke to echo: under 5 ms in the app, on top of tmux's 0.5 ms median.
+   The app logs any switch or echo over budget with a per-step breakdown,
+   and M2 is not done until a switch across workspaces at different sizes
+   meets the budget.
 
 ---
 
