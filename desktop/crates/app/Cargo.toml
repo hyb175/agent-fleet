@@ -1,0 +1,12 @@
+[package]
+name = "fleet-desktop"
+description = "Fleet Desktop: a native window over a running agent fleet"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fleet-tmux.workspace = true
+term.workspace = true
+gpui-kit.workspace = true
+async-channel.workspace = true

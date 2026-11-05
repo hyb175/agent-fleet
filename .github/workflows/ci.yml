@@ -86,6 +86,49 @@ jobs:
           got="$(bin/afui version)"
           [[ "$got" == "afui $want" ]] || { echo "version drift: $got vs $want"; exit 1; }
 
+  # Fleet Desktop: the workspace's tests (fleet-tmux's run against a real tmux),
+  # then the app opened on the runner's GUI session over a scratch pane.
+  desktop:
+    name: desktop (macos-latest)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tmux
+        run: brew install tmux
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+      # rustup installs the toolchain desktop/rust-toolchain.toml pins.
+      - name: Test
+        run: cargo test --workspace
+      - name: Open the window over a scratch pane
+        run: |
+          cargo build -p fleet-desktop
+          tmux -L ci -f /dev/null new-session -d -s demo -x 90 -y 26 \
+            "printf '\033[1mFleet Desktop\033[0m on macOS\n\033[31mred \033[32mgreen \033[38;2;235;111;146mtruecolor\033[0m 日本語 ✓\n'; exec sh"
+          AGENT_FLEET_SOCKET=ci ./target/debug/fleet-desktop demo & pid=$!
+          sleep 8
+          tmux -L ci send-keys -t demo 'echo live after attach' Enter
+          sleep 2
+          kill -0 "$pid"
+          screencapture -x "$RUNNER_TEMP/fleet-desktop.png" || true
+          kill "$pid"
+      # P3: six tiles under a synthetic agent redraw storm; frame timing in the log.
+      - name: Six-tile redraw storm
+        run: |
+          (sleep 12; screencapture -x "$RUNNER_TEMP/fleet-desktop-p3.png" || true) &
+          bash bench/p3.sh 20
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fleet-desktop-macos
+          path: ${{ runner.temp }}/fleet-desktop*.png
+          if-no-files-found: ignore
+
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest

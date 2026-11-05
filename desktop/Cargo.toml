@@ -1,0 +1,20 @@
+[workspace]
+resolver = "3"
+members = ["crates/fleet-tmux", "crates/term", "crates/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+fleet-tmux = { path = "crates/fleet-tmux" }
+term = { path = "crates/term" }
+alacritty_terminal = "=0.26.0"
+# gpui-kit pins its own GPUI snapshot and re-exports it.
+gpui-kit = "=0.8.0"
+async-channel = "2.5"
+
+# Optimized dev builds: frame timings from `cargo build` are close to release.
+[profile.dev]
+opt-level = 2
