@@ -8,6 +8,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 # Clients live on throwaway sockets of their own (a pane there runs `tmux
 # attach` against the server under test), so they have a chosen size.
 CSOCKS=()
+# shellcheck disable=SC2329 # invoked by the EXIT trap
 _cleanup() {
   local s
   for s in ${CSOCKS[@]+"${CSOCKS[@]}"}; do tmux -L "$s" kill-server 2>/dev/null; done
@@ -40,6 +41,7 @@ client() {
 }
 
 # wsize <session> — "WxH" of every window of the session, space-separated.
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 wsize() { tx list-windows -t "$1" -F '#{window_width}x#{window_height}' | tr '\n' ' '; }
 nresized() { grep -c "$1" "$RESIZED" 2>/dev/null || true; }
 
@@ -65,7 +67,7 @@ tx new-session -d -s s3 -x 80 -y 24 -c "$WORK"
 tx new-session -d -s sh -x 80 -y 24 -c "$WORK" -- sh -c "env -u TMUX tmux -L $SOCK attach -t s1; sleep 300"
 poll_until 10 "[[ \$(tx list-clients | wc -l) -ge 1 ]]"
 a="$(tx list-clients -F '#{client_name}' | head -1)"
-b="$(client 90 20 s2)"
+client 90 20 s2 >/dev/null
 poll_until 10 "[[ \$(tx list-clients | wc -l) -ge 2 ]]"
 s3w="$(tx list-windows -t s3 -F '#{window_id}')"
 guarded="$(tx list-windows -t s2 -F '#{window_id}'; tx list-windows -t sh -F '#{window_id}')"

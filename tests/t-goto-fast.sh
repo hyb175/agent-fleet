@@ -26,6 +26,7 @@ for s in working wait idle; do
 done
 
 p="$(mkpane sleep 300)"; printf 'done' > "$C/$p.status"   # no trailing newline: the read || true guard
+# shellcheck disable=SC2034 # read inside the eval'd check() conditions
 out="$(go "$p")"
 check "done: status.sh clear-done ran" "[[ \"\$out\" == *'status.sh clear-done'* ]]"
 check "done: file reads idle" "[[ \"\$(cat '$C/$p.status')\" == idle ]]"
@@ -37,6 +38,7 @@ mkdir -p "$stub/bin"; printf '#!/bin/sh\nsleep 300\n' > "$stub/bin/claude"; chmo
 # Blank rows first: the scrape reads the last 12 lines, so the text must sit at the bottom.
 p="$(mkpane "yes '' | head -40; echo 'Worked for 3s'; echo 'new task?'; exec $stub/bin/claude")"
 poll_until 5 "tx capture-pane -t $p -p | grep -q 'new task'"
+# shellcheck disable=SC2034 # read inside the eval'd check() condition
 start=$SECONDS
 TMUX_BIN="$stub/tmux" bash "$REPO/bin/agent-fleet" goto "$p" 2>&1 | cat >/dev/null
 check "scraped goto returns before the 2 s capture-pane" "(( SECONDS - start < 2 ))"
