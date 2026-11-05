@@ -1,144 +1,112 @@
-//! Fleet Desktop, first light: one read-only terminal tile showing a live
-//! fleet pane through a tmux control-mode client.
+//! Fleet Desktop: read-only terminal tiles over live fleet panes, through one
+//! tmux control-mode client per session.
 //!
-//!   fleet-desktop [target]   target: a pane (%12), window or session; default
-//!                            is the server's current pane
+//!   fleet-desktop [target …]   each target a pane (%12), window or session;
+//!                              default is the server's current pane
 //!
-//! The tile renders at the pane's current size and never sends one, so a
-//! terminal attached to the same window keeps owning its size.
+//! FLEET_DESKTOP_STATS=<secs> prints frame timing after <secs> and quits.
 
-use fleet_tmux::{Client, Event};
+mod session;
+mod stats;
+mod tile;
+
 use gpui_kit::*;
+use stats::Stats;
+use std::cell::RefCell;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use term::{Rgb, Tile};
-
-const SEED_FMT: &str = "'#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}'";
+use std::rc::Rc;
+use std::time::Duration;
+use tile::TileView;
 
 fn main() {
     let socket = std::env::var("AGENT_FLEET_SOCKET").unwrap_or_else(|_| "agent-fleet".into());
-    let target = std::env::args().nth(1);
-    let (session, pane, window) = match resolve(&socket, target.as_deref()) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("fleet-desktop: {e}");
-            std::process::exit(1);
-        }
-    };
-    let pane_n: u32 = pane[1..].parse().expect("pane id is %N");
-
-    let (client, events) = Client::attach(&socket, &session).unwrap_or_else(|e| {
-        eprintln!("fleet-desktop: cannot attach to {session} on -L {socket}: {e}");
-        std::process::exit(1);
-    });
-    let client = Arc::new(Mutex::new(client));
-    let tile = Arc::new(Mutex::new(Tile::new(80, 24)));
-    let (dirty_tx, dirty_rx) = async_channel::bounded::<()>(1);
-
-    // The reader: feeds the Term in stream order and pings the view at most
-    // once per batch of events.
-    let reseed = {
-        let (client, pane) = (client.clone(), pane.clone());
-        move || {
-            client
-                .lock()
-                .unwrap()
-                .send(&[
-                    &format!("display-message -p -t {pane} {SEED_FMT}"),
-                    &format!("capture-pane -p -e -t {pane}"),
-                ])
-                .ok()
-        }
-    };
-    let mut pending = reseed();
-    {
-        let tile = tile.clone();
-        thread::spawn(move || {
-            let mut cursor = (0, 0);
-            while let Ok(first) = events.recv() {
-                for ev in std::iter::once(first).chain(events.try_iter()) {
-                    match ev {
-                        Event::Reply {
-                            seq,
-                            ok: true,
-                            lines,
-                        } if Some(seq) == pending => {
-                            let f: Vec<usize> = lines
-                                .first()
-                                .map(|l| {
-                                    String::from_utf8_lossy(l)
-                                        .split(' ')
-                                        .filter_map(|n| n.parse().ok())
-                                        .collect()
-                                })
-                                .unwrap_or_default();
-                            if let [x, y, w, h] = f[..] {
-                                cursor = (x, y);
-                                tile.lock().unwrap().resize(w, h);
-                            }
-                        }
-                        Event::Reply { seq, ok, lines } if pending.map(|p| p + 1) == Some(seq) => {
-                            if ok {
-                                tile.lock().unwrap().seed(&lines, cursor.0, cursor.1);
-                            }
-                            pending = None;
-                        }
-                        Event::Output { pane: p, bytes } if p == pane_n && pending.is_none() => {
-                            tile.lock().unwrap().feed(&bytes)
-                        }
-                        Event::Notification(n)
-                            if n.starts_with(format!("%layout-change {window} ").as_bytes()) =>
-                        {
-                            pending = reseed()
-                        }
-                        Event::Exit(reason) => {
-                            tile.lock().unwrap().feed(
-                                format!("\r\n[detached: {}]", reason.unwrap_or_default())
-                                    .as_bytes(),
-                            );
-                            let _ = dirty_tx.try_send(());
-                            return;
-                        }
-                        _ => {}
-                    }
-                }
-                let _ = dirty_tx.try_send(());
-            }
-        });
+    let mut targets: Vec<Option<String>> = std::env::args().skip(1).map(Some).collect();
+    if targets.is_empty() {
+        targets.push(None);
     }
+    let fail = |e: String| -> ! {
+        eprintln!("fleet-desktop: {e}");
+        std::process::exit(1)
+    };
+
+    // Group panes by session, keeping the targets' order for the grid.
+    let mut sessions: Vec<(String, Vec<(String, String)>)> = Vec::new();
+    let mut order = Vec::new();
+    for t in &targets {
+        let (s, p, w) = resolve(&socket, t.as_deref()).unwrap_or_else(|e| fail(e));
+        let i = sessions
+            .iter()
+            .position(|(n, _)| *n == s)
+            .unwrap_or_else(|| {
+                sessions.push((s.clone(), Vec::new()));
+                sessions.len() - 1
+            });
+        order.push((i, sessions[i].1.len()));
+        sessions[i].1.push((p, w));
+    }
+    let feeds: Vec<Vec<session::Feed>> = sessions
+        .iter()
+        .map(|(s, panes)| {
+            session::attach(&socket, s, panes)
+                .unwrap_or_else(|e| fail(format!("cannot attach to {s} on -L {socket}: {e}")))
+        })
+        .collect();
+    let mut feeds: Vec<Vec<Option<session::Feed>>> = feeds
+        .into_iter()
+        .map(|v| v.into_iter().map(Some).collect())
+        .collect();
+    let feeds: Vec<session::Feed> = order
+        .iter()
+        .map(|&(s, k)| feeds[s][k].take().expect("each pane once"))
+        .collect();
+    let title = format!(
+        "Fleet — {}",
+        sessions
+            .iter()
+            .map(|(s, _)| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    let stats_secs: Option<f64> = std::env::var("FLEET_DESKTOP_STATS")
+        .ok()
+        .and_then(|s| s.parse().ok());
 
     gpui_kit::application().run(move |cx| {
         gpui_kit::init(cx);
         let options = WindowOptions {
             titlebar: Some(TitlebarOptions {
-                title: Some(format!("Fleet — {session} {pane}").into()),
+                title: Some(title.into()),
                 ..Default::default()
             }),
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
-                size(px(1100.), px(720.)),
+                size(px(1400.), px(900.)),
                 cx,
             ))),
             ..Default::default()
         };
+        let stats = stats_secs.map(|_| Rc::new(RefCell::new(Stats::default())));
         gpui_kit::open_window(options, cx, |_, cx| {
-            cx.new(|cx| {
-                cx.spawn(async move |this, cx| {
-                    while dirty_rx.recv().await.is_ok() {
-                        if this.update(cx, |_, cx| cx.notify()).is_err() {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-                TileView {
-                    tile,
-                    _client: client,
-                }
+            let tiles = feeds
+                .into_iter()
+                .map(|(pane, dirty)| cx.new(|cx| TileView::new(pane, dirty, stats.clone(), cx)))
+                .collect();
+            cx.new(|_| Grid {
+                tiles,
+                stats: stats.clone(),
             })
         })
         .expect("open window");
+        if let (Some(secs), Some(stats)) = (stats_secs, stats) {
+            cx.spawn(async move |cx| {
+                cx.background_executor()
+                    .timer(Duration::from_secs_f64(secs))
+                    .await;
+                println!("{}", stats.borrow_mut().report());
+                cx.update(|cx| cx.quit());
+            })
+            .detach();
+        }
         cx.activate(true);
     });
 }
@@ -166,68 +134,36 @@ fn resolve(socket: &str, target: Option<&str>) -> Result<(String, String, String
     }
 }
 
-struct TileView {
-    tile: Arc<Mutex<Tile>>,
-    _client: Arc<Mutex<Client>>,
+/// The tiles in a near-square grid.
+struct Grid {
+    tiles: Vec<Entity<TileView>>,
+    stats: Option<Rc<RefCell<Stats>>>,
 }
 
-fn hsla(c: Rgb) -> Hsla {
-    rgb(((c.0 as u32) << 16) | ((c.1 as u32) << 8) | c.2 as u32).into()
-}
-
-#[cfg(target_os = "macos")]
-const FONT: &str = "Menlo";
-#[cfg(not(target_os = "macos"))]
-const FONT: &str = "DejaVu Sans Mono";
-
-impl Render for TileView {
+impl Render for Grid {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let screen = self.tile.lock().unwrap().screen();
-        let family: SharedString = std::env::var("FLEET_DESKTOP_FONT")
-            .unwrap_or_else(|_| FONT.into())
-            .into();
-        let lines = screen.lines.into_iter().map(|runs| {
-            let text: String = runs.iter().map(|r| r.text.as_str()).collect();
-            let runs = runs
-                .iter()
-                .map(|r| TextRun {
-                    len: r.text.len(),
-                    font: Font {
-                        weight: if r.bold {
-                            FontWeight::BOLD
-                        } else {
-                            FontWeight::NORMAL
-                        },
-                        style: if r.italic {
-                            FontStyle::Italic
-                        } else {
-                            FontStyle::Normal
-                        },
-                        ..font(family.clone())
-                    },
-                    color: hsla(r.fg),
-                    background_color: (r.bg != term::BG).then(|| hsla(r.bg)),
-                    underline: r.underline.then(|| UnderlineStyle {
-                        thickness: px(1.),
-                        color: None,
-                        wavy: false,
-                    }),
-                    strikethrough: None,
-                })
-                .collect();
-            div()
-                .h(px(17.))
-                .whitespace_nowrap()
-                .child(StyledText::new(text).with_runs(runs))
-        });
+        if let Some(s) = &self.stats {
+            s.borrow_mut().frame();
+        }
+        let cols = (self.tiles.len() as f32).sqrt().ceil().max(1.) as usize;
         div()
             .size_full()
-            .overflow_hidden()
-            .bg(hsla(term::BG))
-            .p_2()
-            .font_family(family.clone())
-            .text_size(px(13.))
-            .line_height(px(17.))
-            .children(lines)
+            .flex()
+            .flex_col()
+            .gap_px()
+            .bg(rgb(0x000000))
+            .children(self.tiles.chunks(cols).map(|row| {
+                div()
+                    .flex()
+                    .flex_1()
+                    .gap_px()
+                    // Cached: a tile that did not change reuses its last frame.
+                    .children(row.iter().map(|t| {
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .child(t.clone().cached(StyleRefinement::default().size_full()))
+                    }))
+            }))
     }
 }

@@ -117,11 +117,16 @@ jobs:
           kill -0 "$pid"
           screencapture -x "$RUNNER_TEMP/fleet-desktop.png" || true
           kill "$pid"
+      # P3: six tiles under a synthetic agent redraw storm; frame timing in the log.
+      - name: Six-tile redraw storm
+        run: |
+          (sleep 12; screencapture -x "$RUNNER_TEMP/fleet-desktop-p3.png" || true) &
+          bash bench/p3.sh 20
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: fleet-desktop-macos
-          path: ${{ runner.temp }}/fleet-desktop.png
+          path: ${{ runner.temp }}/fleet-desktop*.png
           if-no-files-found: ignore
 
   shellcheck:

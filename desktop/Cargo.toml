@@ -15,5 +15,6 @@ alacritty_terminal = "=0.26.0"
 gpui-kit = "=0.8.0"
 async-channel = "2.5"
 
-[profile.dev.package."*"]
+# Optimized dev builds: frame timings from `cargo build` are close to release.
+[profile.dev]
 opt-level = 2

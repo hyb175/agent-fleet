@@ -10,8 +10,11 @@ use alacritty_terminal::vte::ansi::{self, Color, Processor, StdSyncHandler};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
 
+/// Cells of one style, starting at column `col`. A wide character is a run of
+/// its own, so a renderer can place every run on the cell grid.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Run {
+    pub col: usize,
     pub text: String,
     pub fg: Rgb,
     pub bg: Rgb,
@@ -89,6 +92,7 @@ impl Tile {
         let show_cursor = content.mode.contains(TermMode::SHOW_CURSOR);
         let cursor = content.cursor.point;
         let mut lines: Vec<Vec<Run>> = (0..rows).map(|_| Vec::new()).collect();
+        let mut prev_wide = false;
         for cell in content.display_iter {
             let y = cell.point.line.0 + content.display_offset as i32;
             if y < 0 || y as usize >= rows || cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
@@ -99,7 +103,9 @@ impl Tile {
             if cell.flags.contains(Flags::INVERSE) ^ (show_cursor && cell.point == cursor) {
                 std::mem::swap(&mut fg, &mut bg);
             }
+            let wide = cell.flags.contains(Flags::WIDE_CHAR);
             let run = Run {
+                col: cell.point.column.0,
                 text: if cell.flags.contains(Flags::HIDDEN) {
                     " ".into()
                 } else {
@@ -113,9 +119,12 @@ impl Tile {
             };
             let line = &mut lines[y as usize];
             match line.last_mut() {
-                Some(last) if same_style(last, &run) => last.text.push_str(&run.text),
+                Some(last) if !wide && !prev_wide && same_style(last, &run) => {
+                    last.text.push_str(&run.text)
+                }
                 _ => line.push(run),
             }
+            prev_wide = wide;
         }
         Screen { lines, cols, rows }
     }
@@ -194,6 +203,7 @@ mod tests {
         assert_eq!(
             s.lines[1][0],
             Run {
+                col: 0,
                 text: "red".into(),
                 fg: ANSI[1],
                 bg: BG,
@@ -202,7 +212,7 @@ mod tests {
                 underline: false
             }
         );
-        assert_eq!(s.lines[1][1].fg, FG);
+        assert_eq!((s.lines[1][1].col, s.lines[1][1].fg), (3, FG));
     }
 
     #[test]
@@ -232,9 +242,15 @@ mod tests {
     }
 
     #[test]
-    fn wide_chars_take_one_run_slot() {
-        let mut t = Tile::new(6, 1);
-        t.feed("日本".as_bytes());
-        assert_eq!(text(&t.screen(), 0), "日本");
+    fn wide_chars_are_runs_of_their_own_on_the_grid() {
+        let mut t = Tile::new(8, 1);
+        t.feed("日本ab".as_bytes());
+        let s = t.screen();
+        assert_eq!(text(&s, 0), "日本ab");
+        let cols: Vec<_> = s.lines[0]
+            .iter()
+            .map(|r| (r.col, r.text.as_str()))
+            .collect();
+        assert_eq!(&cols[..3], &[(0, "日"), (2, "本"), (4, "ab")]);
     }
 }
