@@ -9,8 +9,8 @@
 # start at the client's size.
 #
 # Skipped: windows of a session another client is attached to (tmux already
-# sizes them to that client), windows holding a pane on the client's own tty (a
-# client running inside a fleet pane would resize itself and re-fire its own
+# sizes them to that client), windows holding a pane on any client's tty (a
+# client running inside a fleet pane would be resized and re-fire its own
 # resize hook), and windows already at the target. Does nothing unless the
 # global window-size policy is `latest`.
 #
@@ -31,35 +31,41 @@ source "$(dirname "${BASH_SOURCE[0]}")/cache.sh"
 client="${1:-}"
 [[ -n "$client" ]] || exit 0
 rail="${AGENT_FLEET_SIDENAV_WIDTH:-30}"
-T=$'\t'
+# Unit separator, not tab: tab is IFS whitespace, so an empty field (a dead
+# pane's tty) would collapse and shift the columns after it.
+T=$'\x1f'
 
 # Fixed width: racing writers overwrite each other whole, never leave a mixed tail.
 printf -v token '%07d-%05d' "$$" "$RANDOM"
-mkdir -p "$AF_CACHE_DIR"
+[[ -d "$AF_CACHE_DIR" ]] || mkdir -p "$AF_CACHE_DIR"
 printf '%s' "$token" > "$AF_CACHE_DIR/presize.token"
 sleep 0.15
 [[ "$(< "$AF_CACHE_DIR/presize.token")" == "$token" ]] || exit 0
 
-# Record types: O global options, C client, W window, P pane.
+# The global policy, status and default-size lines, then records: C client,
+# W window, P pane.
 for _pass in 1 2 3; do
 snap="$(tx \
-  display-message -p "O${T}#{window-size}${T}#{status}${T}#{default-size}" \; \
+  show -gqv window-size \; show -gqv status \; show -gqv default-size \; \
   list-clients -F "C${T}#{client_name}${T}#{client_tty}${T}#{client_session}${T}#{client_width}${T}#{client_height}" \; \
   list-windows -a -F "W${T}#{session_name}${T}#{window_id}${T}#{window_width}${T}#{window_height}" \; \
   list-panes -a -F "P${T}#{window_id}${T}#{pane_tty}${T}#{pane_id}${T}#{@fleet-sidenav}" 2>/dev/null)" || exit 0
 
 policy="" status="" cur="" ctty="" cw=0 ch=0
-others=$'\n'; wins=(); busy=$'\n'; rails=$'\n'
-while IFS="$T" read -r kind a b c d e; do
-  case "$kind" in
-    O) policy="$a"; status="$b"; cur="$c" ;;
-    C) if [[ "$a" == "$client" ]]; then ctty="$b"; cw="$d"; ch="$e"
-       else others="$others$c"$'\n'; fi ;;
-    W) wins+=("$a$T$b$T$c$T$d") ;;
-    P) [[ -n "$b" && "$b" == "$ctty" ]] && busy="$busy$a"$'\n'
-       [[ "$d" == 1 ]] && rails="$rails$a|$c"$'\n' ;;
-  esac
-done <<< "$snap"
+others=$'\n'; ttys=$'\n'; wins=(); busy=$'\n'; rails=$'\n'
+{
+  read -r policy; read -r status; read -r cur
+  while IFS="$T" read -r kind a b c d e; do
+    case "$kind" in
+      C) [[ -n "$b" ]] && ttys="$ttys$b"$'\n'
+         if [[ "$a" == "$client" ]]; then ctty="$b"; cw="$d"; ch="$e"
+         else others="$others$c"$'\n'; fi ;;
+      W) wins+=("$a$T$b$T$c$T$d") ;;
+      P) [[ -n "$b" && "$ttys" == *$'\n'"$b"$'\n'* ]] && busy="$busy$a"$'\n'
+         [[ "$d" == 1 ]] && rails="$rails$a|$c"$'\n' ;;
+    esac
+  done
+} <<< "$snap"
 
 [[ "$policy" == latest && -n "$ctty" ]] || exit 0
 
@@ -80,7 +86,9 @@ done
 
 # Nothing to resize and default-size already right: no write at all.
 (( n > 0 )) || [[ "$cur" != "${w}x${h}" ]] || exit 0
-back="$(tx "${cmd[@]}" \; list-clients -F "#{client_name}${T}#{client_width}${T}#{client_height}" 2>/dev/null)" || exit 0
-[[ "$back" == *"${client}${T}${cw}${T}${ch}"* ]] && exit 0
+# A window that died since the read fails its resize and tmux drops the rest
+# of the chain, so a failed write takes another pass rather than giving up.
+back="$(tx "${cmd[@]}" \; list-clients -F "#{client_name}${T}#{client_width}${T}#{client_height}" 2>/dev/null)" || continue
+[[ $'\n'"$back"$'\n' == *$'\n'"${client}${T}${cw}${T}${ch}"$'\n'* ]] && exit 0
 done
 exit 0
