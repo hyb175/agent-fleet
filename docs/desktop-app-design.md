@@ -23,7 +23,7 @@ native GPUI from the first milestone (D1); an earlier draft used a Tauri webview
 - Built only on the published fleet primitives (snapshot, events, CLI verbs,
   capabilities), so the terminal UI, the Go rails and the desktop app stay
   interchangeable views of one fleet.
-- Linux and macOS, same as the fleet.
+- macOS first, as the primary desktop; Linux from the same code, second.
 
 **Non-goals**
 
@@ -477,7 +477,7 @@ installed, mirroring `Prefix g` for `desk`.
 | M1 | Read-only: rail, one terminal tile (no input), inbox, events toasts, staleness | a cold-booted fleet displays in the app with every state glyph correct against the snapshot fixtures |
 | M2 | Interactive: keys, paste, mouse, selection, scrollback, resize with size ownership, answer, send, interrupt, kill, spawn, palette; F1, F4 | the agent-fleet flows in `t-send.sh` pass when driven from the app |
 | M3 | Views and the Customize workflow; presets; F2, F3 | the headless customize test passes, and a hand-edited view reloads live |
-| M4 | Notifications, onboarding, packaging (Nix flake output, `.app`, `.deb`/AppImage) | installs and runs on both platforms from CI artifacts |
+| M4 | Notifications, onboarding, packaging: a signed, notarized `.app` first (macOS shows notifications only for a bundled app identity), then a Nix flake output and `.deb`/AppImage | the `.app` from CI installs and runs on a clean Mac; Linux artifacts run on NixOS |
 
 ---
 
@@ -491,18 +491,20 @@ installed, mirroring `Prefix g` for `desk`.
 | P4 | After seeding from `capture-pane` plus replayed mode flags, do mouse, keypad and bracketed paste behave as in a real attach, for claude and codex? | open |
 | P5 | Do `refresh-client -A '%N:off'` and `-f pause-after=` behave as documented on tmux 3.2 to 3.6? | **partly done**: on 3.6a, `-A %N:off` stopped that pane's `%output` completely and `on` resumed it; `#{client_control_mode}` reads `1` for the app's client. Open: `pause-after`, and versions before 3.6. |
 | P6 | What happens when a normal client and the app share a window? | **done**: the control client's size wins until it detaches; hence the rule in 5.2. |
-| P7 | Does a `gpui-kit` hello window build and run from a `nix-shell` on NixOS (Wayland and X11) and on macOS? | open. Pins the GPUI revision, the Nix native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig) and the macOS SDK the build needs. |
+| P7 | Does a `gpui-kit` hello window with one terminal tile build and run on macOS, then from a `nix-shell` on NixOS (Wayland and X11)? | open. macOS first: the build and headless tests on CI's `macos-latest`, the window on a real Mac. Pins the GPUI revision, the Xcode/SDK version, and the Nix native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig). |
 
 ---
 
 ## 13. Decisions
 
-**D1. GPUI from the start, not a webview.** On Linux a Tauri webview is
-WebKitGTK, whose WebGL and GPU compositing are the least reliable of the three
-platform webviews, and the busiest thing on screen is six streaming terminals.
-GPUI renders on the GPU natively, and Zed already ships a fast terminal on it
-over `alacritty_terminal`. Terminal state also lands in Rust (`term`), where the
-control-mode bytes already are, instead of in JavaScript. The cost is owned
+**D1. GPUI from the start, not a webview.** macOS is GPUI's first and
+best-exercised platform (Metal, native key and IME handling), and Zed already
+ships a fast terminal on it over `alacritty_terminal`; the busiest thing on
+screen is six streaming terminals. Terminal state lands in Rust (`term`), where
+the control-mode bytes already are, instead of in JavaScript. On macOS a
+webview would be WKWebView, which is fine, so the case rests on those two
+points; on Linux it is stronger, since a webview there is WebKitGTK, the least
+reliable of the three for WebGL and GPU compositing. The cost is owned
 code: the terminal element (from `gpui-terminal`, plus selection, scrollback,
 mouse and paste) and the Customize editor (from `gpui-kit` components). GPUI is
 pre-1.0, so the workspace pins one `gpui-kit` release (which pins GPUI) and
