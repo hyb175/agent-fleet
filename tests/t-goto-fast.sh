@@ -26,10 +26,13 @@ for s in working wait idle; do
 done
 
 p="$(mkpane sleep 300)"; printf 'done' > "$C/$p.status"   # no trailing newline: the read || true guard
+mkdir -p "$XDG_CACHE_HOME/agent-fleet/$SOCK/tasks"
+rec="$XDG_CACHE_HOME/agent-fleet/$SOCK/tasks/T1"; printf 'state working 1\nstate done 2\n' > "$rec"; printf 'T1\n' > "$C/$p.task"
 # shellcheck disable=SC2034 # read inside the eval'd check() conditions
 out="$(go "$p")"
 check "done: status.sh clear-done ran" "[[ \"\$out\" == *'status.sh clear-done'* ]]"
 check "done: file reads idle" "[[ \"\$(cat '$C/$p.status')\" == idle ]]"
+check "done: record gained exactly one state idle line" "[[ \"\$(grep -c '^state idle ' '$rec')\" == 1 && \"\$(tail -1 '$rec')\" == 'state idle '* ]]"
 
 # Scraped pane: finished-turn summary on screen, no status file, slow capture-pane.
 stub="$(mktemp -d)"

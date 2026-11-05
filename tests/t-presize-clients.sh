@@ -62,7 +62,6 @@ poll_until 10 "[[ \"\$(wsize s3)\" == '90x19 90x19 ' ]] && settled"
 
 echo "two clients: A's resize moves the unattached session, leaves B's alone"
 : > "$RESIZED"
-tx set-hook -ga client-resized "run-shell \"echo hook #{client_name} #{client_width} #{hook_client} >> /tmp/claude-1000/hk\""
 tmux -L "$sa" resize-window -t 0 -x 120 -y 34
 poll_until 10 "[[ \"\$(wsize s3)\" == '120x33 120x33 ' ]] && settled"
 check "unattached s3 took A's new size (control)" "[[ \"\$(wsize s3)\" == '120x33 120x33 ' ]]"
