@@ -125,7 +125,7 @@ are the reference for those but are GPL-3.0, so their code is not copied.
 ## 4. The fleet contract the app uses
 
 Everything the app knows or changes goes through a primitive that already exists,
-except the four small additions in section 8.
+except the small additions in section 8.
 
 | Need | Primitive | Notes |
 | --- | --- | --- |
@@ -140,6 +140,7 @@ except the four small additions in section 8.
 | Kill | `agent-fleet kill <target> --wait` | The tile shows `stopped` only on `status=stopped`; `unknown` keeps a warning with the survivors. |
 | Lifecycle, review | `task done\|drop\|clean`, `review <id> --diff-only` | Review widget renders the diff text. |
 | Workspace and tab edits | `rename-workspace`, `rename-tab`, `move` | Context menu actions. |
+| Open an editor | `agent-fleet editor <task-id\|%pane>` (F5) | Prints `<editor-id> <pane-id>`; the tile binds to the editor id (5.4). |
 | History | `agent-fleet history` | History widget. |
 
 The verb runner is one function: run `agent-fleet <args>` with a timeout, return
@@ -209,6 +210,44 @@ draft. F4 closes this: the app touches `panes/<pane>.typed` (at most every
 500 ms while typing), and `send` treats a recent mtime there the same as a recent
 `session_activity`.
 
+### 5.4 Editors in tiles
+
+A terminal tile can show an editor (Neovim, or whatever `$AGENT_FLEET_EDITOR`
+names) next to the agent whose work it edits. "Open editor here" on an agent
+tile runs `agent-fleet editor <task-id>` (F5), which opens the editor in a new
+tab in that task's workspace and directory (its worktree on a `wt` rung) and
+prints the editor's id; the new tile binds to that id. A second call for the
+same task returns the live editor instead of opening another.
+
+F5 is needed because `add --cmd nvim` does not fit: it tags the pane as an agent
+of kind `nvim`, so the rail lists it as idle, and `persist-restore.sh` relaunches
+only known agent kinds, so after a cold boot the editor comes back as a shell
+and its record points at the old pane id. An editor pane carries
+`@fleet-editor` instead of `@fleet-agent-kind`, so the rail, the snapshot's agent
+rows and `send` ignore it, and restore relaunches its recorded command in its
+directory and re-links the record, as it does for agents.
+
+Neovim then runs exactly as it does under tmux in Ghostty today: `TERM` is
+tmux's, and `%output` carries the pane's own bytes, so the tile's `Term` parses
+what Neovim wrote. What the tile must do on top of an agent tile (all M2):
+
+- **Mouse** reporting in SGR mode, with Shift-drag selecting text instead.
+- **Cursor shape** (DECSCUSR): block in normal mode, bar in insert.
+- **Focus events**: tmux sends focus only to the active pane of the session's
+  current window, and tiles show panes of different windows; switching the
+  window from the app would also move a terminal attached to that session. So
+  when tile focus changes and the `Term` shows mode 1004 set, the app sends
+  `\e[O` / `\e[I` itself through `send-keys -H` (P8), and `autoread` and
+  `FocusLost` work.
+- **Clipboard**: Neovim's OSC 52 yank lands in a tmux buffer once the fleet sets
+  `set-clipboard on` (F6); control mode reports `%paste-buffer-changed` (P8),
+  and the app copies `show-buffer` to the system pasteboard. Cmd-V pastes
+  through `paste-buffer -p` like any paste.
+- **Styles**: curly and colored underlines (SGR `4:3`, `58`) for diagnostics.
+- **Keys**: `Ctrl-a Ctrl-a` sends Neovim's `Ctrl-a`, as with the tmux prefix now.
+  On macOS, `option_as_meta` in `desktop.toml` (default on) sends Option as
+  Alt; Cmd chords stay with the app.
+
 ---
 
 ## 6. Interaction model
@@ -228,7 +267,7 @@ and key bindings all call the same ids.
 **Mouse.** Click focuses a tile or rail row; wheel scrolls the terminal
 scrollback (a tile in scrollback shows a "live ↓" pill); right-click opens the
 context menu for the agent under the cursor (answer, message, interrupt,
-review, rename, move, kill).
+open editor here, review, rename, move, kill).
 
 **Tile chrome.** One header line per terminal tile: state glyph (`◆` wait,
 spinner working, `✓` done, `○` idle, shapes readable without color), tab name,
@@ -254,7 +293,7 @@ thing.
 
 ```
 ~/.config/agent-fleet/desktop/
-  desktop.toml           settings: default view, leader, notifications, font
+  desktop.toml           settings: default view, leader, notifications, font, option_as_meta
   views/
     triage.toml          one view per file; the file name is its id
     focus.toml
@@ -318,6 +357,8 @@ does not rot as agents come and go.
 | `{ attention = n }` | n-th agent in attention order among `wait` and `done` | yes |
 | `{ workspace, state, kind, iso, sort, limit, index }` | filter, sort (`attention`, `age`, `name`), then take `index` or the first `limit` | yes |
 | `{ follow = "selection" }` | whatever is selected in the rail or palette | yes |
+| `{ editor = "selection" }` | the editor opened for the selected agent's task, or `empty` when it has none; with a `follow` tile beside it, this is the agent-plus-Neovim layout | yes |
+| `{ task = "<editor-id>" }` | that editor, as for any task id | yes |
 | `{ pane = "%12" }` | that pane only; the editor warns that pane ids reset on cold boot | no |
 
 Rebinding rules, applied on every snapshot change:
@@ -423,6 +464,8 @@ Small, each its own commit with tests, none needed for a read-only first build.
 | F2 | theme presets keep the 16-color ANSI palette (`AF_THEME_ANSI_0`…`_15`, appended; `gen-theme.sh` already reads them upstream and drops them), re-imported for all presets | terminal tiles need an ANSI palette that matches the fleet theme |
 | F3 | `agent-fleet theme show`: `name=` plus the active theme's tokens as `key=value` | "follow fleet theme" without parsing shell files or the generated tmux conf |
 | F4 | `send`'s `human_active` gate also honours a recent `panes/<pane>.typed` mtime | typing in the app goes through `send-keys`, which tmux's activity clock does not see (5.3) |
+| F5 | `agent-fleet editor <task-id\|%pane>`: opens `$AGENT_FLEET_EDITOR` (else `$VISUAL`, `$EDITOR`, `nvim`) in a new tab in the task's workspace and dir, tagged `@fleet-editor`; writes a record with `kind editor`, `cmd <command>`, `for <task-id>`; returns the live one if it exists. `persist-restore.sh` relaunches `cmd` in `dir` and re-links the record | an editor beside an agent that is not mistaken for an agent and survives a cold boot (5.4) |
+| F6 | `set -s set-clipboard on` in the fleet's tmux conf | tmux's default `external` ignores an app's OSC 52, so a Neovim yank in a tile never reaches the app; `on` still forwards it to an attached terminal as before (P8) |
 
 Also an optional `agent-fleet desktop` verb that launches the app if it is
 installed, mirroring `Prefix g` for `desk`.
@@ -475,7 +518,7 @@ installed, mirroring `Prefix g` for `desk`.
 | --- | --- | --- |
 | M0 | Remaining proofs: P3, P4, P5, P7 | each recorded in this doc with versions, like the runtime contract's proofs |
 | M1 | Read-only: rail, one terminal tile (no input), inbox, events toasts, staleness | a cold-booted fleet displays in the app with every state glyph correct against the snapshot fixtures |
-| M2 | Interactive: keys, paste, mouse, selection, scrollback, resize with size ownership, answer, send, interrupt, kill, spawn, palette; F1, F4 | the agent-fleet flows in `t-send.sh` pass when driven from the app |
+| M2 | Interactive: keys, paste, mouse, selection, scrollback, resize with size ownership, answer, send, interrupt, kill, spawn, palette; editor tiles with cursor shape, focus events, OSC 52 clipboard and curly underlines; F1, F4, F5, F6 | the agent-fleet flows in `t-send.sh` pass when driven from the app, and a Neovim tile yanks to the macOS pasteboard and comes back after a cold boot |
 | M3 | Views and the Customize workflow; presets; F2, F3 | the headless customize test passes, and a hand-edited view reloads live |
 | M4 | Notifications, onboarding, packaging: a signed, notarized `.app` first (macOS shows notifications only for a bundled app identity), then a Nix flake output and `.deb`/AppImage | the `.app` from CI installs and runs on a clean Mac; Linux artifacts run on NixOS |
 
@@ -492,6 +535,7 @@ installed, mirroring `Prefix g` for `desk`.
 | P5 | Do `refresh-client -A '%N:off'` and `-f pause-after=` behave as documented on tmux 3.2 to 3.6? | **partly done**: on 3.6a, `-A %N:off` stopped that pane's `%output` completely and `on` resumed it; `#{client_control_mode}` reads `1` for the app's client. Open: `pause-after`, and versions before 3.6. |
 | P6 | What happens when a normal client and the app share a window? | **done**: the control client's size wins until it detaches; hence the rule in 5.2. |
 | P7 | Does a `gpui-kit` hello window with one terminal tile build and run on macOS, then from a `nix-shell` on NixOS (Wayland and X11)? | open. macOS first: the build and headless tests on CI's `macos-latest`, the window on a real Mac. Pins the GPUI revision, the Xcode/SDK version, and the Nix native inputs (Vulkan loader, Wayland, xkbcommon, X11, fontconfig). |
+| P8 | With Neovim in a pane and only a control client attached, does tmux deliver focus in/out to the pane when the app switches the active pane, and report `%paste-buffer-changed` after an OSC 52 yank? | **done** (tmux 3.6a, Neovim 0.11.5): `select-pane` between two panes of one window fired Neovim's `FocusLost` and `FocusGained`, and so did `send-keys -H 1b 5b 4f` / `1b 5b 49` with no client involved; with `set-clipboard on`, an OSC 52 write created `buffer0` and the control client got `%paste-buffer-changed buffer0`. With tmux's default `external`, which the fleet runs today, no buffer is created (F6). |
 
 ---
 
