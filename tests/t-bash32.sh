@@ -49,14 +49,14 @@ check "shim passes through under $B (got: $out)" "[[ \"\$out\" == 'real-claude -
 # unviewed window to resize. The client lives on a throwaway socket of its own.
 boot_server s1
 tx new-session -d -s s2 -x 80 -y 24 -c "$WORK"
-CSOCK="$SOCK-c0"
-tmux -L "$CSOCK" -f /dev/null new-session -d -x 100 -y 30 -- tmux -L "$SOCK" attach -t s1
+client_sock="$SOCK-c0"
+tmux -L "$client_sock" -f /dev/null new-session -d -x 100 -y 30 -- tmux -L "$SOCK" attach -t s1
 poll_until 10 "[[ \$(tx list-clients -F '#{client_session}' | grep -cx s1) -ge 1 ]]"
 client="$(tx list-clients -F '#{client_session} #{client_name}' | awk '$1 == "s1" { print $2; exit }')"
 err="$(AGENT_FLEET_SOCKET="$SOCK" "$B" "$REPO/scripts/presize.sh" "$client" 2>&1 </dev/null)"
 check "presize.sh runs clean under $B (stderr: ${err:-none})" "[[ -z \"\$err\" ]]"
 check "presize.sh resized the unviewed window" "[[ \"\$(tx display-message -p -t s2:0 '#{window_width}x#{window_height}')\" == 100x29 ]]"
-tmux -L "$CSOCK" kill-server 2>/dev/null
+tmux -L "$client_sock" kill-server 2>/dev/null
 
 # The CLI itself: 3.2 can't parse it (heredoc inside $(...)), so the prelude
 # must re-exec under a modern bash before the parser reaches that point.

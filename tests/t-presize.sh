@@ -237,6 +237,7 @@ check "burst: no presize.sh left running" "settled"
 echo "sourcing the conf twice leaves the hooks as they were"
 # shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
 hooks() { tx show-hooks -g client-attached; tx show-hooks -g client-resized; }
+# shellcheck disable=SC2034 # read inside the eval'd check() condition
 once="$(hooks)"
 tx source-file "$REPO/conf/agent-fleet.conf"
 tx source-file "$REPO/conf/agent-fleet.conf"
