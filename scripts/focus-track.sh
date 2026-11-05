@@ -41,7 +41,11 @@ fi
 # queue drains because you looked, not because you used one particular key.
 # Hooked tier only (a .status file): the scraped tier's ack needs a
 # capture-pane, and this hook stays tmux-free — goto still covers that tier.
-if [[ -f "$CACHE/panes/$pane.status" ]]; then
+# Read the file instead of forking status.sh for every focus: only "done" needs
+# the ack. `|| true`: a file without a trailing newline returns 1 after assigning.
+st=""
+read -r st 2>/dev/null < "$CACHE/panes/$pane.status" || true
+if [[ "$st" == "done" ]]; then
   "$(dirname "${BASH_SOURCE[0]}")/status.sh" clear-done "$pane" >/dev/null 2>&1 || true
 fi
 exit 0

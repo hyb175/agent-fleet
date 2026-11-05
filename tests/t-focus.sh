@@ -30,4 +30,9 @@ bash "$REPO/scripts/focus-track.sh" %10 0 sess @2
 check "focus-in acks a done agent to idle" "[[ \"\$(cat '$C/%10.status')\" == idle ]]"
 check "…without asking tmux" "[[ ! -s '$log' ]]"
 
+# A working agent is read, not forked at: no status.sh in the trace.
+printf 'working\n' > "$C/%11.status"
+bash -x "$REPO/scripts/focus-track.sh" %11 0 sess @3 2> "$stub/trace"
+check "working pane: bash -x trace has no status.sh, file still working, focus.now written" "! grep -q status.sh '$stub/trace' && [[ \"\$(cat '$C/%11.status')\" == working ]] && [[ \"\$(cat \"\$XDG_CACHE_HOME/agent-fleet/\$SOCK/focus.now\")\" == 'sess|@3' ]]"
+
 exit "$FAIL"
