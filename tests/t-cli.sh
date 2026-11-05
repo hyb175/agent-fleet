@@ -47,7 +47,10 @@ p="$("$AF" add --to api --cmd 'sleep 0.3' 2>/dev/null)"
 # _release runs between the agent's exit and the shell's exec: wait for its
 # untag, the last thing before the shell takes over.
 poll_until 10 "[[ -z \"\$(tx display-message -p -t '$p' '#{@fleet-agent-kind}' 2>/dev/null)\" ]]"
-poll_until 5 "[[ \"\$(tx display-message -p -t '$p' '#{pane_current_command}' 2>/dev/null)\" =~ ^(sh|bash|zsh|fish)$ ]]"
+# pane-shell.sh still forks tmux after that, so wait until the pane's process
+# has exec'd the login shell (`<shell> -l`) before reading its command.
+poll_until 5 "ps -o args= -p \"\$(tx display-message -p -t '$p' '#{pane_pid}')\" | grep -q -- ' -l' &&
+  [[ \"\$(tx display-message -p -t '$p' '#{pane_current_command}' 2>/dev/null)\" =~ ^(sh|bash|zsh|fish)$ ]]"
 check "interactive agent exit leaves the pane on a shell" \
   "[[ \"\$(tx display-message -p -t '$p' '#{pane_current_command}' 2>/dev/null)\" =~ ^(sh|bash|zsh|fish)$ ]]"
 check "…and untags it" "[[ -z \"\$(tx display-message -p -t '$p' '#{@fleet-agent-kind}' 2>/dev/null)\" ]]"
