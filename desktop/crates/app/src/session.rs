@@ -6,9 +6,7 @@ use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use term::Tile;
-
-const SEED_FMT: &str = "'#{cursor_x} #{cursor_y} #{pane_width} #{pane_height}'";
+use term::{PaneState, SEED_FORMAT, Tile};
 
 pub struct Pane {
     pub tile: Tile,
@@ -17,7 +15,7 @@ pub struct Pane {
     /// The first `seq` of an in-flight seed; output is dropped until it lands,
     /// because everything before the capture's reply is already in the capture.
     pending: Option<u64>,
-    cursor: (usize, usize),
+    state: Option<PaneState>,
 }
 
 /// A tile's screen and the signal that it changed (at most one queued).
@@ -38,7 +36,7 @@ pub fn attach(socket: &str, session: &str, panes: &[(String, String)]) -> io::Re
             id: id.clone(),
             window: window.clone(),
             pending: None,
-            cursor: (0, 0),
+            state: None,
         }));
         reseed(&client, &mut pane.lock().unwrap());
         let (tx, rx) = async_channel::bounded(1);
@@ -63,24 +61,14 @@ pub fn attach(socket: &str, session: &str, panes: &[(String, String)]) -> io::Re
                         for (n, (p, _)) in &routes {
                             let mut p = p.lock().unwrap();
                             let Some(first) = p.pending else { continue };
-                            if seq == first && ok {
-                                let f: Vec<usize> = lines
+                            if seq == first {
+                                p.state = lines
                                     .first()
-                                    .map(|l| {
-                                        String::from_utf8_lossy(l)
-                                            .split(' ')
-                                            .filter_map(|n| n.parse().ok())
-                                            .collect()
-                                    })
-                                    .unwrap_or_default();
-                                if let [x, y, w, h] = f[..] {
-                                    p.cursor = (x, y);
-                                    p.tile.resize(w, h);
-                                }
+                                    .filter(|_| ok)
+                                    .and_then(|l| PaneState::parse(l));
                             } else if seq == first + 1 {
-                                if ok {
-                                    let (x, y) = p.cursor;
-                                    p.tile.seed(&lines, x, y);
+                                if let (true, Some(st)) = (ok, p.state.take()) {
+                                    p.tile.seed(&st, &lines);
                                 }
                                 p.pending = None;
                                 touched.push(*n);
@@ -125,7 +113,7 @@ fn reseed(client: &Mutex<Client>, p: &mut Pane) {
         .lock()
         .unwrap()
         .send(&[
-            &format!("display-message -p -t {id} {SEED_FMT}"),
+            &format!("display-message -p -t {id} '{SEED_FORMAT}'"),
             &format!("capture-pane -p -e -t {id}"),
         ])
         .ok();

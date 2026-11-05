@@ -7,3 +7,6 @@ license.workspace = true
 
 [dependencies]
 alacritty_terminal.workspace = true
+
+[dev-dependencies]
+fleet-tmux.workspace = true
