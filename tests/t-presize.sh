@@ -177,4 +177,80 @@ echo 98 > "$WORK/flips"; rm -f "$WORK/calls"
 TMUX_BIN="$WORK/tmux-wrap" "$PRESIZE" "$c"
 check "client never settles -> stops at 3 passes" "[[ \$(grep -c display-message '$WORK/calls') -eq 3 ]]"
 
+# --- S-1: the conf's hooks drive presize.sh end to end -----------------------
+echo "S-1: conf hooks pre-size on attach and on resize, switches change nothing"
+for s in ${CSOCKS[@]+"${CSOCKS[@]}"}; do tmux -L "$s" kill-server 2>/dev/null; done
+CSOCKS=()
+kill_server
+boot_server s1 "$WORK"
+for s in s1 s2 s3 s4; do
+  [[ $s == s1 ]] || tx new-session -d -s "$s" -x 80 -y 24 -c "$WORK"
+  tx new-window -d -t "$s" -c "$WORK"
+done
+# Rails exist on every window before the client attaches.
+poll_until 10 "[[ \$(tx list-panes -a -F '#{@fleet-sidenav}' | grep -cx 1) -eq 8 ]]"
+tx set-hook -g window-resized "run-shell 'echo #{window_id} >> $RESIZED'"
+: > "$RESIZED"
+
+# unviewed <W>x<H> — true when every window outside s1 is that size, with no
+# window-size override left behind.
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
+unviewed() {
+  [[ -z "$(tx list-windows -a -F '#{session_name} #{window_width}x#{window_height}' | awk -v t="$1" '$1 != "s1" && $2 != t')" ]] &&
+    [[ -z "$(for w in $(tx list-windows -a -F '#{session_name} #{window_id}' | awk '$1 != "s1" {print $2}'); do tx show-options -wqv -t "$w" window-size; done)" ]]
+}
+sizes() { tx list-windows -a -F '#{window_id} #{window_width}x#{window_height}'; }
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
+settled() { ! pgrep -f "$PRESIZE" >/dev/null; }
+
+c="$(client 100 30 s1)"
+cs="$SOCK-c0"  # client() runs in a subshell, so CSOCKS is not updated
+tmux -L "$cs" set -g window-size manual
+poll_until 10 "unviewed 100x29"
+check "attach: every unviewed window is 100x29, window-size unset" "unviewed 100x29"
+check "attach: rails are 30 cols" "[[ -z \"\$(tx list-panes -a -F '#{session_name} #{@fleet-sidenav} #{pane_width}' | awk '\$1 != \"s1\" && \$2 == 1 && \$3 != 30')\" ]]"
+
+echo "20 switch-client calls change no window size"
+poll_until 10 settled
+sleep 0.5
+before="$(sizes)"; changed=0
+for i in $(seq 0 19); do
+  tx switch-client -c "$c" -t "=s$(( i % 4 + 1 ))"
+  [[ "$(sizes)" == "$before" ]] || changed=$(( changed + 1 ))
+done
+tx switch-client -c "$c" -t =s1
+sleep 0.5
+check "no window changed size across 20 switches" "[[ $changed -eq 0 && \"\$(sizes)\" == \"$before\" ]]"
+
+echo "terminal resize and a 10-resize burst converge"
+tmux -L "$cs" resize-window -t 0 -x 120 -y 34
+poll_until 10 "unviewed 120x33"
+check "resize: unviewed windows follow to 120x33" "unviewed 120x33"
+for i in $(seq 10); do
+  tmux -L "$cs" resize-window -t 0 -x $(( 100 + i )) -y 34
+  sleep 0.1
+done
+poll_until 10 "unviewed 110x33 && settled"
+check "burst: unviewed windows end at 110x33" "unviewed 110x33"
+check "burst: no presize.sh left running" "settled"
+
+echo "sourcing the conf twice leaves the hooks as they were"
+# shellcheck disable=SC2329 # called only from inside eval'd check() condition strings
+hooks() { tx show-hooks -g client-attached; tx show-hooks -g client-resized; }
+once="$(hooks)"
+tx source-file "$REPO/conf/agent-fleet.conf"
+tx source-file "$REPO/conf/agent-fleet.conf"
+check "show-hooks identical after two more sources" "[[ \"\$(hooks)\" == \"\$once\" ]]"
+check "client-attached: sidenav ensure and a backgrounded presize" "[[ \$(tx show-hooks -g client-attached | grep -c 'sidenav-toggle.sh.* ensure') -eq 1 && \$(tx show-hooks -g client-attached | grep -c 'run-shell -b .*presize.sh') -eq 1 ]]"
+check "client-resized: one backgrounded presize" "[[ \$(tx show-hooks -g client-resized | grep -c 'run-shell -b .*presize.sh') -eq 1 ]]"
+
+echo "window-size largest -> unviewed windows are not resized"
+tx set -g window-size largest
+: > "$RESIZED"
+tmux -L "$cs" resize-window -t 0 -x 140 -y 40
+poll_until 10 "[[ \$(tx list-clients -F '#{client_width}') == 140 ]]"
+sleep 1
+n=0; for w in $(tx list-windows -a -F '#{session_name} #{window_id}' | awk '$1 != "s1" {print $2}'); do n=$(( n + $(nresized "$w") )); done
+check "resize count 0 on every unviewed window" "[[ $n -eq 0 ]]"
+
 exit "$FAIL"

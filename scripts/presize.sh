@@ -46,7 +46,7 @@ snap="$(tx \
   display-message -p "O${T}#{window-size}${T}#{status}${T}#{default-size}" \; \
   list-clients -F "C${T}#{client_name}${T}#{client_tty}${T}#{client_session}${T}#{client_width}${T}#{client_height}" \; \
   list-windows -a -F "W${T}#{session_name}${T}#{window_id}${T}#{window_width}${T}#{window_height}" \; \
-  list-panes -a -F "P${T}#{window_id}${T}#{pane_tty}${T}#{@fleet-sidenav}" 2>/dev/null)" || exit 0
+  list-panes -a -F "P${T}#{window_id}${T}#{pane_tty}${T}#{pane_id}${T}#{@fleet-sidenav}" 2>/dev/null)" || exit 0
 
 policy="" status="" cur="" ctty="" cw=0 ch=0
 others=$'\n'; wins=(); busy=$'\n'; rails=$'\n'
@@ -57,7 +57,7 @@ while IFS="$T" read -r kind a b c d e; do
        else others="$others$c"$'\n'; fi ;;
     W) wins+=("$a$T$b$T$c$T$d") ;;
     P) [[ -n "$b" && "$b" == "$ctty" ]] && busy="$busy$a"$'\n'
-       [[ "$c" == 1 ]] && rails="$rails$a"$'\n' ;;
+       [[ "$d" == 1 ]] && rails="$rails$a|$c"$'\n' ;;
   esac
 done <<< "$snap"
 
@@ -74,7 +74,7 @@ for rec in ${wins[@]+"${wins[@]}"}; do
   [[ "$busy" == *$'\n'"$win"$'\n'* ]] && continue
   [[ "$ww" == "$w" && "$wh" == "$h" ]] && continue
   cmd+=(';' resize-window -t "$win" -x "$w" -y "$h" ';' set -wu -t "$win" window-size)
-  [[ "$rails" == *$'\n'"$win"$'\n'* ]] && cmd+=(';' resize-pane -t "$win" -x "$rail")
+  if [[ "$rails" == *$'\n'"$win|"* ]]; then r="${rails#*$'\n'"$win|"}"; cmd+=(';' resize-pane -t "${r%%$'\n'*}" -x "$rail"); fi
   n=$(( n + 1 ))
 done
 
