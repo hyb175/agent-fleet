@@ -45,6 +45,13 @@ rails_ok() {
   [[ "$(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav}' | grep -cx 1)" == "$(tx list-windows -t "=$1" | wc -l)" ]] &&
     [[ -z "$(tx list-panes -s -t "=$1" -F '#{@fleet-sidenav} #{pane_width}' | awk '$1 == 1 && $2 != 30')" ]]
 }
+# rails_dump <session>… — the layout behind a failed rails_ok.
+rails_dump() {
+  local s
+  for s in "$@"; do
+    rails_ok "$s" || tx list-panes -s -t "=$s" -F "  $s #{window_id} #{window_width}x#{window_height} #{pane_id} rail=#{@fleet-sidenav} w=#{pane_width} dead=#{pane_dead} cmd=#{pane_current_command}"
+  done
+}
 
 echo "t-presize-clients:"
 boot_server s1 "$WORK"
@@ -102,6 +109,7 @@ check "add --new-workspace: 110x31 on return" "[[ \"\$(wsize s4)\" == '110x31 ' 
 # The rail comes from an after-new-window hook that add does not wait on.
 poll_until 10 "rails_ok s3 && rails_ok s4"
 check "once quiet, both adds have a 30-col rail" "rails_ok s3 && rails_ok s4"
+rails_dump s3 s4
 born=""
 for i in 1 2 3; do
   pb="$(env -u TMUX "$AF" add "b$i" --to s3 --cmd 'sleep 300')"
@@ -110,6 +118,7 @@ for i in 1 2 3; do
 done
 poll_until 10 "rails_ok s3"
 check "three back-to-back adds have rails once quiet" "rails_ok s3"
+rails_dump s3
 sleep 1; poll_until 10 settled
 n=0; for w in $w1 $born $(tx list-windows -t =s4 -F '#{window_id}'); do n=$(( n + $(nresized "$w") )); done
 check "once quiet, no spawned window was ever resized (count $n)" "[[ $n -eq 0 ]]"
